@@ -15,9 +15,18 @@ This build currently covers:
 Not yet implemented: connector/feature cutouts, direct-manipulation drag handles, board presets,
 save/load projects, units toggle, snap-fit lids.
 
+See [`DESIGN.md`](./DESIGN.md) for the full design doc and [`PROGRESS.md`](./PROGRESS.md) for
+what's done, what's next, and notes for picking this work back up in a new session.
+
+## Project layout
+
+The app lives entirely under [`frontend/`](./frontend) (a static Vite/React SPA — see the design
+doc for why there's no backend). `docker-compose.yml` at the repo root builds and serves it.
+
 ## Development
 
 ```bash
+cd frontend
 npm install
 npm run dev
 ```
@@ -25,6 +34,7 @@ npm run dev
 ## Build
 
 ```bash
+cd frontend
 npm run build
 ```
 
