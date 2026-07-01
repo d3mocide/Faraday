@@ -14,10 +14,12 @@ This build currently covers:
 - Direct manipulation: drag handles to resize the body, hover-highlighted faces, click-to-select a
   placed feature (with an editable rotation and, for standoffs, dimensions), drag-to-reposition
   with snapping to edges/center/other features
+- Board presets (RTL-SDR dongle, Heltec V3, T-Beam, Pi Zero) as a starting point, save/load
+  projects as JSON, localStorage autosave, mm/in units toggle, undo/redo
 - Real-time 3D preview (Three.js) with debounced regeneration in a Web Worker
 - Zipped STL export (`case_base.stl` + `case_lid.stl`) at full tessellation quality
 
-Not yet implemented: vents, board presets, save/load projects, units toggle, snap-fit lids.
+Not yet implemented: vents, snap-fit lids, cylindrical bodies.
 
 See [`DESIGN.md`](./DESIGN.md) for the full design doc and [`PROGRESS.md`](./PROGRESS.md) for
 what's done, what's next, and notes for picking this work back up in a new session.

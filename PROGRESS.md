@@ -12,7 +12,7 @@ tracks *how far we've gotten* and *what's different from the spec in practice*.
 | Phase 1 — Lid system | ✅ Done |
 | Phase 2 — Connector/feature library | ✅ Done |
 | Phase 3 — Direct manipulation | ✅ Done |
-| Phase 4 — Presets, persistence, polish | ⬜ Not started |
+| Phase 4 — Presets, persistence, polish | ✅ Done |
 | Phase 5 — Stretch | ⬜ Not started |
 
 Open PR: [#2 — AGENTS.md/CLAUDE.md + Phase 2](https://github.com/d3mocide/Faraday/pull/2) (draft).
@@ -36,7 +36,7 @@ DESIGN.md §4). Root holds only planning docs and deployment orchestration:
     ├── package.json, vite.config.ts, tsconfig*.json, .oxlintrc.json
     ├── public/
     └── src/               matches DESIGN.md §12 (state/, types/, csg/, components/, export/),
-                            plus connectors/ (Phase 2, see below)
+                            plus connectors/ (Phase 2) and presets/ (Phase 4, see below)
 ```
 
 This `frontend/` split is **not** in DESIGN.md §12 (which shows everything flat at repo root) —
@@ -159,6 +159,52 @@ targeted, documented escape hatch — reach for that before revisiting this.
   the body live with the numeric fields staying in sync in both directions; export after a resize
   + feature placement still produces two watertight STLs.
 
+## Phase 4 implementation notes
+
+- **`projectStore.ts` was refactored around a single `mutate()` choke point** that every action
+  goes through instead of calling Zustand's `set` directly. This is what makes undo/redo possible
+  without touching every action individually: `mutate` decides whether the incoming change starts
+  a new history entry or coalesces into the current one, so the ~15 existing actions (and any
+  future ones) get undo/redo for free just by routing through it.
+- **History snapshots debounce on the gap since the last *mutation*, not the last *snapshot*** —
+  this was the one real bug caught during Phase 4 verification. The first version gated on "time
+  since we last recorded a checkpoint," which sounds equivalent but isn't: for a continuous drag
+  gesture lasting longer than the debounce window (500ms), the gate re-opens mid-drag purely
+  because enough wall-clock time has passed since the *snapshot*, splitting one drag into several
+  undo steps. Gating on the gap since the last mutation (and resetting that clock on every
+  mutation, snapshot or not) means an arbitrarily long continuous burst — a slow multi-second drag
+  included — coalesces into exactly one undo step, only starting a new one after a genuine pause.
+  Caught by running the same Playwright drag test three times and noticing the "after undo" value
+  wasn't fully reverting and wasn't even consistent between runs; a single run had looked plausible
+  enough to almost miss.
+- **Board presets** (`presets/boards.ts`) only set body dimensions, wall thickness, and split
+  height, and clear placed features — they don't attempt real mounting-hole/connector positions
+  for the named boards. Getting individual hole diameters approximately right (like the connector
+  library) is one thing; getting a whole board's mounting pattern right is a different, much
+  higher-precision claim this session had no way to verify against real hardware, so it wasn't
+  attempted. Same "verify before printing" disclaimer as the connector/screw libraries.
+- **Save/Load is the real persistence; autosave is a cache** (DESIGN.md §10, taken literally):
+  `exportProjectJson`/`parseProjectJsonFile` round-trip a downloadable `.json`; a separate
+  `state/autosave.ts` debounced-writes the same project shape to `localStorage` on every change
+  and is read back on store init instead of `createDefaultProject()` when present and valid. Both
+  paths share one structural validator (`state/projectValidation.ts`) so a corrupt/incompatible
+  autosave entry and a bad imported file fail the same way (fall back to a fresh default project,
+  or surface an inline error banner for an explicit Load).
+- **Units toggle is purely a display layer** (`state/units.ts` + `UnitNumberField` in
+  `InspectorPanel.tsx`): the store never holds anything but canonical mm; every mm-based numeric
+  field converts for display/input at the component boundary. Verified round-trip: typed `4` while
+  in inches, switched back to mm, got exactly `101.6`.
+- **Undo/redo keyboard shortcuts are gated on `document.activeElement`** — Ctrl+Z inside a focused
+  text/number/select field is left alone (native in-field undo, not intercepted) rather than
+  hijacking it for project-level undo, which would be surprising while typing.
+- Verified end-to-end with Playwright: applying a board preset changes body dimensions and clears
+  features; invalid JSON and a structurally-invalid-but-parseable JSON file both surface the error
+  banner without crashing; a valid (hand-edited) project file loads correctly; a change survives a
+  full page reload via autosave; undo/redo works across ordinary discrete edits, coalesces a
+  multi-step corner-handle drag into a single step (verified 3x after the fix, not just once), and
+  responds to both the toolbar buttons and keyboard shortcuts; export still produces two watertight
+  STLs after Phase 4 changes.
+
 ## Known issues / gotchas for future sessions
 
 - **React StrictMode + Web Worker gotcha**: the CSG worker client must be constructed inside a
@@ -177,16 +223,14 @@ targeted, documented escape hatch — reach for that before revisiting this.
 
 ## Next steps (suggested order)
 
-1. **Phase 4 — Presets, persistence, polish**: board presets, save/load JSON, localStorage
-   autosave, mm/in units toggle (the `units` field already exists on `EnclosureProject` but has no
-   UI yet), undo/redo.
-2. **Phase 5 — Stretch**: cylindrical body, snap-fit lid, gasket channel, BOM export.
+1. **Phase 5 — Stretch**: cylindrical body, snap-fit lid, gasket channel, BOM export.
 
-Smaller items that surfaced during Phase 2/3 but aren't blocking: `vent`/`custom-hole` feature
+Smaller items that surfaced during Phase 2/3/4 but aren't blocking: `vent`/`custom-hole` feature
 types have no CSG or UI implementation; `dshape` connector holes fall back to circle/rect;
 `antenna-passthrough` has no per-feature size override; drag-to-reposition snapping doesn't yet
 snap across faces (e.g. matching u/v on an adjacent face) — only within the same face, per
-DESIGN.md §13's "other features" wording.
+DESIGN.md §13's "other features" wording; board presets set dimensions only, not real
+mounting-hole positions.
 
 Also still open from earlier phases, not blocking: the ~845KB main bundle (see below), and the
 never-verified Docker build.
@@ -206,6 +250,10 @@ never-verified Docker build.
   drag-to-reposition with snapping) on the same branch/PR #2. Caught and fixed one real bug during
   Playwright verification — see the Phase 3 implementation notes above for the infinite-plane
   raycasting issue with feature dragging.
+- **2026-07-01**: Implemented and verified Phase 4 (board presets, save/load project JSON,
+  localStorage autosave, mm/in units toggle, undo/redo) on the same branch/PR #2. Caught and fixed
+  one real bug during verification — see the Phase 4 implementation notes above for the
+  history-debounce issue that could split a single drag into multiple undo steps.
 
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->

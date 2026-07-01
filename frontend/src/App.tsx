@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import './App.css';
 import { AppShell } from './components/AppShell';
 import { ExportModal } from './components/ExportModal';
@@ -7,6 +7,7 @@ import { InspectorPanel } from './components/InspectorPanel';
 import { Viewport3D, type BodyResizePatch } from './components/Viewport3D';
 import { useLiveGeometry } from './csg/useLiveGeometry';
 import { buildFeatureFromTemplate } from './state/featureFactory';
+import { useAutosave } from './state/useAutosave';
 import { useProjectStore } from './state/projectStore';
 import type { Face } from './types/project';
 
@@ -16,10 +17,30 @@ function App() {
   const updateFeature = useProjectStore((s) => s.updateFeature);
   const removeFeature = useProjectStore((s) => s.removeFeature);
   const setBodyDimension = useProjectStore((s) => s.setBodyDimension);
+  const undo = useProjectStore((s) => s.undo);
+  const redo = useProjectStore((s) => s.redo);
   const { meshes, error, isGenerating, client } = useLiveGeometry(project);
   const [exportOpen, setExportOpen] = useState(false);
   const [armed, setArmed] = useState<ArmedFeatureTemplate | null>(null);
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
+
+  useAutosave(project);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target;
+      const isFormField =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement;
+      if (isFormField || !(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
+      e.preventDefault();
+      if (e.shiftKey) redo();
+      else undo();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo]);
 
   const handlePlaceFeature = (face: Face, u: number, v: number) => {
     if (!armed) return;
