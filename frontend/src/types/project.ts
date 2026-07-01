@@ -1,5 +1,7 @@
 export type Face = 'top' | 'bottom' | 'front' | 'back' | 'left' | 'right';
 
+export type Units = 'mm' | 'in';
+
 export type CornerStyleType = 'sharp' | 'rounded' | 'chamfered';
 
 export interface CornerStyle {
@@ -80,7 +82,7 @@ export interface ConnectorLibraryEntry {
 export interface EnclosureProject {
   id: string;
   name: string;
-  units: 'mm' | 'in'; // display preference only, geometry is always canonical mm
+  units: Units; // display preference only, geometry is always canonical mm
   createdAt: string;
   updatedAt: string;
   body: EnclosureBody;

@@ -1,5 +1,8 @@
 import type { Manifold, ManifoldToplevel } from 'manifold-3d';
+import { findConnector } from '../connectors/library';
 import type { EnclosureProject } from '../types/project';
+import { faceFrame } from './faceFrame';
+import { buildConnectorCutout, buildStandoff } from './featurePrimitives';
 import {
   applyFrictionLipLid,
   applyScrewBossLid,
@@ -77,6 +80,31 @@ export function generateEnclosure(
   }
   // 'snap-fit' is a stretch-goal lid type (Section 7 / Phase 5) and is not
   // implemented yet; it falls back to the plain split shell.
+
+  // Apply per-face features (Section 7 step 5). 'vent' and 'custom-hole' aren't wired up yet --
+  // nothing in the UI creates them yet either, see PROGRESS.md.
+  for (const feature of project.features) {
+    if (feature.type === 'connector-cutout' && feature.connectorId) {
+      const entry = findConnector(feature.connectorId);
+      if (!entry) continue;
+      const cutout = buildConnectorCutout(wasm, entry, feature, body.outer, wallThickness);
+      if (feature.face === 'top') {
+        lid = lid.subtract(cutout);
+      } else if (feature.face === 'bottom') {
+        base = base.subtract(cutout);
+      } else {
+        const featureZ = faceFrame(feature.face, body.outer).toWorld(feature.u, feature.v)[2];
+        if (featureZ > splitHeight) {
+          lid = lid.subtract(cutout);
+        } else {
+          base = base.subtract(cutout);
+        }
+      }
+    } else if (feature.type === 'standoff' && feature.standoff) {
+      // Standoffs always mount to the base floor, regardless of the split height.
+      base = base.add(buildStandoff(wasm, feature, body.outer, wallThickness));
+    }
+  }
 
   return { base, lid, splitHeight, outerHeight: height };
 }

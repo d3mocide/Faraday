@@ -4,11 +4,7 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import type { CsgWorkerClient } from '../csg/CsgWorkerClient';
 import { meshDataToBufferGeometry } from '../csg/meshToBufferGeometry';
 import type { EnclosureProject } from '../types/project';
-
-function sanitizeFilename(name: string): string {
-  const trimmed = name.trim().replace(/[^a-z0-9-_]+/gi, '-');
-  return trimmed.length > 0 ? trimmed : 'faraday-enclosure';
-}
+import { sanitizeFilename } from './filename';
 
 function partToStlBytes(mesh: { positions: Float32Array; indices: Uint32Array }): Uint8Array {
   const geometry = meshDataToBufferGeometry(mesh);

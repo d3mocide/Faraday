@@ -10,12 +10,13 @@ tracks *how far we've gotten* and *what's different from the spec in practice*.
 |---|---|
 | Phase 0 — Scaffold & static box | ✅ Done |
 | Phase 1 — Lid system | ✅ Done |
-| Phase 2 — Connector/feature library | ⬜ Not started |
-| Phase 3 — Direct manipulation | ⬜ Not started |
-| Phase 4 — Presets, persistence, polish | ⬜ Not started |
+| Phase 2 — Connector/feature library | ✅ Done |
+| Phase 3 — Direct manipulation | ✅ Done |
+| Phase 4 — Presets, persistence, polish | ✅ Done |
 | Phase 5 — Stretch | ⬜ Not started |
 
-Open PR: [#1 — Phase 0 + Phase 1 scaffold](https://github.com/d3mocide/Faraday/pull/1) (draft)
+Open PR: [#2 — AGENTS.md/CLAUDE.md + Phase 2](https://github.com/d3mocide/Faraday/pull/2) (draft).
+PR #1 (Phase 0+1 scaffold) is merged.
 
 ## Repo layout
 
@@ -26,13 +27,16 @@ DESIGN.md §4). Root holds only planning docs and deployment orchestration:
 /
 ├── DESIGN.md          the original design doc, verbatim
 ├── PROGRESS.md         this file
+├── AGENTS.md            repo structure / coding / workflow rules for any agent (or human)
+├── CLAUDE.md             thin pointer to AGENTS.md
 ├── README.md            quick-start
 ├── docker-compose.yml   builds ./frontend, serves on :8090
 └── frontend/
     ├── Dockerfile, Caddyfile   (build/serve config, scoped to the frontend build context)
     ├── package.json, vite.config.ts, tsconfig*.json, .oxlintrc.json
     ├── public/
-    └── src/               matches DESIGN.md §12 (state/, types/, csg/, components/, export/)
+    └── src/               matches DESIGN.md §12 (state/, types/, csg/, components/, export/),
+                            plus connectors/ (Phase 2) and presets/ (Phase 4, see below)
 ```
 
 This `frontend/` split is **not** in DESIGN.md §12 (which shows everything flat at repo root) —
@@ -63,6 +67,144 @@ surface (every literal constant in the boss/skirt geometry would need to carry t
 too). If real-world testing surfaces precision issues, `Manifold.setTolerance()` is the more
 targeted, documented escape hatch — reach for that before revisiting this.
 
+## Phase 2 implementation notes
+
+- `frontend/src/connectors/library.ts` has the DESIGN.md §6 starter set (6 entries: SMA, BNC,
+  USB-C, USB-A, DC barrel, antenna passthrough).
+- `frontend/src/csg/faceFrame.ts` defines the box's face/axis convention (length=X, width=Y,
+  height=Z) and the `(u,v) ↔ world xyz` mapping used by both the CSG pipeline (worker-side) and
+  `Viewport3D`'s raycasting (main-thread side). It's deliberately framework-agnostic (no `three`
+  or `manifold-3d` imports) so both sides share one source of truth for face geometry instead of
+  two hand-derived copies that could drift.
+- **Click-to-place, not drag-and-drop.** Clicking a palette entry "arms" it; clicking the model
+  raycasts against the actual rendered mesh (not proxy planes), reads the hit triangle's normal to
+  resolve which of the 6 canonical faces was hit (`closestFace` in `faceFrame.ts`), then maps the
+  hit point to normalized (u,v) on that face. Drag-to-reposition and hover face-highlighting are
+  explicitly Phase 3 (DESIGN.md §13) — not done here.
+- **Standoffs are floor-only.** A standoff feature always gets `face: 'bottom'` and rises from the
+  interior floor (`wallThickness`) upward — it is never interpreted relative to whichever face was
+  actually clicked. Clicking any face other than `bottom` while a standoff is armed is silently
+  ignored (see the guard in `App.tsx`'s `handlePlaceFeature`) rather than placing it against the
+  wrong axis. This means placing one requires orbiting the camera to see the underside — no
+  "look from below" shortcut was added.
+- **Cutout extrusion is built symmetric about its own local origin** (`extrude(..., center: true)`
+  in `featurePrimitives.ts`) before being rotated to align with the target face's outward normal.
+  This sidesteps needing to get the *sign* of each face's rotation exactly right — a rotation by
+  the wrong sign still produces the identical (symmetric) solid, so it only matters that extrusion
+  runs along the correct axis, not which direction. Doesn't generalize to asymmetric hole shapes,
+  but nothing in the v1 library is asymmetric (see dshape note below).
+- **`holeShape: 'dshape'` has no real geometry** — no starter-library connector uses it, so it
+  falls back to a circle (if `diameter` is set) or rect (otherwise), same documented-fallback
+  pattern as the `snap-fit` lid type in Phase 0/1.
+- **`vent` and `custom-hole` feature types are typed but not wired into the CSG pipeline**, and the
+  palette has no UI to create either yet — same rationale as above: building CSG support for a
+  feature type nothing can currently produce would be untested dead code. Natural follow-up
+  alongside Phase 3/4 inspector work (vent needs a slot/honeycomb pattern generator; custom-hole
+  needs width/height inputs in the UI, plus per-feature dimensions since it has no library entry).
+- **`antenna-passthrough` ships a 10mm placeholder diameter** even though DESIGN.md §6 says it
+  should have "no sane default" — there's no per-feature dimension override yet (`Feature` only
+  carries `connectorId`, not a size override), so for now it's a fixed value like every other
+  library entry, flagged in its `notes` field. Per-feature overrides are natural Phase 3 inspector
+  work (same UI that will let you edit `rotationDeg`, drag-reposition, etc.).
+- Verified end-to-end with Playwright: placed a connector cutout on the lid and one on the base
+  (confirmed by the correct piece getting a visible hole and by parsing the exported binary STL for
+  vertices), placed a standoff and confirmed its height in the exported mesh matches the computed
+  default exactly, confirmed an off-target standoff click is rejected, confirmed removal via the
+  inspector list works, and confirmed both exported STLs remain watertight (every mesh edge shared
+  by exactly two triangles) with multiple features applied together.
+
+## Phase 3 implementation notes
+
+- All pointer interaction (click-to-place, hover face highlight, feature select/drag, resize
+  handles) lives in **one** set of DOM listeners attached once in `Viewport3D`'s mount effect,
+  rather than several effects each attaching their own. Changing props (`outer`, `features`,
+  `placementArmed`, the callbacks) are read through refs updated by small dependency-effects, not
+  by re-attaching listeners — see the comment block above the listener setup. This was a deliberate
+  consolidation versus Phase 2's separate click-to-place effect, once hover/drag/handles all
+  needed to coexist on the same canvas without fighting each other or `OrbitControls`.
+- **`OrbitControls.enabled` is toggled off for the duration of any handle or feature drag**
+  (`setControlsEnabled` in `Viewport3D.tsx`), checked eagerly on `pointerdown` (not after a
+  movement threshold) so there's no camera-jiggle at the start of a drag. Re-enabled on
+  `pointerup` regardless of what was being dragged.
+- **Feature dragging raycasts against the rendered mesh, not an infinite face plane** — this was
+  the one real bug caught during verification: an infinite-plane raycast blows up near the
+  silhouette edge under perspective (a few screen px can map to tens of mm on a steeply-angled
+  plane), so a drag would rocket to the face boundary almost immediately instead of tracking the
+  cursor. Raycasting the actual mesh naturally bounds the drag to visible geometry. `face` itself
+  stays fixed from pickup (not re-derived each move) and the hit point's raw xyz is reinterpreted
+  through that fixed face's `faceFromWorld` — this is also what keeps a standoff drag constrained
+  to the bottom face rather than jumping to whatever face the cursor happens to stray onto.
+- **Resize handles**: 4 corner cubes at the top face corners drag on the horizontal plane at
+  `z = height` and set length/width together (`length = 2*|x|`, `width = 2*|y|`, exploiting the
+  body being centered at the origin); a separate cone handle above the top face center drags along
+  a camera-facing vertical plane through the height axis (standard gizmo technique — a plane
+  containing the drag axis, oriented to face the camera, avoids the axis-parallel-to-view
+  degenerate case a naive fixed plane would hit).
+- **Snapping** (`csg/snapping.ts`) is a single generic `snapValue(value, candidates, threshold)`
+  used for both axes independently: candidates are `[0, 0.5, 1, ...otherFeaturesOnSameFace]`, and
+  the mm-based threshold (2mm) is converted to normalized per-axis via `faceSize()` since a face's
+  two axes are rarely the same physical length.
+- Per-feature dimension overrides (standoff outer/screw-hole/height) are editable in the inspector
+  now via `updateFeature`; `antenna-passthrough`'s "no sane default" gap from the Phase 2 notes is
+  **still** open, though — connector-cutout features have no override fields in the data model yet,
+  only `rotationDeg` is editable for them. Adding a size-override field is a small, isolated
+  follow-up if it's ever needed.
+- `vent` and `custom-hole` remain unimplemented, same as noted in Phase 2 — nothing in Phase 3
+  changed that.
+- Verified end-to-end with Playwright: hover highlight appears/disappears correctly per face;
+  clicking a marker selects it (turns red) and populates the inspector; editing rotation in the
+  inspector updates the store; dragging a marker tracks the cursor smoothly and is bounded to the
+  face (this is what caught the infinite-plane bug above); clicking empty space deselects;
+  removing the selected feature also clears the selection; both corner and height handles resize
+  the body live with the numeric fields staying in sync in both directions; export after a resize
+  + feature placement still produces two watertight STLs.
+
+## Phase 4 implementation notes
+
+- **`projectStore.ts` was refactored around a single `mutate()` choke point** that every action
+  goes through instead of calling Zustand's `set` directly. This is what makes undo/redo possible
+  without touching every action individually: `mutate` decides whether the incoming change starts
+  a new history entry or coalesces into the current one, so the ~15 existing actions (and any
+  future ones) get undo/redo for free just by routing through it.
+- **History snapshots debounce on the gap since the last *mutation*, not the last *snapshot*** —
+  this was the one real bug caught during Phase 4 verification. The first version gated on "time
+  since we last recorded a checkpoint," which sounds equivalent but isn't: for a continuous drag
+  gesture lasting longer than the debounce window (500ms), the gate re-opens mid-drag purely
+  because enough wall-clock time has passed since the *snapshot*, splitting one drag into several
+  undo steps. Gating on the gap since the last mutation (and resetting that clock on every
+  mutation, snapshot or not) means an arbitrarily long continuous burst — a slow multi-second drag
+  included — coalesces into exactly one undo step, only starting a new one after a genuine pause.
+  Caught by running the same Playwright drag test three times and noticing the "after undo" value
+  wasn't fully reverting and wasn't even consistent between runs; a single run had looked plausible
+  enough to almost miss.
+- **Board presets** (`presets/boards.ts`) only set body dimensions, wall thickness, and split
+  height, and clear placed features — they don't attempt real mounting-hole/connector positions
+  for the named boards. Getting individual hole diameters approximately right (like the connector
+  library) is one thing; getting a whole board's mounting pattern right is a different, much
+  higher-precision claim this session had no way to verify against real hardware, so it wasn't
+  attempted. Same "verify before printing" disclaimer as the connector/screw libraries.
+- **Save/Load is the real persistence; autosave is a cache** (DESIGN.md §10, taken literally):
+  `exportProjectJson`/`parseProjectJsonFile` round-trip a downloadable `.json`; a separate
+  `state/autosave.ts` debounced-writes the same project shape to `localStorage` on every change
+  and is read back on store init instead of `createDefaultProject()` when present and valid. Both
+  paths share one structural validator (`state/projectValidation.ts`) so a corrupt/incompatible
+  autosave entry and a bad imported file fail the same way (fall back to a fresh default project,
+  or surface an inline error banner for an explicit Load).
+- **Units toggle is purely a display layer** (`state/units.ts` + `UnitNumberField` in
+  `InspectorPanel.tsx`): the store never holds anything but canonical mm; every mm-based numeric
+  field converts for display/input at the component boundary. Verified round-trip: typed `4` while
+  in inches, switched back to mm, got exactly `101.6`.
+- **Undo/redo keyboard shortcuts are gated on `document.activeElement`** — Ctrl+Z inside a focused
+  text/number/select field is left alone (native in-field undo, not intercepted) rather than
+  hijacking it for project-level undo, which would be surprising while typing.
+- Verified end-to-end with Playwright: applying a board preset changes body dimensions and clears
+  features; invalid JSON and a structurally-invalid-but-parseable JSON file both surface the error
+  banner without crashing; a valid (hand-edited) project file loads correctly; a change survives a
+  full page reload via autosave; undo/redo works across ordinary discrete edits, coalesces a
+  multi-step corner-handle drag into a single step (verified 3x after the fix, not just once), and
+  responds to both the toolbar buttons and keyboard shortcuts; export still produces two watertight
+  STLs after Phase 4 changes.
+
 ## Known issues / gotchas for future sessions
 
 - **React StrictMode + Web Worker gotcha**: the CSG worker client must be constructed inside a
@@ -81,22 +223,37 @@ targeted, documented escape hatch — reach for that before revisiting this.
 
 ## Next steps (suggested order)
 
-1. **Phase 2 — Connector/feature library**: `ConnectorLibraryEntry` starter set (DESIGN.md §6),
-   `FeaturePalette` UI, click-to-place on a face, wire cutout/standoff generation into
-   `generateEnclosure.ts` (the "Apply per-face features" step from §7 was intentionally left out
-   of the Phase 0+1 pipeline since `project.features` is always `[]` until this phase).
-2. **Phase 3 — Direct manipulation**: drag handles on body corners and features, face
-   highlighting/raycasting in `Viewport3D.tsx`.
-3. **Phase 4 — Presets, persistence, polish**: board presets, save/load JSON, localStorage
-   autosave, mm/in units toggle (the `units` field already exists on `EnclosureProject` but has no
-   UI yet), undo/redo.
-4. **Phase 5 — Stretch**: cylindrical body, snap-fit lid, gasket channel, BOM export.
+1. **Phase 5 — Stretch**: cylindrical body, snap-fit lid, gasket channel, BOM export.
+
+Smaller items that surfaced during Phase 2/3/4 but aren't blocking: `vent`/`custom-hole` feature
+types have no CSG or UI implementation; `dshape` connector holes fall back to circle/rect;
+`antenna-passthrough` has no per-feature size override; drag-to-reposition snapping doesn't yet
+snap across faces (e.g. matching u/v on an adjacent face) — only within the same face, per
+DESIGN.md §13's "other features" wording; board presets set dimensions only, not real
+mounting-hole positions.
+
+Also still open from earlier phases, not blocking: the ~845KB main bundle (see below), and the
+never-verified Docker build.
 
 ## Session log
 
 - **2026-07-01**: Phase 0 + Phase 1 implemented and verified (scaffold, CSG worker pipeline,
   viewport, lid system, zipped STL export, Docker deploy config). Opened PR #1. Repo restructured
   into `frontend/` + this tracking doc and `DESIGN.md` added at the request of the repo owner.
+- **2026-07-01**: Added `AGENTS.md`/`CLAUDE.md` (repo structure, coding conventions, workflow
+  rules — codifying patterns already established in Phase 0/1 rather than introducing new ones).
+  Implemented and verified Phase 2 (connector/feature library, click-to-place, cutout + standoff
+  generation) — see the Phase 2 implementation notes above for the scope decisions and what's
+  intentionally deferred. Opened PR #2 (draft) on top of the merged PR #1.
+- **2026-07-01**: Implemented and verified Phase 3 (direct manipulation: corner/height resize
+  handles, hover face highlighting, click-to-select + inspector editing of placed features,
+  drag-to-reposition with snapping) on the same branch/PR #2. Caught and fixed one real bug during
+  Playwright verification — see the Phase 3 implementation notes above for the infinite-plane
+  raycasting issue with feature dragging.
+- **2026-07-01**: Implemented and verified Phase 4 (board presets, save/load project JSON,
+  localStorage autosave, mm/in units toggle, undo/redo) on the same branch/PR #2. Caught and fixed
+  one real bug during verification — see the Phase 4 implementation notes above for the
+  history-debounce issue that could split a single drag into multiple undo steps.
 
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->

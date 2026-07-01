@@ -1,6 +1,24 @@
 import type { ChangeEvent } from 'react';
+import { findConnector } from '../connectors/library';
 import { useProjectStore } from '../state/projectStore';
-import type { CornerStyleType, LidType, ScrewCount, ScrewInsertType, ScrewSize } from '../types/project';
+import { displayStep, displayToMm, mmToDisplay, roundForDisplay, unitLabel } from '../state/units';
+import type {
+  CornerStyleType,
+  Feature,
+  LidType,
+  ScrewCount,
+  ScrewInsertType,
+  ScrewSize,
+  Units,
+} from '../types/project';
+
+function featureLabel(feature: Feature): string {
+  if (feature.type === 'standoff') return 'Standoff';
+  if (feature.type === 'connector-cutout' && feature.connectorId) {
+    return findConnector(feature.connectorId)?.label ?? feature.connectorId;
+  }
+  return feature.type;
+}
 
 function NumberField({
   label,
@@ -29,7 +47,49 @@ function NumberField({
   );
 }
 
-export function InspectorPanel() {
+/** NumberField for a canonical-mm value, displayed/edited in the project's current units. */
+function UnitNumberField({
+  label,
+  valueMm,
+  units,
+  minMm,
+  maxMm,
+  stepMm = 0.1,
+  onChangeMm,
+}: {
+  label: string;
+  valueMm: number;
+  units: Units;
+  minMm?: number;
+  maxMm?: number;
+  stepMm?: number;
+  onChangeMm: (mm: number) => void;
+}) {
+  return (
+    <NumberField
+      label={`${label} (${unitLabel(units)})`}
+      value={roundForDisplay(mmToDisplay(valueMm, units), units)}
+      min={minMm !== undefined ? mmToDisplay(minMm, units) : undefined}
+      max={maxMm !== undefined ? mmToDisplay(maxMm, units) : undefined}
+      step={displayStep(stepMm, units)}
+      onChange={(v) => onChangeMm(displayToMm(v, units))}
+    />
+  );
+}
+
+interface InspectorPanelProps {
+  selectedFeatureId: string | null;
+  onSelectFeature: (id: string | null) => void;
+  onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
+  onRemoveFeature: (id: string) => void;
+}
+
+export function InspectorPanel({
+  selectedFeatureId,
+  onSelectFeature,
+  onUpdateFeature,
+  onRemoveFeature,
+}: InspectorPanelProps) {
   const project = useProjectStore((s) => s.project);
   const setBodyDimension = useProjectStore((s) => s.setBodyDimension);
   const setWallThickness = useProjectStore((s) => s.setWallThickness);
@@ -42,37 +102,42 @@ export function InspectorPanel() {
   const setScrewInsertType = useProjectStore((s) => s.setScrewInsertType);
   const setScrewCount = useProjectStore((s) => s.setScrewCount);
 
-  const { body } = project;
+  const { body, units } = project;
   const { outer, cornerStyle, lid } = body;
+  const selectedFeature = project.features.find((f) => f.id === selectedFeatureId) ?? null;
 
   return (
     <div className="inspector-panel">
       <section>
         <h3>Body</h3>
-        <NumberField
+        <UnitNumberField
           label="Length"
-          value={outer.length}
-          min={5}
-          onChange={(v) => setBodyDimension('length', v)}
+          valueMm={outer.length}
+          units={units}
+          minMm={5}
+          onChangeMm={(v) => setBodyDimension('length', v)}
         />
-        <NumberField
+        <UnitNumberField
           label="Width"
-          value={outer.width}
-          min={5}
-          onChange={(v) => setBodyDimension('width', v)}
+          valueMm={outer.width}
+          units={units}
+          minMm={5}
+          onChangeMm={(v) => setBodyDimension('width', v)}
         />
-        <NumberField
+        <UnitNumberField
           label="Height"
-          value={outer.height}
-          min={5}
-          onChange={(v) => setBodyDimension('height', v)}
+          valueMm={outer.height}
+          units={units}
+          minMm={5}
+          onChangeMm={(v) => setBodyDimension('height', v)}
         />
-        <NumberField
+        <UnitNumberField
           label="Wall thickness"
-          value={body.wallThickness}
-          min={0.8}
-          max={Math.min(outer.length, outer.width) / 2 - 0.5}
-          onChange={setWallThickness}
+          valueMm={body.wallThickness}
+          units={units}
+          minMm={0.8}
+          maxMm={Math.min(outer.length, outer.width) / 2 - 0.5}
+          onChangeMm={setWallThickness}
         />
       </section>
 
@@ -90,12 +155,13 @@ export function InspectorPanel() {
           </select>
         </label>
         {cornerStyle.type !== 'sharp' && (
-          <NumberField
+          <UnitNumberField
             label="Corner radius"
-            value={cornerStyle.radius}
-            min={0.5}
-            max={Math.min(outer.length, outer.width) / 2 - 0.5}
-            onChange={setCornerRadius}
+            valueMm={cornerStyle.radius}
+            units={units}
+            minMm={0.5}
+            maxMm={Math.min(outer.length, outer.width) / 2 - 0.5}
+            onChangeMm={setCornerRadius}
           />
         )}
       </section>
@@ -109,20 +175,22 @@ export function InspectorPanel() {
             <option value="screw-boss">Screw boss</option>
           </select>
         </label>
-        <NumberField
+        <UnitNumberField
           label="Split height"
-          value={lid.splitHeight}
-          min={body.wallThickness + 1}
-          max={outer.height - body.wallThickness - 1}
-          onChange={setSplitHeight}
+          valueMm={lid.splitHeight}
+          units={units}
+          minMm={body.wallThickness + 1}
+          maxMm={outer.height - body.wallThickness - 1}
+          onChangeMm={setSplitHeight}
         />
-        <NumberField
+        <UnitNumberField
           label="Wall gap (fit clearance)"
-          value={lid.wallGap}
-          min={0}
-          max={1}
-          step={0.05}
-          onChange={setWallGap}
+          valueMm={lid.wallGap}
+          units={units}
+          minMm={0}
+          maxMm={1}
+          stepMm={0.05}
+          onChangeMm={setWallGap}
         />
 
         {lid.type === 'screw-boss' && lid.screw && (
@@ -162,6 +230,75 @@ export function InspectorPanel() {
           </>
         )}
       </section>
+
+      <section>
+        <h3>Features</h3>
+        {project.features.length === 0 ? (
+          <p className="feature-list-empty">None placed yet — pick one from the palette, then click a face.</p>
+        ) : (
+          <ul className="feature-list">
+            {project.features.map((feature) => (
+              <li key={feature.id} className={feature.id === selectedFeatureId ? 'selected' : undefined}>
+                <button type="button" className="feature-list-select" onClick={() => onSelectFeature(feature.id)}>
+                  {featureLabel(feature)} <em>({feature.face})</em>
+                </button>
+                <button type="button" onClick={() => onRemoveFeature(feature.id)} aria-label={`Remove ${featureLabel(feature)}`}>
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {selectedFeature && (
+        <section>
+          <h3>Selected: {featureLabel(selectedFeature)}</h3>
+          <NumberField
+            label="Rotation (deg)"
+            value={selectedFeature.rotationDeg}
+            step={5}
+            onChange={(v) => onUpdateFeature(selectedFeature.id, { rotationDeg: v })}
+          />
+          {selectedFeature.type === 'standoff' && selectedFeature.standoff && (
+            <>
+              <UnitNumberField
+                label="Outer diameter"
+                valueMm={selectedFeature.standoff.outerDiameter}
+                units={units}
+                minMm={2}
+                onChangeMm={(v) =>
+                  onUpdateFeature(selectedFeature.id, {
+                    standoff: { ...selectedFeature.standoff!, outerDiameter: v },
+                  })
+                }
+              />
+              <UnitNumberField
+                label="Screw hole diameter"
+                valueMm={selectedFeature.standoff.screwHoleDiameter}
+                units={units}
+                minMm={0.5}
+                onChangeMm={(v) =>
+                  onUpdateFeature(selectedFeature.id, {
+                    standoff: { ...selectedFeature.standoff!, screwHoleDiameter: v },
+                  })
+                }
+              />
+              <UnitNumberField
+                label="Height"
+                valueMm={selectedFeature.standoff.height}
+                units={units}
+                minMm={1}
+                onChangeMm={(v) =>
+                  onUpdateFeature(selectedFeature.id, {
+                    standoff: { ...selectedFeature.standoff!, height: v },
+                  })
+                }
+              />
+            </>
+          )}
+        </section>
+      )}
     </div>
   );
 }
