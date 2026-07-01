@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   CornerStyleType,
   EnclosureProject,
+  Feature,
   LidType,
   ScrewCount,
   ScrewInsertType,
@@ -23,6 +24,8 @@ interface ProjectStore {
   setScrewSize: (size: ScrewSize) => void;
   setScrewInsertType: (insertType: ScrewInsertType) => void;
   setScrewCount: (count: ScrewCount) => void;
+  addFeature: (feature: Feature) => void;
+  removeFeature: (id: string) => void;
 }
 
 function touch(project: EnclosureProject): EnclosureProject {
@@ -159,4 +162,17 @@ export const useProjectStore = create<ProjectStore>((set) => ({
         }),
       };
     }),
+
+  addFeature: (feature) =>
+    set((s) => ({
+      project: touch({ ...s.project, features: [...s.project.features, feature] }),
+    })),
+
+  removeFeature: (id) =>
+    set((s) => ({
+      project: touch({
+        ...s.project,
+        features: s.project.features.filter((f) => f.id !== id),
+      }),
+    })),
 }));

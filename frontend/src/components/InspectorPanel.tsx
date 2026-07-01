@@ -1,6 +1,22 @@
 import type { ChangeEvent } from 'react';
+import { findConnector } from '../connectors/library';
 import { useProjectStore } from '../state/projectStore';
-import type { CornerStyleType, LidType, ScrewCount, ScrewInsertType, ScrewSize } from '../types/project';
+import type {
+  CornerStyleType,
+  Feature,
+  LidType,
+  ScrewCount,
+  ScrewInsertType,
+  ScrewSize,
+} from '../types/project';
+
+function featureLabel(feature: Feature): string {
+  if (feature.type === 'standoff') return 'Standoff';
+  if (feature.type === 'connector-cutout' && feature.connectorId) {
+    return findConnector(feature.connectorId)?.label ?? feature.connectorId;
+  }
+  return feature.type;
+}
 
 function NumberField({
   label,
@@ -31,6 +47,7 @@ function NumberField({
 
 export function InspectorPanel() {
   const project = useProjectStore((s) => s.project);
+  const removeFeature = useProjectStore((s) => s.removeFeature);
   const setBodyDimension = useProjectStore((s) => s.setBodyDimension);
   const setWallThickness = useProjectStore((s) => s.setWallThickness);
   const setCornerStyleType = useProjectStore((s) => s.setCornerStyleType);
@@ -160,6 +177,26 @@ export function InspectorPanel() {
               </select>
             </label>
           </>
+        )}
+      </section>
+
+      <section>
+        <h3>Features</h3>
+        {project.features.length === 0 ? (
+          <p className="feature-list-empty">None placed yet — pick one from the palette, then click a face.</p>
+        ) : (
+          <ul className="feature-list">
+            {project.features.map((feature) => (
+              <li key={feature.id}>
+                <span>
+                  {featureLabel(feature)} <em>({feature.face})</em>
+                </span>
+                <button type="button" onClick={() => removeFeature(feature.id)} aria-label={`Remove ${featureLabel(feature)}`}>
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
     </div>

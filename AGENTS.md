@@ -29,7 +29,7 @@ points here. If something here conflicts with `DESIGN.md` or `PROGRESS.md`, thos
         ├── state/       Zustand store, single EnclosureProject source of truth
         ├── types/       project.ts — the data model, discriminated unions
         ├── csg/         Web Worker + manifold-3d pipeline, primitives, worker protocol
-        ├── connectors/  ConnectorLibraryEntry data (Phase 2+)
+        ├── connectors/  ConnectorLibraryEntry data (Phase 2)
         ├── presets/     board presets (Phase 4+)
         ├── components/  React UI
         └── export/      STL/ZIP export
