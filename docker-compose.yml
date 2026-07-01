@@ -1,0 +1,7 @@
+# docker-compose.yml — one service, no volumes, no env vars needed
+services:
+  faraday:
+    build: .
+    ports:
+      - "8090:80"
+    restart: unless-stopped
