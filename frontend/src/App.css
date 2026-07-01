@@ -1,0 +1,126 @@
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-bg);
+  flex: 0 0 auto;
+}
+
+.app-title {
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+}
+
+.project-name-input {
+  width: 220px;
+}
+
+.generation-status {
+  color: var(--text-dim);
+  font-size: 12px;
+  flex: 1;
+}
+
+.app-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.viewport-area {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+}
+
+.viewport-error {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  right: 12px;
+  background: #4a1f24;
+  border: 1px solid #7a2e35;
+  color: #ffd7db;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  max-height: 120px;
+  overflow: auto;
+}
+
+.inspector-panel {
+  width: 280px;
+  flex: 0 0 auto;
+  border-left: 1px solid var(--border);
+  background: var(--panel-bg);
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.inspector-panel section {
+  margin-bottom: 20px;
+}
+
+.inspector-panel h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.field span {
+  color: var(--text-dim);
+}
+
+.field input,
+.field select {
+  width: 130px;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.modal {
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 20px 24px;
+  min-width: 280px;
+}
+
+.modal h3 {
+  margin-top: 0;
+}
+
+.modal-error {
+  color: #ff9aa2;
+}
+
+.modal button {
+  margin-top: 12px;
+}
