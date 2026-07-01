@@ -13,10 +13,10 @@ tracks *how far we've gotten* and *what's different from the spec in practice*.
 | Phase 2 — Connector/feature library | ✅ Done |
 | Phase 3 — Direct manipulation | ✅ Done |
 | Phase 4 — Presets, persistence, polish | ✅ Done |
-| Phase 5 — Stretch | ⬜ Not started |
+| Phase 5 — Stretch | ✅ Done |
 
-Open PR: [#2 — AGENTS.md/CLAUDE.md + Phase 2](https://github.com/d3mocide/Faraday/pull/2) (draft).
-PR #1 (Phase 0+1 scaffold) is merged.
+PR #1 (Phase 0+1 scaffold) and PR #2 (AGENTS.md/CLAUDE.md + Phases 2-4) are merged. Phase 5 is on
+its own PR (see session log below).
 
 ## Repo layout
 
@@ -205,6 +205,84 @@ targeted, documented escape hatch — reach for that before revisiting this.
   responds to both the toolbar buttons and keyboard shortcuts; export still produces two watertight
   STLs after Phase 4 changes.
 
+## Phase 5 implementation notes
+
+- **`EnclosureBody` is now a real discriminated union** (`BoxBody | CylinderBody` in
+  `types/project.ts`), not the single-shape interface DESIGN.md §5 shows — this is the "additive,
+  not a rewrite" extensibility DESIGN.md §9 explicitly designed for. `CylinderBody.outer` is
+  `{ diameter, height }` and it has no `cornerStyle` (nothing to round/chamfer on a circular
+  footprint).
+- **A new `'side'` `Face` variant** covers a cylinder's curved lateral wall (box bodies never
+  produce or accept it). `u` is the angle around Z (0→0°, 1→360°, wrapping) and `v` is 0 (bottom)
+  to 1 (top), matching the box side faces' `v` convention. `csg/faceFrame.ts`'s `toWorld`/
+  `faceSize`/`faceFromWorld`/`closestFace` all now take a shape-tagged `BodyGeometry` (derived from
+  `EnclosureBody` via `bodyGeometry()`) and branch on `.shape` internally, rather than assuming a
+  box's length/width/height everywhere.
+- **`FaceFrame.normal` became `normalAt(u, v)`** — a cylinder's outward normal on the `'side'` face
+  varies continuously with `u` (it's radial), so it can't be a fixed per-face constant the way a
+  box face's normal is. Box faces just ignore the arguments and return their fixed normal.
+- **Connector cutouts on `'side'` are oriented by angle, not just face name**:
+  `featurePrimitives.ts`'s `orientAlongFace` takes the feature's `u` for the `'side'` case and
+  rotates the extrusion axis to point radially outward at `u * 360` degrees, reusing the same
+  Z→X building block `'left'`/`'right'` already used before spinning around Z.
+- **Viewport3D resize handle is shape-dependent**: a box gets its existing 4 corner cubes; a
+  cylinder gets a single radius handle (drags on the same top-of-body plane, but sets `diameter =
+  2 * hypot(x, y)` instead of `length`/`width`). Both funnel through the same `'corner'` drag-state
+  branch in the pointer-move handler, just producing a different `BodyResizePatch` shape.
+- **Cylinder hover highlight covers the whole lateral surface**, not a local tangent patch — a
+  curved face has no single flat plane the way a box face does, so `'side'` gets an open
+  `THREE.CylinderGeometry` band spanning the full height. This is actually the direct analogue of
+  how box hover-highlighting already lights up an entire (flat) face rather than a patch under the
+  cursor, not a compromise.
+- **Switching `body.shape` (or applying a board preset while the body is a cylinder) clears all
+  placed features**, same precedent as Phase 4's board presets: old `(face, u, v)` placements are
+  meaningless against a differently-shaped body, so there's no attempt to remap or selectively keep
+  ones that might still "fit."
+- **CSG-side, box and cylinder lid mating are parallel implementations, not one generalized
+  function**: `applyScrewBossLid`/`applyScrewBossLidCylinder`, `applyFrictionLipLid`/
+  `applyFrictionLipLidCylinder`, `applySnapFitLid`/`applySnapFitLidCylinder` share a boss-position
+  helper (`bossPositions` corners vs `bossPositionsCircular` evenly-spaced ring) and a per-shape
+  solid-shell primitive (`boxShell` vs `cylinderShell`), but the assembly logic is written twice.
+  Per AGENTS.md's "no premature abstraction" — two shapes times three lid types is a real amount of
+  divergent geometry (rectangular footprints and shrink-by-corner-radius vs. circular footprints
+  and shrink-by-radius), and forcing one generic function through both would need more parameters
+  and branches than just writing the cylinder version directly.
+- **Snap-fit lid** (`applySnapFitLid`/`applySnapFitLidCylinder` in `csg/primitives.ts`) models the
+  final assembled state only, not the insertion motion: two cantilever tabs (front/back for a box,
+  0°/180° for a cylinder) hang from the lid into the base cavity, each with a small sphere "nub"
+  near its tip that pokes past the tab's own face into a slightly-larger spherical pocket cut into
+  the base wall. This is a simplified profile — a real engineered cantilever snap uses a wedge with
+  a lead-in ramp and a sharp catching ledge for more retention force — flagged as a starting point,
+  same "verify before printing" spirit as the connector/screw libraries. Verified the nub geometry
+  actually lands in the exported mesh (not silently dropped by a degenerate boolean) by checking for
+  vertices at the expected bulge radius in the raw STL bytes.
+- **Gasket channel is an optional `LidSpec.gasket` field**, independent of `lid.type` — any of the
+  three lid types can be combined with a gasket channel, so it's applied as a separate pass in
+  `generateEnclosure.ts` after the lid-mating branch rather than folded into each one. It only cuts
+  a groove into the **base's** top rim (centered in the wall thickness); there's no matching ridge
+  on the lid, since a real O-ring/foam cord — not a printed ridge — is what seats in the channel and
+  gets compressed by the lid's flat underside. Verified the groove's floor (`z = splitHeight -
+  depth`) actually appears in the exported base mesh alongside the rim's top surface (`z =
+  splitHeight`), confirming it's a real cut and not a no-op.
+- **BOM export (`export/bom.ts`) rides the same Export button**, adding a third file (`bom.csv`)
+  into the zip alongside `case_base.stl`/`case_lid.stl` rather than being a separate UI flow — it's
+  "alongside the STLs" per DESIGN.md's stretch-goal wording. Rows: lid screws + heat-set inserts
+  (only for `screw-boss`), a gasket cord estimate (cross-section width + computed perimeter, only
+  if a gasket channel is enabled), one row per distinct connector (aggregated by `connectorId`, not
+  one row per placement), and one row per distinct standoff spec (aggregated by outer/screw-hole
+  diameter). Plain CSV with manual quote-escaping (no library) since the four-column shape is fixed
+  and small.
+- Verified end-to-end with Playwright across both shapes: shape switching, diameter/height fields
+  replacing length/width (and the Corners section disappearing) for a cylinder, dragging the
+  radius/height handles, placing a connector cutout on the cylinder's curved side wall and a
+  standoff on its bottom cap, all three lid types (including snap-fit) on both shapes, gasket
+  channel toggle + width/depth fields, board-preset application correctly coercing a cylinder body
+  back to box, and save/load round-tripping a cylinder + snap-fit + gasket project through a full
+  page reload. Every exported STL pair checked (box/cylinder × all 3 lid types, with and without a
+  gasket) remained watertight (every mesh edge shared by exactly two triangles). No console errors
+  in any of the above. Box-shape regressions spot-checked (corner handles, front-face cutout
+  placement) to confirm the shape-dispatch refactor didn't disturb the existing box code path.
+
 ## Known issues / gotchas for future sessions
 
 - **React StrictMode + Web Worker gotcha**: the CSG worker client must be constructed inside a
@@ -220,17 +298,29 @@ targeted, documented escape hatch — reach for that before revisiting this.
 - Docker image build was **not** verified (no docker daemon available in the sandbox this was
   built in). `Dockerfile`/`Caddyfile` follow DESIGN.md §11 exactly; worth a real `docker compose up
   --build` smoke test before relying on it.
+- **Snap-fit's nub/pocket is a plain sphere pair, no lead-in ramp or catching ledge** — see the
+  Phase 5 notes above. Functions as a retention feature but with less holding force than an
+  engineered wedge profile would give; revisit if real-world prints show the lid popping off too
+  easily.
+- **Cylinder feature placement was verified on `'side'` and `'bottom'`, not explicitly on `'top'`**
+  — `'top'` reuses the exact same square-domain convention as `'bottom'` (just `+height` instead of
+  `z=0`), so it should work identically, but wasn't separately clicked-and-confirmed this session.
+- Drag-to-reposition snapping on a cylinder's `'side'` face snaps `u`/`v` the same way a box face
+  does, but doesn't do anything special at the `u=0`/`u=1` wrap point (e.g. a feature near 359° and
+  one near 1° won't snap to each other even though they're physically adjacent). Minor, same
+  "smaller items" tier as the pre-existing cross-face snapping gap below.
 
 ## Next steps (suggested order)
 
-1. **Phase 5 — Stretch**: cylindrical body, snap-fit lid, gasket channel, BOM export.
+All phases in DESIGN.md §13 (0 through 5) are now implemented and verified. What's left is smaller
+polish, not a phase:
 
-Smaller items that surfaced during Phase 2/3/4 but aren't blocking: `vent`/`custom-hole` feature
-types have no CSG or UI implementation; `dshape` connector holes fall back to circle/rect;
-`antenna-passthrough` has no per-feature size override; drag-to-reposition snapping doesn't yet
-snap across faces (e.g. matching u/v on an adjacent face) — only within the same face, per
-DESIGN.md §13's "other features" wording; board presets set dimensions only, not real
-mounting-hole positions.
+`vent`/`custom-hole` feature types have no CSG or UI implementation; `dshape` connector holes fall
+back to circle/rect; `antenna-passthrough` has no per-feature size override; drag-to-reposition
+snapping doesn't yet snap across faces (e.g. matching u/v on an adjacent box face, or across a
+cylinder's `u=0`/`u=1` wrap point) — only within the same face, per DESIGN.md §13's "other
+features" wording; board presets set dimensions only, not real mounting-hole positions; snap-fit's
+nub/pocket profile could be upgraded to a wedge with a lead-in ramp (see above).
 
 Also still open from earlier phases, not blocking: the ~845KB main bundle (see below), and the
 never-verified Docker build.
@@ -254,6 +344,14 @@ never-verified Docker build.
   localStorage autosave, mm/in units toggle, undo/redo) on the same branch/PR #2. Caught and fixed
   one real bug during verification — see the Phase 4 implementation notes above for the
   history-debounce issue that could split a single drag into multiple undo steps.
+- **2026-07-01**: Implemented and verified all four Phase 5 stretch items on a new branch/PR:
+  cylindrical body shape (new `EnclosureBody` discriminated union, `'side'` face, shape-aware
+  `faceFrame`/viewport handles/hover-highlight/raycasting), snap-fit lid (cantilever tab + nub/
+  pocket, both shapes), gasket channel (optional `LidSpec.gasket`, independent of lid type), and
+  BOM/screw list export (`bom.csv` bundled into the export zip). See the Phase 5 implementation
+  notes above for the architecture decisions (why box/cylinder lid mating is written twice rather
+  than genericized) and what's intentionally simplified (snap-fit's plain-sphere nub instead of an
+  engineered wedge profile). No regressions found in the existing box-only code paths.
 
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->

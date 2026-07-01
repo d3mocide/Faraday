@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import type {
+  BodyShape,
   CornerStyleType,
+  EnclosureBody,
   EnclosureProject,
   Feature,
   LidType,
@@ -24,7 +26,8 @@ interface ProjectStore {
   future: EnclosureProject[];
   setProjectName: (name: string) => void;
   setUnits: (units: Units) => void;
-  setBodyDimension: (key: 'length' | 'width' | 'height', value: number) => void;
+  setBodyShape: (shape: BodyShape) => void;
+  setBodyDimension: (key: 'length' | 'width' | 'height' | 'diameter', value: number) => void;
   setWallThickness: (value: number) => void;
   setCornerStyleType: (type: CornerStyleType) => void;
   setCornerRadius: (radius: number) => void;
@@ -34,6 +37,9 @@ interface ProjectStore {
   setScrewSize: (size: ScrewSize) => void;
   setScrewInsertType: (insertType: ScrewInsertType) => void;
   setScrewCount: (count: ScrewCount) => void;
+  setGasketEnabled: (enabled: boolean) => void;
+  setGasketWidth: (value: number) => void;
+  setGasketDepth: (value: number) => void;
   addFeature: (feature: Feature) => void;
   updateFeature: (id: string, patch: Partial<Feature>) => void;
   removeFeature: (id: string) => void;
@@ -81,25 +87,55 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
 
     setUnits: (units) => mutate((p) => ({ ...p, units })),
 
+    // Switching shape changes which fields `outer`/`cornerStyle` even have, so old feature
+    // placements (face + u/v meant for the previous shape's geometry) can't be trusted to still
+    // make sense -- cleared here, same precedent as applyBoardPreset.
+    setBodyShape: (shape) =>
+      mutate((p) => {
+        const current = p.body;
+        if (shape === current.shape) return p;
+        const { wallThickness, lid } = current;
+        const height = current.outer.height;
+        const body: EnclosureBody =
+          shape === 'cylinder'
+            ? {
+                shape: 'cylinder',
+                outer: {
+                  diameter: current.shape === 'box' ? Math.min(current.outer.length, current.outer.width) : 50,
+                  height,
+                },
+                wallThickness,
+                lid,
+              }
+            : {
+                shape: 'box',
+                outer: {
+                  length: current.shape === 'cylinder' ? current.outer.diameter : 50,
+                  width: current.shape === 'cylinder' ? current.outer.diameter : 50,
+                  height,
+                },
+                wallThickness,
+                cornerStyle: { type: 'rounded', radius: 3 },
+                lid,
+              };
+        return { ...p, body, features: [] };
+      }),
+
     setBodyDimension: (key, value) =>
       mutate((p) => ({
         ...p,
-        body: { ...p.body, outer: { ...p.body.outer, [key]: value } },
+        body: { ...p.body, outer: { ...p.body.outer, [key]: value } } as EnclosureBody,
       })),
 
     setWallThickness: (value) => mutate((p) => ({ ...p, body: { ...p.body, wallThickness: value } })),
 
+    // No-ops on a cylinder body (it has no cornerStyle) -- the inspector only shows these controls
+    // for a box body, so this should never actually be called in that state.
     setCornerStyleType: (type) =>
-      mutate((p) => ({
-        ...p,
-        body: { ...p.body, cornerStyle: { ...p.body.cornerStyle, type } },
-      })),
+      mutate((p) => (p.body.shape !== 'box' ? p : { ...p, body: { ...p.body, cornerStyle: { ...p.body.cornerStyle, type } } })),
 
     setCornerRadius: (radius) =>
-      mutate((p) => ({
-        ...p,
-        body: { ...p.body, cornerStyle: { ...p.body.cornerStyle, radius } },
-      })),
+      mutate((p) => (p.body.shape !== 'box' ? p : { ...p, body: { ...p.body, cornerStyle: { ...p.body.cornerStyle, radius } } })),
 
     setLidType: (type) =>
       mutate((p) => ({ ...p, body: { ...p.body, lid: { ...p.body.lid, type } } })),
@@ -128,6 +164,27 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, count } } } };
       }),
 
+    setGasketEnabled: (enabled) =>
+      mutate((p) => ({
+        ...p,
+        body: {
+          ...p.body,
+          lid: { ...p.body.lid, gasket: enabled ? (p.body.lid.gasket ?? defaultGasketSpec()) : undefined },
+        },
+      })),
+
+    setGasketWidth: (value) =>
+      mutate((p) => {
+        const gasket = p.body.lid.gasket ?? defaultGasketSpec();
+        return { ...p, body: { ...p.body, lid: { ...p.body.lid, gasket: { ...gasket, width: value } } } };
+      }),
+
+    setGasketDepth: (value) =>
+      mutate((p) => {
+        const gasket = p.body.lid.gasket ?? defaultGasketSpec();
+        return { ...p, body: { ...p.body, lid: { ...p.body.lid, gasket: { ...gasket, depth: value } } } };
+      }),
+
     addFeature: (feature) => mutate((p) => ({ ...p, features: [...p.features, feature] })),
 
     updateFeature: (id, patch) =>
@@ -140,13 +197,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
 
     loadProject: (project) => mutate(() => project),
 
+    // Presets are all rectangular PCBs (BoardPresetBody.outer is length/width/height), so this
+    // always yields a box body -- if the project was a cylinder, that's a shape switch, same as
+    // setBodyShape, and gets a fresh default cornerStyle since a cylinder body has none to reuse.
     applyBoardPreset: (preset) =>
       mutate((p) => ({
         ...p,
         body: {
-          ...p.body,
+          shape: 'box',
           outer: preset.outer,
           wallThickness: preset.wallThickness,
+          cornerStyle: p.body.shape === 'box' ? p.body.cornerStyle : { type: 'rounded', radius: 3 },
           lid: { ...p.body.lid, splitHeight: preset.splitHeight },
         },
         features: [],
@@ -178,4 +239,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
 
 function defaultScrewSpec(): { size: ScrewSize; insertType: ScrewInsertType; count: ScrewCount } {
   return { size: 'M3', insertType: 'heat-set', count: 4 };
+}
+
+function defaultGasketSpec(): { width: number; depth: number } {
+  return { width: 1.5, depth: 1 };
 }

@@ -263,6 +263,14 @@
   width: 130px;
 }
 
+.field-checkbox {
+  justify-content: flex-start;
+}
+
+.field-checkbox input {
+  width: auto;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;

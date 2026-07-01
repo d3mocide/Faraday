@@ -2,23 +2,16 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { EnclosureMeshes } from '../csg/CsgWorkerClient';
-import {
-  clamp01,
-  closestFace,
-  faceFrame,
-  faceFromWorld,
-  faceSize,
-  type OuterDimensions,
-} from '../csg/faceFrame';
+import { bodyGeometry, clamp01, closestFace, faceFrame, faceFromWorld, faceSize } from '../csg/faceFrame';
 import { meshDataToBufferGeometry } from '../csg/meshToBufferGeometry';
 import { snapValue } from '../csg/snapping';
-import type { Face, Feature } from '../types/project';
+import type { EnclosureBody, Face, Feature } from '../types/project';
 
-export type BodyResizePatch = Partial<{ length: number; width: number; height: number }>;
+export type BodyResizePatch = Partial<{ length: number; width: number; height: number; diameter: number }>;
 
 interface Viewport3DProps {
   meshes: EnclosureMeshes | null;
-  outer: OuterDimensions;
+  body: EnclosureBody;
   features: Feature[];
   placementArmed: boolean;
   onPlaceFeature: (face: Face, u: number, v: number) => void;
@@ -43,7 +36,7 @@ type DragState =
 
 export function Viewport3D({
   meshes,
-  outer,
+  body,
   features,
   placementArmed,
   onPlaceFeature,
@@ -64,14 +57,14 @@ export function Viewport3D({
 
   // Latest-value refs so the pointer handlers (set up once, in the mount effect) always see
   // current props without needing to re-attach DOM listeners on every render.
-  const outerRef = useRef(outer);
+  const bodyRef = useRef(body);
   const featuresRef = useRef(features);
   const placementArmedRef = useRef(placementArmed);
   const callbacksRef = useRef({ onPlaceFeature, onSelectFeature, onUpdateFeature, onResizeBody });
 
   useEffect(() => {
-    outerRef.current = outer;
-  }, [outer]);
+    bodyRef.current = body;
+  }, [body]);
   useEffect(() => {
     featuresRef.current = features;
   }, [features]);
@@ -155,7 +148,10 @@ export function Viewport3D({
       side: THREE.DoubleSide,
       depthTest: true,
     });
-    const highlightMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), highlightMaterial);
+    const highlightMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      highlightMaterial,
+    );
     highlightMesh.visible = false;
     scene.add(highlightMesh);
     highlightMeshRef.current = highlightMesh;
@@ -212,10 +208,10 @@ export function Viewport3D({
     };
 
     // PlaneGeometry's default normal is +Z; these are the rotations that lay it flush against
-    // each face's plane. (Using lookAt() here instead would gimbal-lock on front/back, whose
+    // each box face's plane. (Using lookAt() here instead would gimbal-lock on front/back, whose
     // normal is parallel to the default up vector.) The overlay material is double-sided, so the
     // exact sign of each rotation doesn't matter -- only which world plane it ends up in does.
-    const HIGHLIGHT_ROTATION: Record<Face, [number, number, number]> = {
+    const HIGHLIGHT_ROTATION: Partial<Record<Face, [number, number, number]>> = {
       top: [0, 0, 0],
       bottom: [Math.PI, 0, 0],
       front: [Math.PI / 2, 0, 0],
@@ -224,21 +220,49 @@ export function Viewport3D({
       right: [0, Math.PI / 2, 0],
     };
 
+    // A cylinder's curved lateral wall has no single tangent plane, so 'side' highlights the
+    // whole lateral surface as an open cylindrical band -- the direct analogue of how a box's
+    // hover highlight already covers its whole (flat) face rather than a local patch.
     const updateHighlight = (face: Face | null) => {
+      const geom = bodyGeometry(bodyRef.current);
       if (!face) {
         highlightMesh.visible = false;
         return;
       }
-      const o = outerRef.current;
-      const frame = faceFrame(face, o);
-      const [su, sv] = faceSize(face, o);
-      const [x, y, z] = frame.toWorld(0.5, 0.5);
-      const [nx, ny, nz] = frame.normal;
       highlightMesh.visible = true;
-      highlightMesh.position.set(x + nx * 0.2, y + ny * 0.2, z + nz * 0.2);
       highlightMesh.geometry.dispose();
+
+      if (geom.shape === 'cylinder' && face === 'side') {
+        const { diameter, height } = geom;
+        highlightMesh.geometry = new THREE.CylinderGeometry(
+          diameter / 2 + 0.2,
+          diameter / 2 + 0.2,
+          height,
+          48,
+          1,
+          true,
+        );
+        highlightMesh.position.set(0, 0, height / 2);
+        highlightMesh.rotation.set(Math.PI / 2, 0, 0);
+        return;
+      }
+
+      if (geom.shape === 'cylinder') {
+        const { diameter, height } = geom;
+        highlightMesh.geometry = new THREE.CircleGeometry(diameter / 2, 48);
+        const z = face === 'top' ? height + 0.2 : -0.2;
+        highlightMesh.position.set(0, 0, z);
+        highlightMesh.rotation.set(face === 'top' ? 0 : Math.PI, 0, 0);
+        return;
+      }
+
+      const frame = faceFrame(face, geom);
+      const [su, sv] = faceSize(face, geom);
+      const [x, y, z] = frame.toWorld(0.5, 0.5);
+      const [nx, ny, nz] = frame.normalAt(0.5, 0.5);
+      highlightMesh.position.set(x + nx * 0.2, y + ny * 0.2, z + nz * 0.2);
       highlightMesh.geometry = new THREE.PlaneGeometry(su, sv);
-      highlightMesh.rotation.set(...HIGHLIGHT_ROTATION[face]);
+      highlightMesh.rotation.set(...(HIGHLIGHT_ROTATION[face] ?? [0, 0, 0]));
     };
 
     const handlePointerDown = (event: PointerEvent) => {
@@ -275,14 +299,20 @@ export function Viewport3D({
 
       if (dragState.current.type === 'corner') {
         raycaster.setFromCamera(pointer, camera);
+        const geom = bodyGeometry(bodyRef.current);
         groundPlane.setFromNormalAndCoplanarPoint(
           new THREE.Vector3(0, 0, 1),
-          new THREE.Vector3(0, 0, outerRef.current.height),
+          new THREE.Vector3(0, 0, geom.height),
         );
         if (raycaster.ray.intersectPlane(groundPlane, scratchVec)) {
-          const length = Math.max(Math.abs(scratchVec.x) * 2, MIN_DIMENSION);
-          const width = Math.max(Math.abs(scratchVec.y) * 2, MIN_DIMENSION);
-          callbacksRef.current.onResizeBody({ length, width });
+          if (geom.shape === 'cylinder') {
+            const diameter = Math.max(Math.hypot(scratchVec.x, scratchVec.y) * 2, MIN_DIMENSION);
+            callbacksRef.current.onResizeBody({ diameter });
+          } else {
+            const length = Math.max(Math.abs(scratchVec.x) * 2, MIN_DIMENSION);
+            const width = Math.max(Math.abs(scratchVec.y) * 2, MIN_DIMENSION);
+            callbacksRef.current.onResizeBody({ length, width });
+          }
         }
         return;
       }
@@ -298,7 +328,7 @@ export function Viewport3D({
 
       if (dragState.current.type === 'feature') {
         const { id, face } = dragState.current;
-        const o = outerRef.current;
+        const geom = bodyGeometry(bodyRef.current);
         // Drag against the rendered mesh (not an infinite face plane): a plane raycast blows up
         // near the silhouette edge under perspective (a few screen px can map to a huge world
         // distance on a steeply-angled plane), so the mesh's actual bounds naturally clamp the
@@ -312,8 +342,8 @@ export function Viewport3D({
         const hit = raycaster.intersectObjects([base, lid], false)[0];
         if (!hit) return;
 
-        let [u, v] = faceFromWorld(face, o, [hit.point.x, hit.point.y, hit.point.z]);
-        const [sizeU, sizeV] = faceSize(face, o);
+        let [u, v] = faceFromWorld(face, geom, [hit.point.x, hit.point.y, hit.point.z]);
+        const [sizeU, sizeV] = faceSize(face, geom);
         const thresholdU = SNAP_MM / sizeU;
         const thresholdV = SNAP_MM / sizeV;
         const others = featuresRef.current.filter((f) => f.id !== id && f.face === face);
@@ -331,7 +361,11 @@ export function Viewport3D({
       if (!base || !lid) return;
       raycaster.setFromCamera(pointer, camera);
       const hit = raycaster.intersectObjects([base, lid], false)[0];
-      updateHighlight(hit?.face ? closestFace([hit.face.normal.x, hit.face.normal.y, hit.face.normal.z]) : null);
+      updateHighlight(
+        hit?.face
+          ? closestFace([hit.face.normal.x, hit.face.normal.y, hit.face.normal.z], bodyRef.current.shape)
+          : null,
+      );
     };
 
     const handlePointerUp = (event: PointerEvent) => {
@@ -348,8 +382,9 @@ export function Viewport3D({
         raycaster.setFromCamera(pointer, camera);
         const hit = raycaster.intersectObjects([base, lid], false)[0];
         if (!hit?.face) return;
-        const face = closestFace([hit.face.normal.x, hit.face.normal.y, hit.face.normal.z]);
-        const [u, v] = faceFromWorld(face, outerRef.current, [hit.point.x, hit.point.y, hit.point.z]);
+        const geom = bodyGeometry(bodyRef.current);
+        const face = closestFace([hit.face.normal.x, hit.face.normal.y, hit.face.normal.z], geom.shape);
+        const [u, v] = faceFromWorld(face, geom, [hit.point.x, hit.point.y, hit.point.z]);
         callbacksRef.current.onPlaceFeature(face, clamp01(u), clamp01(v));
         return;
       }
@@ -419,13 +454,14 @@ export function Viewport3D({
 
     for (const child of [...group.children]) group.remove(child);
 
+    const geom = bodyGeometry(body);
     const geometry = new THREE.SphereGeometry(1.2, 12, 12);
     const normalMaterial = new THREE.MeshStandardMaterial({ color: FEATURE_MARKER_COLOR });
     const selectedMaterial = new THREE.MeshStandardMaterial({ color: FEATURE_MARKER_SELECTED_COLOR });
     for (const feature of features) {
-      const frame = faceFrame(feature.face, outer);
+      const frame = faceFrame(feature.face, geom);
       const [x, y, z] = frame.toWorld(feature.u, feature.v);
-      const [nx, ny, nz] = frame.normal;
+      const [nx, ny, nz] = frame.normalAt(feature.u, feature.v);
       const marker = new THREE.Mesh(geometry, feature.id === selectedFeatureId ? selectedMaterial : normalMaterial);
       marker.position.set(x + nx * 1.5, y + ny * 1.5, z + nz * 1.5);
       marker.userData.featureId = feature.id;
@@ -438,9 +474,10 @@ export function Viewport3D({
       normalMaterial.dispose();
       selectedMaterial.dispose();
     };
-  }, [features, outer, selectedFeatureId]);
+  }, [features, body, selectedFeatureId]);
 
-  // Corner (length/width) and height resize handles, repositioned whenever the body resizes.
+  // Plan-view resize handle(s) (box: 4 corner cubes; cylinder: 1 radius cube) and the height
+  // cone, repositioned whenever the body resizes.
   useEffect(() => {
     const group = handleGroupRef.current;
     if (!group) return;
@@ -449,14 +486,19 @@ export function Viewport3D({
 
     const cornerGeometry = new THREE.BoxGeometry(3, 3, 3);
     const cornerMaterial = new THREE.MeshStandardMaterial({ color: HANDLE_COLOR });
-    const { length, width, height } = outer;
-    const corners: Array<[number, number]> = [
-      [length / 2, width / 2],
-      [length / 2, -width / 2],
-      [-length / 2, width / 2],
-      [-length / 2, -width / 2],
-    ];
-    for (const [x, y] of corners) {
+    const { height } = body.outer;
+
+    const positions: Array<[number, number]> =
+      body.shape === 'box'
+        ? [
+            [body.outer.length / 2, body.outer.width / 2],
+            [body.outer.length / 2, -body.outer.width / 2],
+            [-body.outer.length / 2, body.outer.width / 2],
+            [-body.outer.length / 2, -body.outer.width / 2],
+          ]
+        : [[body.outer.diameter / 2, 0]];
+
+    for (const [x, y] of positions) {
       const handle = new THREE.Mesh(cornerGeometry, cornerMaterial);
       handle.position.set(x, y, height);
       handle.userData.handleType = 'corner';
@@ -476,7 +518,7 @@ export function Viewport3D({
       heightGeometry.dispose();
       heightMaterial.dispose();
     };
-  }, [outer]);
+  }, [body]);
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
 }

@@ -1,6 +1,6 @@
 import type { CrossSection, Manifold, ManifoldToplevel } from 'manifold-3d';
 import type { ConnectorLibraryEntry, Face, Feature } from '../types/project';
-import { faceFrame, type OuterDimensions } from './faceFrame';
+import { faceFrame, type BodyGeometry } from './faceFrame';
 import { cylinderZ } from './primitives';
 
 function connectorCrossSection(wasm: ManifoldToplevel, entry: ConnectorLibraryEntry): CrossSection {
@@ -25,9 +25,11 @@ function connectorCrossSection(wasm: ManifoldToplevel, entry: ConnectorLibraryEn
 /**
  * Extrusion runs along local Z, centered on the origin (via extrude's `center` option), so it's
  * unaffected by which rotation sign correctly maps Z to a given face's outward normal -- it
- * always spans equally through the wall on both sides of the face regardless.
+ * always spans equally through the wall on both sides of the face regardless. For a cylinder's
+ * 'side' face the outward normal varies continuously with u (angle), so that case additionally
+ * needs the feature's own u to know which way to point -- see the theta rotation below.
  */
-function orientAlongFace(solid: Manifold, face: Face): Manifold {
+function orientAlongFace(solid: Manifold, face: Face, u: number): Manifold {
   switch (face) {
     case 'top':
     case 'bottom':
@@ -38,6 +40,11 @@ function orientAlongFace(solid: Manifold, face: Face): Manifold {
     case 'left':
     case 'right':
       return solid.rotate(0, 90, 0);
+    case 'side': {
+      const thetaDeg = u * 360;
+      // Z -> X (same building block 'left'/'right' use), then spin around Z to the feature's angle.
+      return solid.rotate(0, 90, 0).rotate(0, 0, thetaDeg);
+    }
   }
 }
 
@@ -46,13 +53,17 @@ export function buildConnectorCutout(
   wasm: ManifoldToplevel,
   entry: ConnectorLibraryEntry,
   feature: Feature,
-  outer: OuterDimensions,
+  geom: BodyGeometry,
   wallThickness: number,
 ): Manifold {
   const cross = connectorCrossSection(wasm, entry).rotate(feature.rotationDeg);
   const depth = wallThickness + 4; // margin so it fully punches through any wall thickness
-  const solid = orientAlongFace(cross.extrude(depth, undefined, undefined, undefined, true), feature.face);
-  const [x, y, z] = faceFrame(feature.face, outer).toWorld(feature.u, feature.v);
+  const solid = orientAlongFace(
+    cross.extrude(depth, undefined, undefined, undefined, true),
+    feature.face,
+    feature.u,
+  );
+  const [x, y, z] = faceFrame(feature.face, geom).toWorld(feature.u, feature.v);
   return solid.translate(x, y, z);
 }
 
@@ -60,13 +71,13 @@ export function buildConnectorCutout(
 export function buildStandoff(
   wasm: ManifoldToplevel,
   feature: Feature,
-  outer: OuterDimensions,
+  geom: BodyGeometry,
   wallThickness: number,
 ): Manifold {
   const spec = feature.standoff;
   if (!spec) throw new Error('standoff feature is missing its standoff spec');
 
-  const [x, y] = faceFrame('bottom', outer).toWorld(feature.u, feature.v);
+  const [x, y] = faceFrame('bottom', geom).toWorld(feature.u, feature.v);
   const floorZ = wallThickness;
   const height = Math.max(spec.height, 1);
 

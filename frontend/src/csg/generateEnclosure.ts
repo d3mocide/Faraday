@@ -1,12 +1,19 @@
 import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { findConnector } from '../connectors/library';
 import type { EnclosureProject } from '../types/project';
-import { faceFrame } from './faceFrame';
+import { bodyGeometry, faceFrame } from './faceFrame';
 import { buildConnectorCutout, buildStandoff } from './featurePrimitives';
 import {
   applyFrictionLipLid,
+  applyFrictionLipLidCylinder,
+  applyGasketChannelBox,
+  applyGasketChannelCylinder,
   applyScrewBossLid,
+  applyScrewBossLidCylinder,
+  applySnapFitLid,
+  applySnapFitLidCylinder,
   boxShell,
+  cylinderShell,
   shrinkCornerStyle,
 } from './primitives';
 
@@ -37,20 +44,35 @@ export function generateEnclosure(
   wasm.setCircularSegments(quality === 'export' ? 64 : 20);
 
   const { body } = project;
-  const { length, width, height } = body.outer;
+  const height = body.outer.height;
   const wallThickness = Math.max(body.wallThickness, 0.4);
+  const geom = bodyGeometry(body);
 
-  const outerShape = boxShell(wasm, length, width, height, body.cornerStyle);
+  let outerShape: Manifold;
+  let innerShape: Manifold;
+  let innerCornerStyle = body.shape === 'box' ? shrinkCornerStyle(body.cornerStyle, wallThickness) : undefined;
+  let innerLength = 0;
+  let innerWidth = 0;
+  let innerDiameter = 0;
 
-  const innerCornerStyle = shrinkCornerStyle(body.cornerStyle, wallThickness);
-  const innerLength = Math.max(length - 2 * wallThickness, 1);
-  const innerWidth = Math.max(width - 2 * wallThickness, 1);
-  const innerHeight = Math.max(height - 2 * wallThickness, 1);
-  const innerShape = boxShell(wasm, innerLength, innerWidth, innerHeight, innerCornerStyle).translate(
-    0,
-    0,
-    wallThickness,
-  );
+  if (body.shape === 'box') {
+    const { length, width } = body.outer;
+    outerShape = boxShell(wasm, length, width, height, body.cornerStyle);
+    innerLength = Math.max(length - 2 * wallThickness, 1);
+    innerWidth = Math.max(width - 2 * wallThickness, 1);
+    const innerHeight = Math.max(height - 2 * wallThickness, 1);
+    innerShape = boxShell(wasm, innerLength, innerWidth, innerHeight, innerCornerStyle!).translate(
+      0,
+      0,
+      wallThickness,
+    );
+  } else {
+    const { diameter } = body.outer;
+    outerShape = cylinderShell(wasm, diameter, height);
+    innerDiameter = Math.max(diameter - 2 * wallThickness, 1);
+    const innerHeight = Math.max(height - 2 * wallThickness, 1);
+    innerShape = cylinderShell(wasm, innerDiameter, innerHeight).translate(0, 0, wallThickness);
+  }
 
   const hollowShell = outerShape.subtract(innerShape);
 
@@ -61,25 +83,80 @@ export function generateEnclosure(
   let lid = lidRaw;
 
   if (body.lid.type === 'screw-boss' && body.lid.screw) {
-    ({ base, lid } = applyScrewBossLid(wasm, base, lid, {
-      innerLength,
-      innerWidth,
-      splitHeight,
-      outerHeight: height,
-      screw: body.lid.screw,
-    }));
+    if (body.shape === 'box') {
+      ({ base, lid } = applyScrewBossLid(wasm, base, lid, {
+        innerLength,
+        innerWidth,
+        splitHeight,
+        outerHeight: height,
+        screw: body.lid.screw,
+      }));
+    } else {
+      ({ base, lid } = applyScrewBossLidCylinder(wasm, base, lid, {
+        innerDiameter,
+        splitHeight,
+        outerHeight: height,
+        screw: body.lid.screw,
+      }));
+    }
   } else if (body.lid.type === 'friction-lip') {
-    lid = applyFrictionLipLid(wasm, lid, {
-      innerLength,
-      innerWidth,
-      innerCornerStyle,
-      splitHeight,
-      wallThickness,
-      wallGap: Math.max(body.lid.wallGap, 0),
-    });
+    if (body.shape === 'box') {
+      lid = applyFrictionLipLid(wasm, lid, {
+        innerLength,
+        innerWidth,
+        innerCornerStyle: innerCornerStyle!,
+        splitHeight,
+        wallThickness,
+        wallGap: Math.max(body.lid.wallGap, 0),
+      });
+    } else {
+      lid = applyFrictionLipLidCylinder(wasm, lid, {
+        innerDiameter,
+        splitHeight,
+        wallThickness,
+        wallGap: Math.max(body.lid.wallGap, 0),
+      });
+    }
+  } else if (body.lid.type === 'snap-fit') {
+    if (body.shape === 'box') {
+      ({ base, lid } = applySnapFitLid(wasm, base, lid, {
+        innerLength,
+        innerWidth,
+        splitHeight,
+        wallThickness,
+        wallGap: Math.max(body.lid.wallGap, 0),
+      }));
+    } else {
+      ({ base, lid } = applySnapFitLidCylinder(wasm, base, lid, {
+        innerDiameter,
+        splitHeight,
+        wallThickness,
+        wallGap: Math.max(body.lid.wallGap, 0),
+      }));
+    }
   }
-  // 'snap-fit' is a stretch-goal lid type (Section 7 / Phase 5) and is not
-  // implemented yet; it falls back to the plain split shell.
+
+  // Gasket channel (Phase 5 stretch, DESIGN.md §13): independent of lid.type, so it's applied
+  // after the lid-mating branch above rather than folded into each one.
+  if (body.lid.gasket) {
+    if (body.shape === 'box') {
+      base = applyGasketChannelBox(wasm, base, {
+        length: body.outer.length,
+        width: body.outer.width,
+        cornerStyle: body.cornerStyle,
+        wallThickness,
+        splitHeight,
+        gasket: body.lid.gasket,
+      });
+    } else {
+      base = applyGasketChannelCylinder(wasm, base, {
+        diameter: body.outer.diameter,
+        wallThickness,
+        splitHeight,
+        gasket: body.lid.gasket,
+      });
+    }
+  }
 
   // Apply per-face features (Section 7 step 5). 'vent' and 'custom-hole' aren't wired up yet --
   // nothing in the UI creates them yet either, see PROGRESS.md.
@@ -87,13 +164,13 @@ export function generateEnclosure(
     if (feature.type === 'connector-cutout' && feature.connectorId) {
       const entry = findConnector(feature.connectorId);
       if (!entry) continue;
-      const cutout = buildConnectorCutout(wasm, entry, feature, body.outer, wallThickness);
+      const cutout = buildConnectorCutout(wasm, entry, feature, geom, wallThickness);
       if (feature.face === 'top') {
         lid = lid.subtract(cutout);
       } else if (feature.face === 'bottom') {
         base = base.subtract(cutout);
       } else {
-        const featureZ = faceFrame(feature.face, body.outer).toWorld(feature.u, feature.v)[2];
+        const featureZ = faceFrame(feature.face, geom).toWorld(feature.u, feature.v)[2];
         if (featureZ > splitHeight) {
           lid = lid.subtract(cutout);
         } else {
@@ -102,7 +179,7 @@ export function generateEnclosure(
       }
     } else if (feature.type === 'standoff' && feature.standoff) {
       // Standoffs always mount to the base floor, regardless of the split height.
-      base = base.add(buildStandoff(wasm, feature, body.outer, wallThickness));
+      base = base.add(buildStandoff(wasm, feature, geom, wallThickness));
     }
   }
 
