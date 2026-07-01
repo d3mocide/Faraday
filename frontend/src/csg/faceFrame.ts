@@ -37,6 +37,22 @@ export function faceFrame(face: Face, outer: OuterDimensions): FaceFrame {
   }
 }
 
+/** Physical size [uExtent, vExtent] in mm of a face's two in-plane axes. */
+export function faceSize(face: Face, outer: OuterDimensions): [number, number] {
+  const { length: l, width: w, height: h } = outer;
+  switch (face) {
+    case 'top':
+    case 'bottom':
+      return [l, w];
+    case 'front':
+    case 'back':
+      return [l, h];
+    case 'left':
+    case 'right':
+      return [w, h];
+  }
+}
+
 /** Inverse of faceFrame().toWorld — recovers normalized (u,v), not clamped to [0,1]. */
 export function faceFromWorld(
   face: Face,

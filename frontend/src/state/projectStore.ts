@@ -25,6 +25,7 @@ interface ProjectStore {
   setScrewInsertType: (insertType: ScrewInsertType) => void;
   setScrewCount: (count: ScrewCount) => void;
   addFeature: (feature: Feature) => void;
+  updateFeature: (id: string, patch: Partial<Feature>) => void;
   removeFeature: (id: string) => void;
 }
 
@@ -166,6 +167,14 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   addFeature: (feature) =>
     set((s) => ({
       project: touch({ ...s.project, features: [...s.project.features, feature] }),
+    })),
+
+  updateFeature: (id, patch) =>
+    set((s) => ({
+      project: touch({
+        ...s.project,
+        features: s.project.features.map((f) => (f.id === id ? ({ ...f, ...patch } as Feature) : f)),
+      }),
     })),
 
   removeFeature: (id) =>

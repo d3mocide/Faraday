@@ -45,9 +45,20 @@ function NumberField({
   );
 }
 
-export function InspectorPanel() {
+interface InspectorPanelProps {
+  selectedFeatureId: string | null;
+  onSelectFeature: (id: string | null) => void;
+  onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
+  onRemoveFeature: (id: string) => void;
+}
+
+export function InspectorPanel({
+  selectedFeatureId,
+  onSelectFeature,
+  onUpdateFeature,
+  onRemoveFeature,
+}: InspectorPanelProps) {
   const project = useProjectStore((s) => s.project);
-  const removeFeature = useProjectStore((s) => s.removeFeature);
   const setBodyDimension = useProjectStore((s) => s.setBodyDimension);
   const setWallThickness = useProjectStore((s) => s.setWallThickness);
   const setCornerStyleType = useProjectStore((s) => s.setCornerStyleType);
@@ -61,6 +72,7 @@ export function InspectorPanel() {
 
   const { body } = project;
   const { outer, cornerStyle, lid } = body;
+  const selectedFeature = project.features.find((f) => f.id === selectedFeatureId) ?? null;
 
   return (
     <div className="inspector-panel">
@@ -187,11 +199,11 @@ export function InspectorPanel() {
         ) : (
           <ul className="feature-list">
             {project.features.map((feature) => (
-              <li key={feature.id}>
-                <span>
+              <li key={feature.id} className={feature.id === selectedFeatureId ? 'selected' : undefined}>
+                <button type="button" className="feature-list-select" onClick={() => onSelectFeature(feature.id)}>
                   {featureLabel(feature)} <em>({feature.face})</em>
-                </span>
-                <button type="button" onClick={() => removeFeature(feature.id)} aria-label={`Remove ${featureLabel(feature)}`}>
+                </button>
+                <button type="button" onClick={() => onRemoveFeature(feature.id)} aria-label={`Remove ${featureLabel(feature)}`}>
                   ×
                 </button>
               </li>
@@ -199,6 +211,52 @@ export function InspectorPanel() {
           </ul>
         )}
       </section>
+
+      {selectedFeature && (
+        <section>
+          <h3>Selected: {featureLabel(selectedFeature)}</h3>
+          <NumberField
+            label="Rotation (deg)"
+            value={selectedFeature.rotationDeg}
+            step={5}
+            onChange={(v) => onUpdateFeature(selectedFeature.id, { rotationDeg: v })}
+          />
+          {selectedFeature.type === 'standoff' && selectedFeature.standoff && (
+            <>
+              <NumberField
+                label="Outer diameter"
+                value={selectedFeature.standoff.outerDiameter}
+                min={2}
+                onChange={(v) =>
+                  onUpdateFeature(selectedFeature.id, {
+                    standoff: { ...selectedFeature.standoff!, outerDiameter: v },
+                  })
+                }
+              />
+              <NumberField
+                label="Screw hole diameter"
+                value={selectedFeature.standoff.screwHoleDiameter}
+                min={0.5}
+                onChange={(v) =>
+                  onUpdateFeature(selectedFeature.id, {
+                    standoff: { ...selectedFeature.standoff!, screwHoleDiameter: v },
+                  })
+                }
+              />
+              <NumberField
+                label="Height"
+                value={selectedFeature.standoff.height}
+                min={1}
+                onChange={(v) =>
+                  onUpdateFeature(selectedFeature.id, {
+                    standoff: { ...selectedFeature.standoff!, height: v },
+                  })
+                }
+              />
+            </>
+          )}
+        </section>
+      )}
     </div>
   );
 }

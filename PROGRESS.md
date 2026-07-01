@@ -11,7 +11,7 @@ tracks *how far we've gotten* and *what's different from the spec in practice*.
 | Phase 0 — Scaffold & static box | ✅ Done |
 | Phase 1 — Lid system | ✅ Done |
 | Phase 2 — Connector/feature library | ✅ Done |
-| Phase 3 — Direct manipulation | ⬜ Not started |
+| Phase 3 — Direct manipulation | ✅ Done |
 | Phase 4 — Presets, persistence, polish | ⬜ Not started |
 | Phase 5 — Stretch | ⬜ Not started |
 
@@ -113,6 +113,52 @@ targeted, documented escape hatch — reach for that before revisiting this.
   inspector list works, and confirmed both exported STLs remain watertight (every mesh edge shared
   by exactly two triangles) with multiple features applied together.
 
+## Phase 3 implementation notes
+
+- All pointer interaction (click-to-place, hover face highlight, feature select/drag, resize
+  handles) lives in **one** set of DOM listeners attached once in `Viewport3D`'s mount effect,
+  rather than several effects each attaching their own. Changing props (`outer`, `features`,
+  `placementArmed`, the callbacks) are read through refs updated by small dependency-effects, not
+  by re-attaching listeners — see the comment block above the listener setup. This was a deliberate
+  consolidation versus Phase 2's separate click-to-place effect, once hover/drag/handles all
+  needed to coexist on the same canvas without fighting each other or `OrbitControls`.
+- **`OrbitControls.enabled` is toggled off for the duration of any handle or feature drag**
+  (`setControlsEnabled` in `Viewport3D.tsx`), checked eagerly on `pointerdown` (not after a
+  movement threshold) so there's no camera-jiggle at the start of a drag. Re-enabled on
+  `pointerup` regardless of what was being dragged.
+- **Feature dragging raycasts against the rendered mesh, not an infinite face plane** — this was
+  the one real bug caught during verification: an infinite-plane raycast blows up near the
+  silhouette edge under perspective (a few screen px can map to tens of mm on a steeply-angled
+  plane), so a drag would rocket to the face boundary almost immediately instead of tracking the
+  cursor. Raycasting the actual mesh naturally bounds the drag to visible geometry. `face` itself
+  stays fixed from pickup (not re-derived each move) and the hit point's raw xyz is reinterpreted
+  through that fixed face's `faceFromWorld` — this is also what keeps a standoff drag constrained
+  to the bottom face rather than jumping to whatever face the cursor happens to stray onto.
+- **Resize handles**: 4 corner cubes at the top face corners drag on the horizontal plane at
+  `z = height` and set length/width together (`length = 2*|x|`, `width = 2*|y|`, exploiting the
+  body being centered at the origin); a separate cone handle above the top face center drags along
+  a camera-facing vertical plane through the height axis (standard gizmo technique — a plane
+  containing the drag axis, oriented to face the camera, avoids the axis-parallel-to-view
+  degenerate case a naive fixed plane would hit).
+- **Snapping** (`csg/snapping.ts`) is a single generic `snapValue(value, candidates, threshold)`
+  used for both axes independently: candidates are `[0, 0.5, 1, ...otherFeaturesOnSameFace]`, and
+  the mm-based threshold (2mm) is converted to normalized per-axis via `faceSize()` since a face's
+  two axes are rarely the same physical length.
+- Per-feature dimension overrides (standoff outer/screw-hole/height) are editable in the inspector
+  now via `updateFeature`; `antenna-passthrough`'s "no sane default" gap from the Phase 2 notes is
+  **still** open, though — connector-cutout features have no override fields in the data model yet,
+  only `rotationDeg` is editable for them. Adding a size-override field is a small, isolated
+  follow-up if it's ever needed.
+- `vent` and `custom-hole` remain unimplemented, same as noted in Phase 2 — nothing in Phase 3
+  changed that.
+- Verified end-to-end with Playwright: hover highlight appears/disappears correctly per face;
+  clicking a marker selects it (turns red) and populates the inspector; editing rotation in the
+  inspector updates the store; dragging a marker tracks the cursor smoothly and is bounded to the
+  face (this is what caught the infinite-plane bug above); clicking empty space deselects;
+  removing the selected feature also clears the selection; both corner and height handles resize
+  the body live with the numeric fields staying in sync in both directions; export after a resize
+  + feature placement still produces two watertight STLs.
+
 ## Known issues / gotchas for future sessions
 
 - **React StrictMode + Web Worker gotcha**: the CSG worker client must be constructed inside a
@@ -131,15 +177,16 @@ targeted, documented escape hatch — reach for that before revisiting this.
 
 ## Next steps (suggested order)
 
-1. **Phase 3 — Direct manipulation**: drag handles on body corners for resize, drag-to-reposition
-   placed features with snapping (edges, center lines, other features), face highlighting on
-   hover, click-to-select a placed feature to show it in the inspector (including editable
-   `rotationDeg` and, for `antenna-passthrough`, a per-feature size override — see the Phase 2
-   notes above on why that's deferred).
-2. **Phase 4 — Presets, persistence, polish**: board presets, save/load JSON, localStorage
+1. **Phase 4 — Presets, persistence, polish**: board presets, save/load JSON, localStorage
    autosave, mm/in units toggle (the `units` field already exists on `EnclosureProject` but has no
    UI yet), undo/redo.
-3. **Phase 5 — Stretch**: cylindrical body, snap-fit lid, gasket channel, BOM export.
+2. **Phase 5 — Stretch**: cylindrical body, snap-fit lid, gasket channel, BOM export.
+
+Smaller items that surfaced during Phase 2/3 but aren't blocking: `vent`/`custom-hole` feature
+types have no CSG or UI implementation; `dshape` connector holes fall back to circle/rect;
+`antenna-passthrough` has no per-feature size override; drag-to-reposition snapping doesn't yet
+snap across faces (e.g. matching u/v on an adjacent face) — only within the same face, per
+DESIGN.md §13's "other features" wording.
 
 Also still open from earlier phases, not blocking: the ~845KB main bundle (see below), and the
 never-verified Docker build.
@@ -154,6 +201,11 @@ never-verified Docker build.
   Implemented and verified Phase 2 (connector/feature library, click-to-place, cutout + standoff
   generation) — see the Phase 2 implementation notes above for the scope decisions and what's
   intentionally deferred. Opened PR #2 (draft) on top of the merged PR #1.
+- **2026-07-01**: Implemented and verified Phase 3 (direct manipulation: corner/height resize
+  handles, hover face highlighting, click-to-select + inspector editing of placed features,
+  drag-to-reposition with snapping) on the same branch/PR #2. Caught and fixed one real bug during
+  Playwright verification — see the Phase 3 implementation notes above for the infinite-plane
+  raycasting issue with feature dragging.
 
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->
