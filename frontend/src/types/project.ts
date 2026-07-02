@@ -87,7 +87,15 @@ export interface Feature {
   custom?: { shape: 'circle' | 'rect'; width: number; height?: number };
 }
 
-export type ConnectorCategory = 'rf' | 'usb' | 'power' | 'antenna' | 'misc';
+export type ConnectorCategory =
+  | 'rf'
+  | 'usb'
+  | 'power'
+  | 'antenna'
+  | 'video'
+  | 'network'
+  | 'audio'
+  | 'misc';
 
 export interface ConnectorLibraryEntry {
   id: string;

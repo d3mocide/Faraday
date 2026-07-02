@@ -16,10 +16,22 @@ const CATEGORY_LABELS: Record<ConnectorCategory, string> = {
   usb: 'USB',
   power: 'Power',
   antenna: 'Antenna',
+  video: 'Video',
+  network: 'Network',
+  audio: 'Audio',
   misc: 'Misc',
 };
 
-const CATEGORY_ORDER: ConnectorCategory[] = ['rf', 'usb', 'power', 'antenna', 'misc'];
+const CATEGORY_ORDER: ConnectorCategory[] = [
+  'rf',
+  'usb',
+  'video',
+  'network',
+  'audio',
+  'power',
+  'antenna',
+  'misc',
+];
 
 export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) {
   const categories = CATEGORY_ORDER.filter((category) =>
