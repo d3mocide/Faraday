@@ -4,6 +4,7 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import type { CsgWorkerClient } from '../csg/CsgWorkerClient';
 import { meshDataToBufferGeometry } from '../csg/meshToBufferGeometry';
 import type { EnclosureProject } from '../types/project';
+import { generateBomCsv } from './bom';
 import { sanitizeFilename } from './filename';
 
 function partToStlBytes(mesh: { positions: Float32Array; indices: Uint32Array }): Uint8Array {
@@ -28,6 +29,7 @@ export async function exportEnclosureZip(
   const zip = new JSZip();
   zip.file('case_base.stl', partToStlBytes(meshes.base));
   zip.file('case_lid.stl', partToStlBytes(meshes.lid));
+  zip.file('bom.csv', generateBomCsv(project));
   const blob = await zip.generateAsync({ type: 'blob' });
 
   onStatus?.('Starting download...');

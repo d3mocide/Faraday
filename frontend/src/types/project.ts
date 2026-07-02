@@ -1,4 +1,4 @@
-export type Face = 'top' | 'bottom' | 'front' | 'back' | 'left' | 'right';
+export type Face = 'top' | 'bottom' | 'front' | 'back' | 'left' | 'right' | 'side';
 
 export type Units = 'mm' | 'in';
 
@@ -21,20 +21,42 @@ export interface ScrewSpec {
 
 export type LidType = 'friction-lip' | 'screw-boss' | 'snap-fit';
 
+/** Phase 5 stretch feature (DESIGN.md §13): an O-ring/cord seal channel cut into the base's top
+ * rim, independent of lid.type -- any lid type can be combined with a gasket channel. */
+export interface GasketSpec {
+  width: number; // mm, channel width
+  depth: number; // mm, channel depth
+}
+
 export interface LidSpec {
   type: LidType;
   splitHeight: number; // mm from base where the lid separates
   wallGap: number; // mm clearance for the fit (tune per printer)
   screw?: ScrewSpec; // only for 'screw-boss'
+  gasket?: GasketSpec; // present = channel cut, absent = no gasket channel
 }
 
-export interface EnclosureBody {
-  shape: 'box'; // extensible discriminated union, only 'box' ships in v1
+export type BodyShape = 'box' | 'cylinder';
+
+export interface BoxBody {
+  shape: 'box';
   outer: { length: number; width: number; height: number }; // mm
   wallThickness: number; // mm
   cornerStyle: CornerStyle;
   lid: LidSpec;
 }
+
+/** Phase 5 stretch shape (DESIGN.md §9/§13): a round mast/antenna-mount enclosure. No corner
+ * style (nothing to round/chamfer on a circular footprint) and its curved lateral wall is the
+ * 'side' face -- see Face and csg/faceFrame.ts's cylinder branch for the u/v convention. */
+export interface CylinderBody {
+  shape: 'cylinder';
+  outer: { diameter: number; height: number }; // mm
+  wallThickness: number; // mm
+  lid: LidSpec;
+}
+
+export type EnclosureBody = BoxBody | CylinderBody;
 
 export interface StandoffSpec {
   outerDiameter: number; // mm

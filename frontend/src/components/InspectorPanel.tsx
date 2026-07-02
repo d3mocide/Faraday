@@ -3,6 +3,7 @@ import { findConnector } from '../connectors/library';
 import { useProjectStore } from '../state/projectStore';
 import { displayStep, displayToMm, mmToDisplay, roundForDisplay, unitLabel } from '../state/units';
 import type {
+  BodyShape,
   CornerStyleType,
   Feature,
   LidType,
@@ -91,6 +92,7 @@ export function InspectorPanel({
   onRemoveFeature,
 }: InspectorPanelProps) {
   const project = useProjectStore((s) => s.project);
+  const setBodyShape = useProjectStore((s) => s.setBodyShape);
   const setBodyDimension = useProjectStore((s) => s.setBodyDimension);
   const setWallThickness = useProjectStore((s) => s.setWallThickness);
   const setCornerStyleType = useProjectStore((s) => s.setCornerStyleType);
@@ -101,32 +103,55 @@ export function InspectorPanel({
   const setScrewSize = useProjectStore((s) => s.setScrewSize);
   const setScrewInsertType = useProjectStore((s) => s.setScrewInsertType);
   const setScrewCount = useProjectStore((s) => s.setScrewCount);
+  const setGasketEnabled = useProjectStore((s) => s.setGasketEnabled);
+  const setGasketWidth = useProjectStore((s) => s.setGasketWidth);
+  const setGasketDepth = useProjectStore((s) => s.setGasketDepth);
 
   const { body, units } = project;
-  const { outer, cornerStyle, lid } = body;
+  const { lid } = body;
   const selectedFeature = project.features.find((f) => f.id === selectedFeatureId) ?? null;
+  const minPlanDimension = body.shape === 'box' ? Math.min(body.outer.length, body.outer.width) : body.outer.diameter;
 
   return (
     <div className="inspector-panel">
       <section>
         <h3>Body</h3>
-        <UnitNumberField
-          label="Length"
-          valueMm={outer.length}
-          units={units}
-          minMm={5}
-          onChangeMm={(v) => setBodyDimension('length', v)}
-        />
-        <UnitNumberField
-          label="Width"
-          valueMm={outer.width}
-          units={units}
-          minMm={5}
-          onChangeMm={(v) => setBodyDimension('width', v)}
-        />
+        <label className="field">
+          <span>Shape</span>
+          <select value={body.shape} onChange={(e) => setBodyShape(e.target.value as BodyShape)}>
+            <option value="box">Box</option>
+            <option value="cylinder">Cylinder</option>
+          </select>
+        </label>
+        {body.shape === 'box' ? (
+          <>
+            <UnitNumberField
+              label="Length"
+              valueMm={body.outer.length}
+              units={units}
+              minMm={5}
+              onChangeMm={(v) => setBodyDimension('length', v)}
+            />
+            <UnitNumberField
+              label="Width"
+              valueMm={body.outer.width}
+              units={units}
+              minMm={5}
+              onChangeMm={(v) => setBodyDimension('width', v)}
+            />
+          </>
+        ) : (
+          <UnitNumberField
+            label="Diameter"
+            valueMm={body.outer.diameter}
+            units={units}
+            minMm={5}
+            onChangeMm={(v) => setBodyDimension('diameter', v)}
+          />
+        )}
         <UnitNumberField
           label="Height"
-          valueMm={outer.height}
+          valueMm={body.outer.height}
           units={units}
           minMm={5}
           onChangeMm={(v) => setBodyDimension('height', v)}
@@ -136,35 +161,37 @@ export function InspectorPanel({
           valueMm={body.wallThickness}
           units={units}
           minMm={0.8}
-          maxMm={Math.min(outer.length, outer.width) / 2 - 0.5}
+          maxMm={minPlanDimension / 2 - 0.5}
           onChangeMm={setWallThickness}
         />
       </section>
 
-      <section>
-        <h3>Corners</h3>
-        <label className="field">
-          <span>Style</span>
-          <select
-            value={cornerStyle.type}
-            onChange={(e) => setCornerStyleType(e.target.value as CornerStyleType)}
-          >
-            <option value="sharp">Sharp</option>
-            <option value="rounded">Rounded</option>
-            <option value="chamfered">Chamfered</option>
-          </select>
-        </label>
-        {cornerStyle.type !== 'sharp' && (
-          <UnitNumberField
-            label="Corner radius"
-            valueMm={cornerStyle.radius}
-            units={units}
-            minMm={0.5}
-            maxMm={Math.min(outer.length, outer.width) / 2 - 0.5}
-            onChangeMm={setCornerRadius}
-          />
-        )}
-      </section>
+      {body.shape === 'box' && (
+        <section>
+          <h3>Corners</h3>
+          <label className="field">
+            <span>Style</span>
+            <select
+              value={body.cornerStyle.type}
+              onChange={(e) => setCornerStyleType(e.target.value as CornerStyleType)}
+            >
+              <option value="sharp">Sharp</option>
+              <option value="rounded">Rounded</option>
+              <option value="chamfered">Chamfered</option>
+            </select>
+          </label>
+          {body.cornerStyle.type !== 'sharp' && (
+            <UnitNumberField
+              label="Corner radius"
+              valueMm={body.cornerStyle.radius}
+              units={units}
+              minMm={0.5}
+              maxMm={minPlanDimension / 2 - 0.5}
+              onChangeMm={setCornerRadius}
+            />
+          )}
+        </section>
+      )}
 
       <section>
         <h3>Lid</h3>
@@ -173,6 +200,7 @@ export function InspectorPanel({
           <select value={lid.type} onChange={(e) => setLidType(e.target.value as LidType)}>
             <option value="friction-lip">Friction lip</option>
             <option value="screw-boss">Screw boss</option>
+            <option value="snap-fit">Snap fit</option>
           </select>
         </label>
         <UnitNumberField
@@ -180,7 +208,7 @@ export function InspectorPanel({
           valueMm={lid.splitHeight}
           units={units}
           minMm={body.wallThickness + 1}
-          maxMm={outer.height - body.wallThickness - 1}
+          maxMm={body.outer.height - body.wallThickness - 1}
           onChangeMm={setSplitHeight}
         />
         <UnitNumberField
@@ -227,6 +255,37 @@ export function InspectorPanel({
                 <option value={8}>8</option>
               </select>
             </label>
+          </>
+        )}
+
+        <label className="field field-checkbox">
+          <input
+            type="checkbox"
+            checked={lid.gasket !== undefined}
+            onChange={(e) => setGasketEnabled(e.target.checked)}
+          />
+          <span>Gasket channel</span>
+        </label>
+        {lid.gasket && (
+          <>
+            <UnitNumberField
+              label="Channel width"
+              valueMm={lid.gasket.width}
+              units={units}
+              minMm={0.5}
+              maxMm={Math.max(body.wallThickness - 0.4, 0.5)}
+              stepMm={0.1}
+              onChangeMm={setGasketWidth}
+            />
+            <UnitNumberField
+              label="Channel depth"
+              valueMm={lid.gasket.depth}
+              units={units}
+              minMm={0.2}
+              maxMm={Math.max(lid.splitHeight - 1, 0.2)}
+              stepMm={0.1}
+              onChangeMm={setGasketDepth}
+            />
           </>
         )}
       </section>

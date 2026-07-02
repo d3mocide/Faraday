@@ -55,6 +55,7 @@ function App() {
     if (patch.length !== undefined) setBodyDimension('length', patch.length);
     if (patch.width !== undefined) setBodyDimension('width', patch.width);
     if (patch.height !== undefined) setBodyDimension('height', patch.height);
+    if (patch.diameter !== undefined) setBodyDimension('diameter', patch.diameter);
   };
 
   const handleRemoveFeature = (id: string) => {
@@ -68,7 +69,7 @@ function App() {
       <div className="viewport-area">
         <Viewport3D
           meshes={meshes}
-          outer={project.body.outer}
+          body={project.body}
           features={project.features}
           placementArmed={armed !== null}
           onPlaceFeature={handlePlaceFeature}

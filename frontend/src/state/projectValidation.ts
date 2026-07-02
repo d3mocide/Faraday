@@ -15,17 +15,20 @@ export function isValidEnclosureProject(data: unknown): data is EnclosureProject
 
   if (typeof p.body !== 'object' || p.body === null) return false;
   const body = p.body as Record<string, unknown>;
-  if (body.shape !== 'box') return false;
+  if (body.shape !== 'box' && body.shape !== 'cylinder') return false;
   if (typeof body.wallThickness !== 'number') return false;
 
   if (typeof body.outer !== 'object' || body.outer === null) return false;
   const outer = body.outer as Record<string, unknown>;
-  if (typeof outer.length !== 'number' || typeof outer.width !== 'number' || typeof outer.height !== 'number') {
-    return false;
+  if (body.shape === 'box') {
+    if (typeof outer.length !== 'number' || typeof outer.width !== 'number' || typeof outer.height !== 'number') {
+      return false;
+    }
+    if (typeof body.cornerStyle !== 'object' || body.cornerStyle === null) return false;
+    if (typeof (body.cornerStyle as Record<string, unknown>).type !== 'string') return false;
+  } else {
+    if (typeof outer.diameter !== 'number' || typeof outer.height !== 'number') return false;
   }
-
-  if (typeof body.cornerStyle !== 'object' || body.cornerStyle === null) return false;
-  if (typeof (body.cornerStyle as Record<string, unknown>).type !== 'string') return false;
 
   if (typeof body.lid !== 'object' || body.lid === null) return false;
   if (typeof (body.lid as Record<string, unknown>).type !== 'string') return false;
