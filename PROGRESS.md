@@ -310,6 +310,25 @@ targeted, documented escape hatch — reach for that before revisiting this.
   one near 1° won't snap to each other even though they're physically adjacent). Minor, same
   "smaller items" tier as the pre-existing cross-face snapping gap below.
 
+## Connector/board preset library growth
+
+- **Connector library** (`connectors/library.ts`) grew from the DESIGN.md §6 starter set (6
+  entries) to add HDMI (full-size, mini, micro), Ethernet RJ45, Micro-USB (B), USB-B, a 3.5mm TRS
+  audio jack, and an IEC C14 power inlet — same "verify before printing" unverified-starter-value
+  disclaimer as the original set. This needed three new `ConnectorCategory` values (`video`,
+  `network`, `audio`) added to the type union and to `FeaturePalette.tsx`'s `CATEGORY_LABELS`/
+  `CATEGORY_ORDER` — everything else (palette rendering, cutout CSG) is data-driven off the array,
+  so no other code changed.
+- **Board presets** (`presets/boards.ts`) grew from 4 to 8: added Seeed Studio XIAO (RP2040/
+  ESP32-C3/SAMD21 share one footprint), Raspberry Pi 3B/4B, Raspberry Pi 5 (taller, for the active
+  cooler), and a Raspberry Pi + HAT stack variant (taller still, for header + HAT clearance). Same
+  precedent as the existing 4 presets: dimensions/wall-thickness/split-height only, no real
+  mounting-hole positions.
+- Verified end-to-end with Playwright: all new palette entries appear under their category
+  headers, placing a new cutout (Ethernet RJ45) works identically to an original-set connector,
+  and all 4 new board presets appear in the picker and correctly resize the body (checked
+  Raspberry Pi 5 → 100×70×35mm, split height 22mm).
+
 ## Next steps (suggested order)
 
 All phases in DESIGN.md §13 (0 through 5) are now implemented and verified. What's left is smaller
@@ -352,6 +371,11 @@ never-verified Docker build.
   notes above for the architecture decisions (why box/cylinder lid mating is written twice rather
   than genericized) and what's intentionally simplified (snap-fit's plain-sphere nub instead of an
   engineered wedge profile). No regressions found in the existing box-only code paths.
+- **2026-07-02**: Grew the connector library (HDMI full/mini/micro, Ethernet RJ45, Micro-USB,
+  USB-B, 3.5mm TRS audio jack, IEC C14 power inlet) and board preset list (Seeed XIAO, Raspberry Pi
+  3B/4B, Raspberry Pi 5, Pi + HAT stack) per user request — see the new section above this log.
+  Purely additive to existing data-driven UI (three new connector categories added to the type and
+  to `FeaturePalette.tsx`), no architecture changes. Verified with Playwright.
 
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->
