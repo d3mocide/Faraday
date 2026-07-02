@@ -40,4 +40,32 @@ export const BOARD_PRESETS: BoardPreset[] = [
     notes: 'Fits the board with clearance for the header, micro-USB, and mini-HDMI ports.',
     body: { outer: { length: 75, width: 40, height: 20 }, wallThickness: 2, splitHeight: 13 },
   },
+  {
+    id: 'seeed-xiao',
+    label: 'Seeed Studio XIAO (RP2040/ESP32-C3/SAMD21)',
+    notes:
+      'All XIAO variants share the same ~21x17.5mm board footprint; fits any of them with room for the USB-C port and a couple of pin headers.',
+    body: { outer: { length: 30, width: 24, height: 14 }, wallThickness: 2, splitHeight: 9 },
+  },
+  {
+    id: 'raspberry-pi-3-4',
+    label: 'Raspberry Pi 3B/4B',
+    notes:
+      'Fits the full-size 85x56mm Pi board with clearance for the USB/Ethernet stack, GPIO header, and (on the 4B) micro-HDMI ports.',
+    body: { outer: { length: 100, width: 70, height: 30 }, wallThickness: 2, splitHeight: 20 },
+  },
+  {
+    id: 'raspberry-pi-5',
+    label: 'Raspberry Pi 5',
+    notes:
+      'Same 85x56mm board footprint as the 3B/4B, sized a bit taller to leave headroom for the official active cooler.',
+    body: { outer: { length: 100, width: 70, height: 35 }, wallThickness: 2, splitHeight: 22 },
+  },
+  {
+    id: 'raspberry-pi-hat-stack',
+    label: 'Raspberry Pi + HAT Stack',
+    notes:
+      'Extra-tall variant of the Pi 3/4/5 footprint to clear a stacked HAT board on the 40-pin GPIO header (header + HAT + standoffs) — no board-specific standoff pattern, just clearance.',
+    body: { outer: { length: 100, width: 70, height: 45 }, wallThickness: 2, splitHeight: 20 },
+  },
 ];
