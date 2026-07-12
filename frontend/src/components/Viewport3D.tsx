@@ -3,16 +3,26 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { EnclosureMeshes } from '../csg/CsgWorkerClient';
 import { bodyGeometry, clamp01, closestFace, faceFrame, faceFromWorld, faceSize } from '../csg/faceFrame';
+import { effectiveSplitHeight, featureOnLid } from '../csg/lidSplit';
 import { meshDataToBufferGeometry } from '../csg/meshToBufferGeometry';
 import { snapValue } from '../csg/snapping';
 import type { EnclosureBody, Face, Feature } from '../types/project';
 
 export type BodyResizePatch = Partial<{ length: number; width: number; height: number; diameter: number }>;
 
+/** View-only lid presentation — never part of the saved project or undo history. */
+export type LidView = 'assembled' | 'ghost' | 'hidden' | 'exploded';
+
+/** How far the lid mesh is lifted in 'exploded' view (world Z, mm). */
+function explodeOffset(lidView: LidView, bodyHeight: number): number {
+  return lidView === 'exploded' ? Math.max(15, bodyHeight * 0.4) : 0;
+}
+
 interface Viewport3DProps {
   meshes: EnclosureMeshes | null;
   body: EnclosureBody;
   features: Feature[];
+  lidView: LidView;
   placementArmed: boolean;
   onPlaceFeature: (face: Face, u: number, v: number) => void;
   selectedFeatureId: string | null;
@@ -38,6 +48,7 @@ export function Viewport3D({
   meshes,
   body,
   features,
+  lidView,
   placementArmed,
   onPlaceFeature,
   selectedFeatureId,
@@ -50,7 +61,7 @@ export function Viewport3D({
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const baseMeshRef = useRef<THREE.Mesh | null>(null);
-  const lidMeshRef = useRef<THREE.Mesh | null>(null);
+  const lidMeshRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial> | null>(null);
   const markerGroupRef = useRef<THREE.Group | null>(null);
   const handleGroupRef = useRef<THREE.Group | null>(null);
   const highlightMeshRef = useRef<THREE.Mesh | null>(null);
@@ -59,6 +70,7 @@ export function Viewport3D({
   // current props without needing to re-attach DOM listeners on every render.
   const bodyRef = useRef(body);
   const featuresRef = useRef(features);
+  const lidViewRef = useRef(lidView);
   const placementArmedRef = useRef(placementArmed);
   const callbacksRef = useRef({ onPlaceFeature, onSelectFeature, onUpdateFeature, onResizeBody });
 
@@ -68,6 +80,9 @@ export function Viewport3D({
   useEffect(() => {
     featuresRef.current = features;
   }, [features]);
+  useEffect(() => {
+    lidViewRef.current = lidView;
+  }, [lidView]);
   useEffect(() => {
     placementArmedRef.current = placementArmed;
   }, [placementArmed]);
@@ -193,6 +208,44 @@ export function Viewport3D({
     const heightAxisDir = new THREE.Vector3(0, 0, 1);
     const scratchVec = new THREE.Vector3();
 
+    // Which meshes pointer rays may hit: a hidden lid must be excluded explicitly (three's
+    // raycaster does not skip invisible meshes), and a ghost lid is see-through for interaction
+    // too — clicks land on the interior so features can be placed inside while it's shown as
+    // context. Only assembled/exploded lids take hits.
+    const raycastTargets = (): THREE.Mesh[] => {
+      const view = lidViewRef.current;
+      const targets: THREE.Mesh[] = [baseMesh];
+      if (view === 'assembled' || view === 'exploded') targets.push(lidMesh);
+      return targets;
+    };
+
+    /** Raycast hit point in model space: hits on an exploded lid shift back down by its offset. */
+    const modelPoint = (hit: THREE.Intersection): [number, number, number] => {
+      const offset =
+        hit.object === lidMesh
+          ? explodeOffset(lidViewRef.current, bodyRef.current.outer.height)
+          : 0;
+      return [hit.point.x, hit.point.y, hit.point.z - offset];
+    };
+
+    // Hiding/ghosting the lid exposes *interior* surfaces to clicks, and an interior surface's
+    // normal points away from the wall it belongs to: the inside of the back wall faces front,
+    // the interior floor faces up, etc. Remap by where the point physically sits — side walls by
+    // which half of the footprint the point is in, floor/ceiling by which side of the split
+    // plane. This is what lets standoffs be placed on the interior floor from a normal top-down
+    // view instead of orbiting underneath the model. (u,v) stays correct: faceFromWorld's
+    // mapping for the remapped face reads the same world coordinates.
+    const resolveInteriorFace = (face: Face, [x, y, z]: [number, number, number]): Face => {
+      if (face === 'front' && y > 0) return 'back';
+      if (face === 'back' && y < 0) return 'front';
+      if (face === 'left' && x > 0) return 'right';
+      if (face === 'right' && x < 0) return 'left';
+      const split = effectiveSplitHeight(bodyRef.current);
+      if (face === 'top' && z < split - 0.01) return 'bottom';
+      if (face === 'bottom' && z > split + 0.01) return 'top';
+      return face;
+    };
+
     /** A plane containing the vertical axis through (0,0,*) and facing the camera, for dragging the height handle. */
     const heightDragPlane = (): THREE.Plane => {
       const camToAxis = camera.position.clone().sub(heightAxisPoint);
@@ -250,7 +303,8 @@ export function Viewport3D({
       if (geom.shape === 'cylinder') {
         const { diameter, height } = geom;
         highlightMesh.geometry = new THREE.CircleGeometry(diameter / 2, 48);
-        const z = face === 'top' ? height + 0.2 : -0.2;
+        const z =
+          face === 'top' ? height + 0.2 + explodeOffset(lidViewRef.current, height) : -0.2;
         highlightMesh.position.set(0, 0, z);
         highlightMesh.rotation.set(face === 'top' ? 0 : Math.PI, 0, 0);
         return;
@@ -263,6 +317,12 @@ export function Viewport3D({
       highlightMesh.position.set(x + nx * 0.2, y + ny * 0.2, z + nz * 0.2);
       highlightMesh.geometry = new THREE.PlaneGeometry(su, sv);
       highlightMesh.rotation.set(...(HIGHLIGHT_ROTATION[face] ?? [0, 0, 0]));
+
+      // 'top' is the only face that lives entirely on the lid — follow it when exploded. Side
+      // faces straddle the split, so their (whole-face) highlight stays at the model position.
+      if (face === 'top') {
+        highlightMesh.position.z += explodeOffset(lidViewRef.current, geom.height);
+      }
     };
 
     const handlePointerDown = (event: PointerEvent) => {
@@ -335,14 +395,11 @@ export function Viewport3D({
         // drag to something sane. `face` stays fixed from pickup and the hit point is
         // reinterpreted through that face's own (u,v) mapping, regardless of which triangle of
         // the mesh was actually struck.
-        const base = baseMeshRef.current;
-        const lid = lidMeshRef.current;
-        if (!base || !lid) return;
         raycaster.setFromCamera(pointer, camera);
-        const hit = raycaster.intersectObjects([base, lid], false)[0];
+        const hit = raycaster.intersectObjects(raycastTargets(), false)[0];
         if (!hit) return;
 
-        let [u, v] = faceFromWorld(face, geom, [hit.point.x, hit.point.y, hit.point.z]);
+        let [u, v] = faceFromWorld(face, geom, modelPoint(hit));
         const [sizeU, sizeV] = faceSize(face, geom);
         const thresholdU = SNAP_MM / sizeU;
         const thresholdV = SNAP_MM / sizeV;
@@ -356,16 +413,18 @@ export function Viewport3D({
       // Not dragging anything -- hover face highlight (skipped while armed; click-to-place's
       // own crosshair cursor is enough feedback there).
       if (placementArmedRef.current) return;
-      const base = baseMeshRef.current;
-      const lid = lidMeshRef.current;
-      if (!base || !lid) return;
       raycaster.setFromCamera(pointer, camera);
-      const hit = raycaster.intersectObjects([base, lid], false)[0];
-      updateHighlight(
-        hit?.face
-          ? closestFace([hit.face.normal.x, hit.face.normal.y, hit.face.normal.z], bodyRef.current.shape)
-          : null,
+      const hit = raycaster.intersectObjects(raycastTargets(), false)[0];
+      if (!hit?.face) {
+        updateHighlight(null);
+        return;
+      }
+      const face = closestFace(
+        [hit.face.normal.x, hit.face.normal.y, hit.face.normal.z],
+        bodyRef.current.shape,
       );
+      // Highlight the face placement would actually target (interior floor -> 'bottom', etc.).
+      updateHighlight(resolveInteriorFace(face, modelPoint(hit)));
     };
 
     const handlePointerUp = (event: PointerEvent) => {
@@ -375,16 +434,15 @@ export function Viewport3D({
 
       if (placementArmedRef.current) {
         if (moved) return;
-        const base = baseMeshRef.current;
-        const lid = lidMeshRef.current;
-        if (!base || !lid) return;
         toNDC(event);
         raycaster.setFromCamera(pointer, camera);
-        const hit = raycaster.intersectObjects([base, lid], false)[0];
+        const hit = raycaster.intersectObjects(raycastTargets(), false)[0];
         if (!hit?.face) return;
         const geom = bodyGeometry(bodyRef.current);
-        const face = closestFace([hit.face.normal.x, hit.face.normal.y, hit.face.normal.z], geom.shape);
-        const [u, v] = faceFromWorld(face, geom, [hit.point.x, hit.point.y, hit.point.z]);
+        const rawFace = closestFace([hit.face.normal.x, hit.face.normal.y, hit.face.normal.z], geom.shape);
+        const point = modelPoint(hit);
+        const face = resolveInteriorFace(rawFace, point);
+        const [u, v] = faceFromWorld(face, geom, point);
         callbacksRef.current.onPlaceFeature(face, clamp01(u), clamp01(v));
         return;
       }
@@ -447,6 +505,18 @@ export function Viewport3D({
     lid.geometry = lidGeometry;
   }, [meshes]);
 
+  // Lid presentation (view-only): visibility, ghost transparency, exploded lift.
+  useEffect(() => {
+    const lid = lidMeshRef.current;
+    if (!lid) return;
+    lid.visible = lidView !== 'hidden';
+    lid.material.transparent = lidView === 'ghost';
+    lid.material.opacity = lidView === 'ghost' ? 0.3 : 1;
+    lid.material.depthWrite = lidView !== 'ghost';
+    lid.material.needsUpdate = true;
+    lid.position.z = explodeOffset(lidView, body.outer.height);
+  }, [lidView, body]);
+
   // Markers showing where features are already placed; the selected one is highlighted.
   useEffect(() => {
     const group = markerGroupRef.current;
@@ -458,12 +528,16 @@ export function Viewport3D({
     const geometry = new THREE.SphereGeometry(1.2, 12, 12);
     const normalMaterial = new THREE.MeshStandardMaterial({ color: FEATURE_MARKER_COLOR });
     const selectedMaterial = new THREE.MeshStandardMaterial({ color: FEATURE_MARKER_SELECTED_COLOR });
+    const lidOffset = explodeOffset(lidView, body.outer.height);
     for (const feature of features) {
+      const onLid = featureOnLid(feature, body);
+      // Markers ride their piece: lifted with an exploded lid, gone with a hidden one.
+      if (onLid && lidView === 'hidden') continue;
       const frame = faceFrame(feature.face, geom);
       const [x, y, z] = frame.toWorld(feature.u, feature.v);
       const [nx, ny, nz] = frame.normalAt(feature.u, feature.v);
       const marker = new THREE.Mesh(geometry, feature.id === selectedFeatureId ? selectedMaterial : normalMaterial);
-      marker.position.set(x + nx * 1.5, y + ny * 1.5, z + nz * 1.5);
+      marker.position.set(x + nx * 1.5, y + ny * 1.5, z + nz * 1.5 + (onLid ? lidOffset : 0));
       marker.userData.featureId = feature.id;
       marker.userData.face = feature.face;
       group.add(marker);
@@ -474,7 +548,7 @@ export function Viewport3D({
       normalMaterial.dispose();
       selectedMaterial.dispose();
     };
-  }, [features, body, selectedFeatureId]);
+  }, [features, body, selectedFeatureId, lidView]);
 
   // Plan-view resize handle(s) (box: 4 corner cubes; cylinder: 1 radius cube) and the height
   // cone, repositioned whenever the body resizes.

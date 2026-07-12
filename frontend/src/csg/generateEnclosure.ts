@@ -1,8 +1,9 @@
 import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { findConnector } from '../connectors/library';
 import type { EnclosureProject } from '../types/project';
-import { bodyGeometry, faceFrame } from './faceFrame';
+import { bodyGeometry } from './faceFrame';
 import { buildConnectorCutout, buildStandoff } from './featurePrimitives';
+import { effectiveSplitHeight, featureOnLid } from './lidSplit';
 import {
   applyFrictionLipLid,
   applyFrictionLipLidCylinder,
@@ -24,10 +25,6 @@ export interface EnclosureResult {
   lid: Manifold;
   splitHeight: number;
   outerHeight: number;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), Math.max(min, max));
 }
 
 /**
@@ -76,7 +73,7 @@ export function generateEnclosure(
 
   const hollowShell = outerShape.subtract(innerShape);
 
-  const splitHeight = clamp(body.lid.splitHeight, wallThickness + 1, height - wallThickness - 1);
+  const splitHeight = effectiveSplitHeight(body);
   const [lidRaw, baseRaw] = hollowShell.splitByPlane([0, 0, 1], splitHeight);
 
   let base = baseRaw;
@@ -165,17 +162,10 @@ export function generateEnclosure(
       const entry = findConnector(feature.connectorId);
       if (!entry) continue;
       const cutout = buildConnectorCutout(wasm, entry, feature, geom, wallThickness);
-      if (feature.face === 'top') {
+      if (featureOnLid(feature, body)) {
         lid = lid.subtract(cutout);
-      } else if (feature.face === 'bottom') {
-        base = base.subtract(cutout);
       } else {
-        const featureZ = faceFrame(feature.face, geom).toWorld(feature.u, feature.v)[2];
-        if (featureZ > splitHeight) {
-          lid = lid.subtract(cutout);
-        } else {
-          base = base.subtract(cutout);
-        }
+        base = base.subtract(cutout);
       }
     } else if (feature.type === 'standoff' && feature.standoff) {
       // Standoffs always mount to the base floor, regardless of the split height.

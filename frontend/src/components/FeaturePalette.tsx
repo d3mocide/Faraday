@@ -46,7 +46,8 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
         <div className="palette-armed-hint">
           <p>
             Click a face in the viewport to place <strong>{armed.label}</strong>.
-            {armed.type === 'standoff' && ' Standoffs mount to the base floor — rotate the view to click the bottom face.'}
+            {armed.type === 'standoff' &&
+              ' Standoffs mount to the base floor — hide the lid (viewport toolbar) and click the interior floor, or rotate under the model and click the bottom face.'}
           </p>
           <button type="button" onClick={onDisarm}>
             Cancel
