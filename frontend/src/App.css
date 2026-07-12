@@ -303,6 +303,33 @@
   width: auto;
 }
 
+.hole-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.hole-row .field {
+  flex: 1;
+  margin-bottom: 6px;
+}
+
+.hole-row .field input {
+  width: 56px;
+}
+
+.hole-row > button {
+  padding: 0 8px;
+  line-height: 1.6;
+  flex: 0 0 auto;
+}
+
+.hole-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;

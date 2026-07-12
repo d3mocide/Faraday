@@ -54,9 +54,9 @@ function App() {
 
   const handlePlaceFeature = (face: Face, u: number, v: number) => {
     if (!armed) return;
-    // Standoffs always mount to the base floor -- ignore clicks elsewhere rather than
-    // reinterpret (u,v) from the wrong face, which would misplace the boss.
-    if (armed.type === 'standoff' && face !== 'bottom') return;
+    // Standoffs and board mounts always sit on the base floor -- ignore clicks elsewhere rather
+    // than reinterpret (u,v) from the wrong face, which would misplace them.
+    if ((armed.type === 'standoff' || armed.type === 'board-mount') && face !== 'bottom') return;
     addFeature(buildFeatureFromTemplate(armed, face, u, v, project));
     setArmed(null);
   };

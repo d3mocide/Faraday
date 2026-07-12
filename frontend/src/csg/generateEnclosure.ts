@@ -2,7 +2,13 @@ import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { findConnector } from '../connectors/library';
 import type { EnclosureProject } from '../types/project';
 import { bodyGeometry } from './faceFrame';
-import { buildConnectorCutout, buildCustomHole, buildStandoff, buildVentCutout } from './featurePrimitives';
+import {
+  buildBoardMount,
+  buildConnectorCutout,
+  buildCustomHole,
+  buildStandoff,
+  buildVentCutout,
+} from './featurePrimitives';
 import { effectiveSplitHeight, featureOnLid } from './lidSplit';
 import {
   applyFrictionLipLid,
@@ -168,6 +174,8 @@ export function generateEnclosure(
       cutout = buildCustomHole(wasm, feature, geom, wallThickness);
     } else if (feature.type === 'standoff' && feature.standoff) {
       base = base.add(buildStandoff(wasm, feature, geom, wallThickness));
+    } else if (feature.type === 'board-mount' && feature.board) {
+      base = base.add(buildBoardMount(wasm, feature, geom, wallThickness));
     }
 
     if (cutout) {

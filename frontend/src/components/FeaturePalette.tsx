@@ -4,6 +4,7 @@ import type { ConnectorCategory } from '../types/project';
 export type ArmedFeatureTemplate =
   | { type: 'connector-cutout'; connectorId: string; label: string }
   | { type: 'standoff'; label: string }
+  | { type: 'board-mount'; label: string }
   | { type: 'vent'; label: string }
   | { type: 'custom-hole'; label: string };
 
@@ -48,8 +49,8 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
         <div className="palette-armed-hint">
           <p>
             Click a face in the viewport to place <strong>{armed.label}</strong>.
-            {armed.type === 'standoff' &&
-              ' Standoffs mount to the base floor — hide the lid (viewport toolbar) and click the interior floor, or rotate under the model and click the bottom face.'}
+            {(armed.type === 'standoff' || armed.type === 'board-mount') &&
+              ' This mounts to the base floor — hide the lid (viewport toolbar) and click the interior floor, or rotate under the model and click the bottom face.'}
           </p>
           <button type="button" onClick={onDisarm}>
             Cancel
@@ -65,6 +66,13 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
           onClick={() => onArm({ type: 'standoff', label: 'Standoff' })}
         >
           Standoff (PCB mount)
+        </button>
+        <button
+          type="button"
+          className={armed?.type === 'board-mount' ? 'palette-item armed' : 'palette-item'}
+          onClick={() => onArm({ type: 'board-mount', label: 'Board Mount' })}
+        >
+          Board Mount (outline + holes)
         </button>
       </section>
 

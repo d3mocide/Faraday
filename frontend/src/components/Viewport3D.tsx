@@ -63,6 +63,7 @@ export function Viewport3D({
   const baseMeshRef = useRef<THREE.Mesh | null>(null);
   const lidMeshRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial> | null>(null);
   const markerGroupRef = useRef<THREE.Group | null>(null);
+  const ghostBoardGroupRef = useRef<THREE.Group | null>(null);
   const handleGroupRef = useRef<THREE.Group | null>(null);
   const highlightMeshRef = useRef<THREE.Mesh | null>(null);
 
@@ -151,6 +152,10 @@ export function Viewport3D({
     const markerGroup = new THREE.Group();
     scene.add(markerGroup);
     markerGroupRef.current = markerGroup;
+
+    const ghostBoardGroup = new THREE.Group();
+    scene.add(ghostBoardGroup);
+    ghostBoardGroupRef.current = ghostBoardGroup;
 
     const handleGroup = new THREE.Group();
     scene.add(handleGroup);
@@ -485,6 +490,7 @@ export function Viewport3D({
       cameraRef.current = null;
       rendererRef.current = null;
       markerGroupRef.current = null;
+      ghostBoardGroupRef.current = null;
       handleGroupRef.current = null;
       highlightMeshRef.current = null;
     };
@@ -549,6 +555,44 @@ export function Viewport3D({
       selectedMaterial.dispose();
     };
   }, [features, body, selectedFeatureId, lidView]);
+
+  // Ghost boards: a translucent PCB volume floating on its standoffs for every board-mount
+  // feature. Display-only -- never part of the raycast targets or the exported geometry -- so
+  // clearance to walls, lid, and connectors can be judged by eye before printing.
+  useEffect(() => {
+    const group = ghostBoardGroupRef.current;
+    if (!group) return;
+
+    for (const child of [...group.children]) group.remove(child);
+
+    const boards = features.filter((f) => f.type === 'board-mount' && f.board);
+    if (boards.length === 0) return;
+
+    const geom = bodyGeometry(body);
+    const material = new THREE.MeshStandardMaterial({
+      color: 0x1f7a3d,
+      roughness: 0.5,
+      metalness: 0.1,
+      transparent: true,
+      opacity: 0.55,
+    });
+    const geometries: THREE.BufferGeometry[] = [];
+    for (const feature of boards) {
+      const board = feature.board!;
+      const [x, y] = faceFrame('bottom', geom).toWorld(feature.u, feature.v);
+      const boxGeom = new THREE.BoxGeometry(board.boardWidth, board.boardDepth, board.boardThickness);
+      geometries.push(boxGeom);
+      const mesh = new THREE.Mesh(boxGeom, material);
+      mesh.position.set(x, y, body.wallThickness + board.standoff.height + board.boardThickness / 2);
+      mesh.rotation.z = (feature.rotationDeg * Math.PI) / 180;
+      group.add(mesh);
+    }
+
+    return () => {
+      material.dispose();
+      for (const g of geometries) g.dispose();
+    };
+  }, [features, body]);
 
   // Plan-view resize handle(s) (box: 4 corner cubes; cylinder: 1 radius cube) and the height
   // cone, repositioned whenever the body resizes.

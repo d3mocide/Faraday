@@ -11,7 +11,7 @@ export function BoardPresetPicker({ onClose }: BoardPresetPickerProps) {
   const handlePick = (presetId: string) => {
     const preset = BOARD_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
-    applyBoardPreset(preset.body);
+    applyBoardPreset(preset.body, preset.boardMount);
     onClose();
   };
 

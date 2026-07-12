@@ -20,7 +20,7 @@ export function featureOnLid(
   feature: Pick<Feature, 'type' | 'face' | 'u' | 'v'>,
   body: EnclosureBody,
 ): boolean {
-  if (feature.type === 'standoff') return false;
+  if (feature.type === 'standoff' || feature.type === 'board-mount') return false;
   if (feature.face === 'top') return true;
   if (feature.face === 'bottom') return false;
   const z = faceFrame(feature.face, bodyGeometry(body)).toWorld(feature.u, feature.v)[2];

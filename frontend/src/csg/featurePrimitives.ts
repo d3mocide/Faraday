@@ -180,6 +180,26 @@ export function buildVentCutout(
   return extrudeThroughWall(cross, feature, geom, wallThickness);
 }
 
+/** One floor-standing standoff solid (boss + screw pilot bore) centered at world (x, y). */
+function standoffAt(
+  wasm: ManifoldToplevel,
+  spec: NonNullable<Feature['standoff']>,
+  x: number,
+  y: number,
+  wallThickness: number,
+): Manifold {
+  const floorZ = wallThickness;
+  const height = Math.max(spec.height, 1);
+  const boss = cylinderZ(wasm, spec.outerDiameter, height, floorZ).translate(x, y, 0);
+  const boreStart = Math.max(floorZ - 0.5, 0);
+  const bore = cylinderZ(wasm, spec.screwHoleDiameter, floorZ + height - boreStart + 0.5, boreStart).translate(
+    x,
+    y,
+    0,
+  );
+  return boss.subtract(bore);
+}
+
 /** Builds a floor-mounted standoff (boss + screw pilot bore) for a standoff feature. Always rises from the base floor. */
 export function buildStandoff(
   wasm: ManifoldToplevel,
@@ -189,17 +209,32 @@ export function buildStandoff(
 ): Manifold {
   const spec = feature.standoff;
   if (!spec) throw new Error('standoff feature is missing its standoff spec');
-
   const [x, y] = faceFrame('bottom', geom).toWorld(feature.u, feature.v);
-  const floorZ = wallThickness;
-  const height = Math.max(spec.height, 1);
+  return standoffAt(wasm, spec, x, y, wallThickness);
+}
 
-  const boss = cylinderZ(wasm, spec.outerDiameter, height, floorZ).translate(x, y, 0);
-  const boreStart = Math.max(floorZ - 0.5, 0);
-  const bore = cylinderZ(wasm, spec.screwHoleDiameter, floorZ + height - boreStart + 0.5, boreStart).translate(
-    x,
-    y,
-    0,
+/** Builds a board-mount feature: one standoff per mounting hole, the whole pattern positioned at
+ * the feature's floor location and spun about it by rotationDeg. The board outline itself is a
+ * viewport-only ghost (never part of the printed geometry). */
+export function buildBoardMount(
+  wasm: ManifoldToplevel,
+  feature: Feature,
+  geom: BodyGeometry,
+  wallThickness: number,
+): Manifold {
+  const board = feature.board;
+  if (!board) throw new Error('board-mount feature is missing its board spec');
+
+  const [cx, cy] = faceFrame('bottom', geom).toWorld(feature.u, feature.v);
+  const theta = (feature.rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+
+  const standoffs = board.holes.map(({ x, y }) =>
+    standoffAt(wasm, board.standoff, cx + x * cos - y * sin, cy + x * sin + y * cos, wallThickness),
   );
-  return boss.subtract(bore);
+  if (standoffs.length === 0) {
+    return standoffAt(wasm, board.standoff, cx, cy, wallThickness);
+  }
+  return wasm.Manifold.union(standoffs);
 }

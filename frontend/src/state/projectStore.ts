@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type {
+  BoardMountSpec,
   BodyShape,
   CornerStyleType,
   EnclosureBody,
@@ -44,7 +45,7 @@ interface ProjectStore {
   updateFeature: (id: string, patch: Partial<Feature>) => void;
   removeFeature: (id: string) => void;
   loadProject: (project: EnclosureProject) => void;
-  applyBoardPreset: (preset: BoardPresetBody) => void;
+  applyBoardPreset: (preset: BoardPresetBody, boardMount?: BoardMountSpec) => void;
   undo: () => void;
   redo: () => void;
 }
@@ -200,7 +201,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
     // Presets are all rectangular PCBs (BoardPresetBody.outer is length/width/height), so this
     // always yields a box body -- if the project was a cylinder, that's a shape switch, same as
     // setBodyShape, and gets a fresh default cornerStyle since a cylinder body has none to reuse.
-    applyBoardPreset: (preset) =>
+    // Presets with a documented mounting pattern also drop in a centered board-mount feature.
+    applyBoardPreset: (preset, boardMount) =>
       mutate((p) => ({
         ...p,
         body: {
@@ -210,7 +212,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
           cornerStyle: p.body.shape === 'box' ? p.body.cornerStyle : { type: 'rounded', radius: 3 },
           lid: { ...p.body.lid, splitHeight: preset.splitHeight },
         },
-        features: [],
+        features: boardMount
+          ? [
+              {
+                id: crypto.randomUUID(),
+                type: 'board-mount',
+                face: 'bottom',
+                u: 0.5,
+                v: 0.5,
+                rotationDeg: 0,
+                board: boardMount,
+              },
+            ]
+          : [],
       })),
 
     undo: () => {

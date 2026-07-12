@@ -2,7 +2,9 @@ import type { ChangeEvent } from 'react';
 import { findConnector } from '../connectors/library';
 import { useProjectStore } from '../state/projectStore';
 import { displayStep, displayToMm, mmToDisplay, roundForDisplay, unitLabel } from '../state/units';
+import { cornerHolePattern } from '../state/featureFactory';
 import type {
+  BoardMountSpec,
   BodyShape,
   ConnectorLibraryEntry,
   CornerStyleType,
@@ -17,6 +19,7 @@ import type {
 
 function featureLabel(feature: Feature): string {
   if (feature.type === 'standoff') return 'Standoff';
+  if (feature.type === 'board-mount') return 'Board mount';
   if (feature.type === 'vent') return 'Vent';
   if (feature.type === 'custom-hole') return 'Custom hole';
   if (feature.type === 'connector-cutout' && feature.connectorId) {
@@ -143,6 +146,102 @@ function ConnectorSizeFields({
           Reset to library size
         </button>
       )}
+    </>
+  );
+}
+
+/** Board-mount editor: PCB outline, shared standoff spec, and the mounting-hole list (mm offsets
+ * from the board center). The corner-pattern button regenerates the classic 4-hole layout from
+ * the current outline; holes can also be edited/added/removed individually for odd boards. */
+function BoardMountFields({
+  feature,
+  board,
+  units,
+  onUpdateFeature,
+}: {
+  feature: Feature;
+  board: BoardMountSpec;
+  units: Units;
+  onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
+}) {
+  const setBoard = (patch: Partial<BoardMountSpec>) =>
+    onUpdateFeature(feature.id, { board: { ...board, ...patch } });
+  const setHole = (index: number, patch: Partial<{ x: number; y: number }>) =>
+    setBoard({ holes: board.holes.map((h, i) => (i === index ? { ...h, ...patch } : h)) });
+
+  return (
+    <>
+      <UnitNumberField
+        label="Board width"
+        valueMm={board.boardWidth}
+        units={units}
+        minMm={5}
+        onChangeMm={(v) => setBoard({ boardWidth: v })}
+      />
+      <UnitNumberField
+        label="Board depth"
+        valueMm={board.boardDepth}
+        units={units}
+        minMm={5}
+        onChangeMm={(v) => setBoard({ boardDepth: v })}
+      />
+      <UnitNumberField
+        label="Standoff height"
+        valueMm={board.standoff.height}
+        units={units}
+        minMm={1}
+        onChangeMm={(v) => setBoard({ standoff: { ...board.standoff, height: v } })}
+      />
+      <UnitNumberField
+        label="Standoff diameter"
+        valueMm={board.standoff.outerDiameter}
+        units={units}
+        minMm={2}
+        onChangeMm={(v) => setBoard({ standoff: { ...board.standoff, outerDiameter: v } })}
+      />
+      <UnitNumberField
+        label="Screw hole diameter"
+        valueMm={board.standoff.screwHoleDiameter}
+        units={units}
+        minMm={0.5}
+        onChangeMm={(v) => setBoard({ standoff: { ...board.standoff, screwHoleDiameter: v } })}
+      />
+
+      <h3>Mounting holes (from board center)</h3>
+      {board.holes.map((hole, i) => (
+        <div className="hole-row" key={i}>
+          <UnitNumberField
+            label={`#${i + 1} X`}
+            valueMm={hole.x}
+            units={units}
+            onChangeMm={(v) => setHole(i, { x: v })}
+          />
+          <UnitNumberField
+            label="Y"
+            valueMm={hole.y}
+            units={units}
+            onChangeMm={(v) => setHole(i, { y: v })}
+          />
+          <button
+            type="button"
+            aria-label={`Remove hole ${i + 1}`}
+            onClick={() => setBoard({ holes: board.holes.filter((_, j) => j !== i) })}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <div className="hole-actions">
+        <button type="button" onClick={() => setBoard({ holes: [...board.holes, { x: 0, y: 0 }] })}>
+          + Add hole
+        </button>
+        <button
+          type="button"
+          onClick={() => setBoard({ holes: cornerHolePattern(board.boardWidth, board.boardDepth, 3.5) })}
+        >
+          4-corner pattern
+        </button>
+      </div>
     </>
   );
 }
@@ -450,6 +549,14 @@ export function InspectorPanel({
             <ConnectorSizeFields
               feature={selectedFeature}
               entry={findConnector(selectedFeature.connectorId)}
+              units={units}
+              onUpdateFeature={onUpdateFeature}
+            />
+          )}
+          {selectedFeature.type === 'board-mount' && selectedFeature.board && (
+            <BoardMountFields
+              feature={selectedFeature}
+              board={selectedFeature.board}
               units={units}
               onUpdateFeature={onUpdateFeature}
             />
