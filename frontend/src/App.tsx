@@ -4,12 +4,19 @@ import { AppShell } from './components/AppShell';
 import { ExportModal } from './components/ExportModal';
 import { FeaturePalette, type ArmedFeatureTemplate } from './components/FeaturePalette';
 import { InspectorPanel } from './components/InspectorPanel';
-import { Viewport3D, type BodyResizePatch } from './components/Viewport3D';
+import { Viewport3D, type BodyResizePatch, type LidView } from './components/Viewport3D';
 import { useLiveGeometry } from './csg/useLiveGeometry';
 import { buildFeatureFromTemplate } from './state/featureFactory';
 import { useAutosave } from './state/useAutosave';
 import { useProjectStore } from './state/projectStore';
 import type { Face } from './types/project';
+
+const LID_VIEW_LABELS: Record<LidView, string> = {
+  assembled: 'Assembled',
+  ghost: 'Ghost',
+  hidden: 'Hidden',
+  exploded: 'Exploded',
+};
 
 function App() {
   const project = useProjectStore((s) => s.project);
@@ -23,6 +30,9 @@ function App() {
   const [exportOpen, setExportOpen] = useState(false);
   const [armed, setArmed] = useState<ArmedFeatureTemplate | null>(null);
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
+  // View-only lid presentation -- deliberately not in the project store, so it never dirties
+  // undo history, autosave, or saved project files.
+  const [lidView, setLidView] = useState<LidView>('assembled');
 
   useAutosave(project);
 
@@ -44,9 +54,9 @@ function App() {
 
   const handlePlaceFeature = (face: Face, u: number, v: number) => {
     if (!armed) return;
-    // Standoffs always mount to the base floor -- ignore clicks elsewhere rather than
-    // reinterpret (u,v) from the wrong face, which would misplace the boss.
-    if (armed.type === 'standoff' && face !== 'bottom') return;
+    // Standoffs and board mounts always sit on the base floor -- ignore clicks elsewhere rather
+    // than reinterpret (u,v) from the wrong face, which would misplace them.
+    if ((armed.type === 'standoff' || armed.type === 'board-mount') && face !== 'bottom') return;
     addFeature(buildFeatureFromTemplate(armed, face, u, v, project));
     setArmed(null);
   };
@@ -71,6 +81,7 @@ function App() {
           meshes={meshes}
           body={project.body}
           features={project.features}
+          lidView={lidView}
           placementArmed={armed !== null}
           onPlaceFeature={handlePlaceFeature}
           selectedFeatureId={selectedFeatureId}
@@ -78,6 +89,19 @@ function App() {
           onUpdateFeature={updateFeature}
           onResizeBody={handleResizeBody}
         />
+        <div className="viewport-toolbar" role="group" aria-label="Lid view">
+          <span>Lid</span>
+          {(Object.keys(LID_VIEW_LABELS) as LidView[]).map((view) => (
+            <button
+              key={view}
+              type="button"
+              className={lidView === view ? 'active' : ''}
+              onClick={() => setLidView(view)}
+            >
+              {LID_VIEW_LABELS[view]}
+            </button>
+          ))}
+        </div>
         {error && <div className="viewport-error">{error}</div>}
       </div>
       <InspectorPanel

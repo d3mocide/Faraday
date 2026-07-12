@@ -310,6 +310,84 @@ targeted, documented escape hatch — reach for that before revisiting this.
   one near 1° won't snap to each other even though they're physically adjacent). Minor, same
   "smaller items" tier as the pre-existing cross-face snapping gap below.
 
+## Post-Phase-5 improvements (2026-07-12 session)
+
+### Lid view modes + interior placement
+
+- **The viewport now has a lid-view toolbar** (top-left overlay): Assembled / Ghost / Hidden /
+  Exploded. This is *view-only* state held in `App` component state — deliberately not in the
+  project store, so it never dirties undo history, autosave, or saved project files. The base and
+  lid were always separate meshes end-to-end; the viewport just never let you pull them apart.
+- **New `csg/lidSplit.ts`** shares the split-height clamp (`effectiveSplitHeight`) and the
+  lid-vs-base assignment rule (`featureOnLid`) between `generateEnclosure` (worker-side) and
+  `Viewport3D` (main-thread side) — same one-source-of-truth pattern as `faceFrame.ts`.
+- **Raycast semantics per mode**: hidden and ghost lids are excluded from placement/hover raycasts
+  (three's raycaster does *not* skip invisible meshes on its own — must be excluded explicitly);
+  ghost is deliberately see-through for interaction so you can place interior features while the
+  lid stays visible as context. Exploded-lid hits are mapped back through the explode offset
+  (`modelPoint` in `Viewport3D`) before any (u,v) lookup. Feature markers ride their piece:
+  lifted with an exploded lid, hidden with a hidden one.
+- **Interior surfaces now resolve to the wall they physically belong to** (`resolveInteriorFace`):
+  the interior floor (upward normal below the split plane) maps to `bottom`, the inside of the
+  back wall (front-facing normal, +y half) maps to `back`, etc. This is what makes standoffs
+  placeable from a normal top-down view with the lid hidden — the Phase 2 "orbit underneath to
+  place a standoff" wart is gone. It also matters for correctness: hiding the lid newly exposed
+  interior walls to clicks, and without the remap a click on the inside of the back wall would
+  have placed a front-face feature.
+- Exploded-lid hover highlight only tracks the lift for the `top` face (the only face entirely on
+  the lid); side-face highlights straddle the split and stay at the model position — cosmetic,
+  noted here so nobody chases it as a bug.
+
+### Vent / custom-hole / d-shape / per-placement size overrides
+
+- **`vent` and `custom-hole` are now real** (CSG + palette "Openings" section + inspector
+  editors), closing the gap flagged in the Phase 2/3 notes. Vents are through-wall patterns on
+  any face: `slots` (rounded-end slats, stacked along the face's v axis) or `honeycomb` (hex
+  cells, across-corners = "cell size", offset grid at the given pitch, cells kept fully inside
+  the area). Custom holes are per-feature circles (`width` = diameter) or rects.
+- **`dshape` has real geometry**: circle minus a chord flat; the library entry's `height` is the
+  across-flat dimension, clamped so a flat >= diameter degenerates gracefully to a full circle.
+  New `toggle-switch-d` library entry (misc) actually uses it.
+- **`Feature.connectorOverride`** (`{diameter?, width?, height?}`) gives any connector-cutout
+  per-placement dimensions, falling back field-by-field to the library entry, with a "Reset to
+  library size" button in the inspector. This closes the long-open `antenna-passthrough` "no sane
+  default" gap from the Phase 2 notes.
+- **Fixed a latent orientation bug in `orientAlongFace`**: the cross-section's local X axis
+  mapped to the *vertical* on `left`/`right`/`side` faces, so any non-square rect cutout (e.g.
+  USB-C 9x3.5) placed there rendered rotated 90°. Cross-section X/Y now follow every face's u/v
+  convention. Verified geometrically: a 12x6 rect on the right face measures 12mm along Y and
+  6mm along Z in the exported STL. (Pre-fix projects that compensated with `rotationDeg` would
+  see those placements turn — judged acceptable since the old behavior was simply wrong.)
+
+### Board mounts (board layout support)
+
+- **New `board-mount` feature type**: one floor feature carrying a PCB outline
+  (`boardWidth`/`boardDepth`/`boardThickness`), a mounting-hole list (mm offsets from board
+  center, rotated by the feature's `rotationDeg`), and a shared standoff spec. CSG generates one
+  standoff per hole (`buildBoardMount`); the viewport draws a translucent PCB-green **ghost
+  board** floating on its standoffs (display-only: never raycast, never exported) so
+  wall/lid/connector clearance can be judged by eye. Rides all existing feature plumbing
+  (placement guard like standoffs: base floor only; drag; undo; save/load).
+- **Inspector board editor**: outline fields, standoff spec, per-hole X/Y rows with add/remove,
+  and a "4-corner pattern" regenerator (3.5mm corner inset — the de-facto hobby-board default).
+- **The four Raspberry Pi presets now carry their officially documented mounting patterns**
+  (from the published Pi mechanical drawings): 85x56 board with the 58x49 M2.5 grid for
+  3B/4B/5/HAT-stack (note the pattern is intentionally off-center on the board), 65x30 with
+  58x23 for the Zero. Applying such a preset drops a centered board-mount instead of an empty
+  feature list. The other presets (RTL-SDR, Heltec, T-Beam, XIAO) stay dimension-only rather
+  than guessing hole positions — XIAO boards don't even have mounting holes.
+- BOM aggregates board-mount standoffs into the same "PCB standoff" rows as single standoffs.
+
+All three chunks verified end-to-end with Playwright against the dev server (scripted checks +
+screenshot review): lid modes render correctly (pixel-classified per mode, exploded offset
+measured in screen rows), standoff placed on the interior floor from a top-down view lands on
+`bottom` with sane (u,v), exploded-lid placement maps back into model space, vents/custom
+holes/D-holes/overrides round-trip through store and inspector, exported STL pairs stay
+watertight (every edge shared by exactly two triangles) with all new feature types applied at
+once, the Pi preset's four bosses sit at the documented hole positions in the exported base mesh
+(vertex-level check), and the rect-orientation fix was measured in the exported STL. No console
+errors in any run.
+
 ## Connector/board preset library growth
 
 - **Connector library** (`connectors/library.ts`) grew from the DESIGN.md §6 starter set (6
@@ -331,15 +409,20 @@ targeted, documented escape hatch — reach for that before revisiting this.
 
 ## Next steps (suggested order)
 
-All phases in DESIGN.md §13 (0 through 5) are now implemented and verified. What's left is smaller
-polish, not a phase:
+All phases in DESIGN.md §13 (0 through 5) are implemented and verified, plus the 2026-07-12
+improvements above (lid view modes + interior placement, vent/custom-hole/dshape/size overrides,
+board mounts). Remaining ideas, roughly by value for radio projects:
 
-`vent`/`custom-hole` feature types have no CSG or UI implementation; `dshape` connector holes fall
-back to circle/rect; `antenna-passthrough` has no per-feature size override; drag-to-reposition
-snapping doesn't yet snap across faces (e.g. matching u/v on an adjacent box face, or across a
-cylinder's `u=0`/`u=1` wrap point) — only within the same face, per DESIGN.md §13's "other
-features" wording; board presets set dimensions only, not real mounting-hole positions; snap-fit's
-nub/pocket profile could be upgraded to a wedge with a lead-in ramp (see above).
+- Text embossing/engraving (project name, port labels next to cutouts) — needs a font→polygon
+  path (e.g. opentype.js) feeding a Manifold extrude.
+- Case-mounting features: pole/mast clamp bosses, keyhole wall hangers, external flange tabs;
+  cable glands (PG7/PG9 are just library entries) and zip-tie anchors.
+- Battery features: 18650 holder pocket, LiPo tray with strap slots.
+- Printability: chamfered hole edges, thin-wall/feature-collision warnings, snap-fit wedge
+  profile upgrade (see Phase 5 notes), 3MF export alongside STL.
+- Smaller UI gaps: drag-to-reposition snapping still doesn't snap across faces or across a
+  cylinder's u=0/u=1 wrap; ghost boards could render their hole positions; a top-down 2D floor
+  view would make dense board layouts easier to edit than the 3D view.
 
 Also still open from earlier phases, not blocking: the ~845KB main bundle (see below), and the
 never-verified Docker build.
@@ -376,6 +459,16 @@ never-verified Docker build.
   3B/4B, Raspberry Pi 5, Pi + HAT stack) per user request — see the new section above this log.
   Purely additive to existing data-driven UI (three new connector categories added to the type and
   to `FeaturePalette.tsx`), no architecture changes. Verified with Playwright.
+- **2026-07-12**: Three improvement chunks per user request ("separate the lid from the body, add
+  objects on the inside, draw custom objects for board layouts") — see the "Post-Phase-5
+  improvements" section above. (1) Lid view modes (assembled/ghost/hidden/exploded) with
+  interior-surface click remapping so standoffs place from a top-down view; new `csg/lidSplit.ts`
+  shared helper. (2) Implemented the dead `vent`/`custom-hole` feature types, real `dshape`
+  geometry + a toggle-switch entry, and per-placement `connectorOverride` sizes; fixed a latent
+  90°-rotation bug for rect cutouts on left/right/side faces. (3) New `board-mount` feature
+  (PCB outline + hole pattern → standoffs, ghost-board preview) with the official Raspberry Pi
+  hole patterns wired into the four Pi presets. Each chunk verified with Playwright before its
+  commit; exported STLs re-checked watertight throughout.
 
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->

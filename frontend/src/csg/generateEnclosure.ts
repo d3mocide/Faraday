@@ -1,8 +1,15 @@
 import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { findConnector } from '../connectors/library';
 import type { EnclosureProject } from '../types/project';
-import { bodyGeometry, faceFrame } from './faceFrame';
-import { buildConnectorCutout, buildStandoff } from './featurePrimitives';
+import { bodyGeometry } from './faceFrame';
+import {
+  buildBoardMount,
+  buildConnectorCutout,
+  buildCustomHole,
+  buildStandoff,
+  buildVentCutout,
+} from './featurePrimitives';
+import { effectiveSplitHeight, featureOnLid } from './lidSplit';
 import {
   applyFrictionLipLid,
   applyFrictionLipLidCylinder,
@@ -24,10 +31,6 @@ export interface EnclosureResult {
   lid: Manifold;
   splitHeight: number;
   outerHeight: number;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), Math.max(min, max));
 }
 
 /**
@@ -76,7 +79,7 @@ export function generateEnclosure(
 
   const hollowShell = outerShape.subtract(innerShape);
 
-  const splitHeight = clamp(body.lid.splitHeight, wallThickness + 1, height - wallThickness - 1);
+  const splitHeight = effectiveSplitHeight(body);
   const [lidRaw, baseRaw] = hollowShell.splitByPlane([0, 0, 1], splitHeight);
 
   let base = baseRaw;
@@ -158,28 +161,29 @@ export function generateEnclosure(
     }
   }
 
-  // Apply per-face features (Section 7 step 5). 'vent' and 'custom-hole' aren't wired up yet --
-  // nothing in the UI creates them yet either, see PROGRESS.md.
+  // Apply per-face features (Section 7 step 5). Subtractive features (cutouts, vents, custom
+  // holes) target whichever piece the split assigns them to; standoffs always union to the base.
   for (const feature of project.features) {
+    let cutout: Manifold | null = null;
     if (feature.type === 'connector-cutout' && feature.connectorId) {
       const entry = findConnector(feature.connectorId);
-      if (!entry) continue;
-      const cutout = buildConnectorCutout(wasm, entry, feature, geom, wallThickness);
-      if (feature.face === 'top') {
-        lid = lid.subtract(cutout);
-      } else if (feature.face === 'bottom') {
-        base = base.subtract(cutout);
-      } else {
-        const featureZ = faceFrame(feature.face, geom).toWorld(feature.u, feature.v)[2];
-        if (featureZ > splitHeight) {
-          lid = lid.subtract(cutout);
-        } else {
-          base = base.subtract(cutout);
-        }
-      }
+      if (entry) cutout = buildConnectorCutout(wasm, entry, feature, geom, wallThickness);
+    } else if (feature.type === 'vent' && feature.vent) {
+      cutout = buildVentCutout(wasm, feature, geom, wallThickness);
+    } else if (feature.type === 'custom-hole' && feature.custom) {
+      cutout = buildCustomHole(wasm, feature, geom, wallThickness);
     } else if (feature.type === 'standoff' && feature.standoff) {
-      // Standoffs always mount to the base floor, regardless of the split height.
       base = base.add(buildStandoff(wasm, feature, geom, wallThickness));
+    } else if (feature.type === 'board-mount' && feature.board) {
+      base = base.add(buildBoardMount(wasm, feature, geom, wallThickness));
+    }
+
+    if (cutout) {
+      if (featureOnLid(feature, body)) {
+        lid = lid.subtract(cutout);
+      } else {
+        base = base.subtract(cutout);
+      }
     }
   }
 

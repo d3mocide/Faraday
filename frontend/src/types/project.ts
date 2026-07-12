@@ -72,7 +72,26 @@ export interface VentSpec {
   slotSpacing: number;
 }
 
-export type FeatureType = 'connector-cutout' | 'standoff' | 'vent' | 'custom-hole';
+/** A PCB footprint mounted on the interior floor: an outline (rendered as a ghost board in the
+ * viewport, never exported) plus a mounting-hole pattern that generates one standoff per hole.
+ * Hole offsets are mm from the board's center, x along the floor's u axis, y along v. */
+export interface BoardMountSpec {
+  boardWidth: number; // mm, along the floor's u axis
+  boardDepth: number; // mm, along the floor's v axis
+  boardThickness: number; // mm, ghost render only
+  holes: Array<{ x: number; y: number }>; // mm offsets from board center
+  standoff: StandoffSpec; // shared by every hole
+}
+
+export type FeatureType = 'connector-cutout' | 'standoff' | 'vent' | 'custom-hole' | 'board-mount';
+
+/** Per-placement size override for a connector cutout. Fields fall back to the library entry,
+ * so overriding one dimension doesn't freeze the others. */
+export interface ConnectorSizeOverride {
+  diameter?: number; // mm
+  width?: number; // mm
+  height?: number; // mm (for 'dshape': the across-flat dimension)
+}
 
 export interface Feature {
   id: string;
@@ -82,9 +101,11 @@ export interface Feature {
   v: number; // 0-1 normalized position across the face
   rotationDeg: number; // rotation about the face normal
   connectorId?: string; // ref into ConnectorLibraryEntry, for 'connector-cutout'
+  connectorOverride?: ConnectorSizeOverride; // for 'connector-cutout'
   standoff?: StandoffSpec;
   vent?: VentSpec;
   custom?: { shape: 'circle' | 'rect'; width: number; height?: number };
+  board?: BoardMountSpec; // for 'board-mount'
 }
 
 export type ConnectorCategory =

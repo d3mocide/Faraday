@@ -72,13 +72,17 @@ export function generateBomCsv(project: EnclosureProject): string {
   }
 
   const standoffGroups = new Map<string, { quantity: number; outerDiameter: number; screwHoleDiameter: number }>();
+  const countStandoff = (spec: { outerDiameter: number; screwHoleDiameter: number }, quantity: number) => {
+    const key = `${spec.outerDiameter}x${spec.screwHoleDiameter}`;
+    const existing = standoffGroups.get(key);
+    if (existing) existing.quantity += quantity;
+    else standoffGroups.set(key, { quantity, outerDiameter: spec.outerDiameter, screwHoleDiameter: spec.screwHoleDiameter });
+  };
   for (const feature of features) {
     if (feature.type === 'standoff' && feature.standoff) {
-      const { outerDiameter, screwHoleDiameter } = feature.standoff;
-      const key = `${outerDiameter}x${screwHoleDiameter}`;
-      const existing = standoffGroups.get(key);
-      if (existing) existing.quantity += 1;
-      else standoffGroups.set(key, { quantity: 1, outerDiameter, screwHoleDiameter });
+      countStandoff(feature.standoff, 1);
+    } else if (feature.type === 'board-mount' && feature.board && feature.board.holes.length > 0) {
+      countStandoff(feature.board.standoff, feature.board.holes.length);
     }
   }
   for (const { quantity, outerDiameter, screwHoleDiameter } of standoffGroups.values()) {

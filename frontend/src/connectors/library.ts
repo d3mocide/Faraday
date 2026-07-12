@@ -138,6 +138,16 @@ export const CONNECTOR_LIBRARY: ConnectorLibraryEntry[] = [
     cornerRadius: 1.0,
     notes: 'Standard unswitched/unfused IEC C14 panel cutout — verify against your specific inlet (some have integrated switch/fuse and need a larger cutout).',
   },
+  {
+    id: 'toggle-switch-d',
+    label: 'Toggle Switch (D-hole)',
+    category: 'misc',
+    holeShape: 'dshape',
+    diameter: 6.4,
+    height: 5.8, // across-flat: flat side to round side
+    notes:
+      'Anti-rotation D hole for a panel toggle/rocker with a keyed bushing — verify diameter and flat against your switch.',
+  },
 ];
 
 export function findConnector(id: string): ConnectorLibraryEntry | undefined {
