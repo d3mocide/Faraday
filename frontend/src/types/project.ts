@@ -74,6 +74,14 @@ export interface VentSpec {
 
 export type FeatureType = 'connector-cutout' | 'standoff' | 'vent' | 'custom-hole';
 
+/** Per-placement size override for a connector cutout. Fields fall back to the library entry,
+ * so overriding one dimension doesn't freeze the others. */
+export interface ConnectorSizeOverride {
+  diameter?: number; // mm
+  width?: number; // mm
+  height?: number; // mm (for 'dshape': the across-flat dimension)
+}
+
 export interface Feature {
   id: string;
   type: FeatureType;
@@ -82,6 +90,7 @@ export interface Feature {
   v: number; // 0-1 normalized position across the face
   rotationDeg: number; // rotation about the face normal
   connectorId?: string; // ref into ConnectorLibraryEntry, for 'connector-cutout'
+  connectorOverride?: ConnectorSizeOverride; // for 'connector-cutout'
   standoff?: StandoffSpec;
   vent?: VentSpec;
   custom?: { shape: 'circle' | 'rect'; width: number; height?: number };

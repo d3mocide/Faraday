@@ -2,7 +2,7 @@ import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { findConnector } from '../connectors/library';
 import type { EnclosureProject } from '../types/project';
 import { bodyGeometry } from './faceFrame';
-import { buildConnectorCutout, buildStandoff } from './featurePrimitives';
+import { buildConnectorCutout, buildCustomHole, buildStandoff, buildVentCutout } from './featurePrimitives';
 import { effectiveSplitHeight, featureOnLid } from './lidSplit';
 import {
   applyFrictionLipLid,
@@ -155,21 +155,27 @@ export function generateEnclosure(
     }
   }
 
-  // Apply per-face features (Section 7 step 5). 'vent' and 'custom-hole' aren't wired up yet --
-  // nothing in the UI creates them yet either, see PROGRESS.md.
+  // Apply per-face features (Section 7 step 5). Subtractive features (cutouts, vents, custom
+  // holes) target whichever piece the split assigns them to; standoffs always union to the base.
   for (const feature of project.features) {
+    let cutout: Manifold | null = null;
     if (feature.type === 'connector-cutout' && feature.connectorId) {
       const entry = findConnector(feature.connectorId);
-      if (!entry) continue;
-      const cutout = buildConnectorCutout(wasm, entry, feature, geom, wallThickness);
+      if (entry) cutout = buildConnectorCutout(wasm, entry, feature, geom, wallThickness);
+    } else if (feature.type === 'vent' && feature.vent) {
+      cutout = buildVentCutout(wasm, feature, geom, wallThickness);
+    } else if (feature.type === 'custom-hole' && feature.custom) {
+      cutout = buildCustomHole(wasm, feature, geom, wallThickness);
+    } else if (feature.type === 'standoff' && feature.standoff) {
+      base = base.add(buildStandoff(wasm, feature, geom, wallThickness));
+    }
+
+    if (cutout) {
       if (featureOnLid(feature, body)) {
         lid = lid.subtract(cutout);
       } else {
         base = base.subtract(cutout);
       }
-    } else if (feature.type === 'standoff' && feature.standoff) {
-      // Standoffs always mount to the base floor, regardless of the split height.
-      base = base.add(buildStandoff(wasm, feature, geom, wallThickness));
     }
   }
 

@@ -4,6 +4,7 @@ import { useProjectStore } from '../state/projectStore';
 import { displayStep, displayToMm, mmToDisplay, roundForDisplay, unitLabel } from '../state/units';
 import type {
   BodyShape,
+  ConnectorLibraryEntry,
   CornerStyleType,
   Feature,
   LidType,
@@ -11,10 +12,13 @@ import type {
   ScrewInsertType,
   ScrewSize,
   Units,
+  VentSpec,
 } from '../types/project';
 
 function featureLabel(feature: Feature): string {
   if (feature.type === 'standoff') return 'Standoff';
+  if (feature.type === 'vent') return 'Vent';
+  if (feature.type === 'custom-hole') return 'Custom hole';
   if (feature.type === 'connector-cutout' && feature.connectorId) {
     return findConnector(feature.connectorId)?.label ?? feature.connectorId;
   }
@@ -75,6 +79,129 @@ function UnitNumberField({
       step={displayStep(stepMm, units)}
       onChange={(v) => onChangeMm(displayToMm(v, units))}
     />
+  );
+}
+
+/** Per-placement size override editor for a connector cutout. Values fall back to the library
+ * entry, and edits write to feature.connectorOverride so the library itself stays untouched. */
+function ConnectorSizeFields({
+  feature,
+  entry,
+  units,
+  onUpdateFeature,
+}: {
+  feature: Feature;
+  entry: ConnectorLibraryEntry | undefined;
+  units: Units;
+  onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
+}) {
+  if (!entry) return null;
+  const override = feature.connectorOverride;
+  const setOverride = (patch: NonNullable<Feature['connectorOverride']>) =>
+    onUpdateFeature(feature.id, { connectorOverride: { ...override, ...patch } });
+
+  return (
+    <>
+      {(entry.holeShape === 'circle' || entry.holeShape === 'dshape') && (
+        <UnitNumberField
+          label="Diameter"
+          valueMm={override?.diameter ?? entry.diameter ?? 5}
+          units={units}
+          minMm={0.5}
+          onChangeMm={(v) => setOverride({ diameter: v })}
+        />
+      )}
+      {entry.holeShape === 'dshape' && (
+        <UnitNumberField
+          label="Across flat"
+          valueMm={override?.height ?? entry.height ?? (override?.diameter ?? entry.diameter ?? 5) * 0.85}
+          units={units}
+          minMm={0.5}
+          onChangeMm={(v) => setOverride({ height: v })}
+        />
+      )}
+      {entry.holeShape === 'rect' && (
+        <>
+          <UnitNumberField
+            label="Width"
+            valueMm={override?.width ?? entry.width ?? 5}
+            units={units}
+            minMm={0.5}
+            onChangeMm={(v) => setOverride({ width: v })}
+          />
+          <UnitNumberField
+            label="Height"
+            valueMm={override?.height ?? entry.height ?? 5}
+            units={units}
+            minMm={0.5}
+            onChangeMm={(v) => setOverride({ height: v })}
+          />
+        </>
+      )}
+      {override && (
+        <button type="button" onClick={() => onUpdateFeature(feature.id, { connectorOverride: undefined })}>
+          Reset to library size
+        </button>
+      )}
+    </>
+  );
+}
+
+function VentFields({
+  feature,
+  vent,
+  units,
+  onUpdateFeature,
+}: {
+  feature: Feature;
+  vent: VentSpec;
+  units: Units;
+  onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
+}) {
+  const setVent = (patch: Partial<VentSpec>) =>
+    onUpdateFeature(feature.id, { vent: { ...vent, ...patch } });
+
+  return (
+    <>
+      <label className="field">
+        <span>Pattern</span>
+        <select
+          value={vent.pattern}
+          onChange={(e) => setVent({ pattern: e.target.value as VentSpec['pattern'] })}
+        >
+          <option value="slots">Slots</option>
+          <option value="honeycomb">Honeycomb</option>
+        </select>
+      </label>
+      <UnitNumberField
+        label="Area width"
+        valueMm={vent.areaWidth}
+        units={units}
+        minMm={2}
+        onChangeMm={(v) => setVent({ areaWidth: v })}
+      />
+      <UnitNumberField
+        label="Area height"
+        valueMm={vent.areaHeight}
+        units={units}
+        minMm={2}
+        onChangeMm={(v) => setVent({ areaHeight: v })}
+      />
+      <UnitNumberField
+        label={vent.pattern === 'slots' ? 'Slot width' : 'Cell size'}
+        valueMm={vent.slotWidth}
+        units={units}
+        minMm={0.5}
+        onChangeMm={(v) => setVent({ slotWidth: v })}
+      />
+      <UnitNumberField
+        label="Spacing (pitch)"
+        valueMm={vent.slotSpacing}
+        units={units}
+        minMm={1}
+        onChangeMm={(v) => setVent({ slotSpacing: v })}
+      />
+    </>
   );
 }
 
@@ -319,6 +446,55 @@ export function InspectorPanel({
             step={5}
             onChange={(v) => onUpdateFeature(selectedFeature.id, { rotationDeg: v })}
           />
+          {selectedFeature.type === 'connector-cutout' && selectedFeature.connectorId && (
+            <ConnectorSizeFields
+              feature={selectedFeature}
+              entry={findConnector(selectedFeature.connectorId)}
+              units={units}
+              onUpdateFeature={onUpdateFeature}
+            />
+          )}
+          {selectedFeature.type === 'vent' && selectedFeature.vent && (
+            <VentFields feature={selectedFeature} vent={selectedFeature.vent} units={units} onUpdateFeature={onUpdateFeature} />
+          )}
+          {selectedFeature.type === 'custom-hole' && selectedFeature.custom && (
+            <>
+              <label className="field">
+                <span>Shape</span>
+                <select
+                  value={selectedFeature.custom.shape}
+                  onChange={(e) =>
+                    onUpdateFeature(selectedFeature.id, {
+                      custom: { ...selectedFeature.custom!, shape: e.target.value as 'circle' | 'rect' },
+                    })
+                  }
+                >
+                  <option value="circle">Circle</option>
+                  <option value="rect">Rectangle</option>
+                </select>
+              </label>
+              <UnitNumberField
+                label={selectedFeature.custom.shape === 'circle' ? 'Diameter' : 'Width'}
+                valueMm={selectedFeature.custom.width}
+                units={units}
+                minMm={0.5}
+                onChangeMm={(v) =>
+                  onUpdateFeature(selectedFeature.id, { custom: { ...selectedFeature.custom!, width: v } })
+                }
+              />
+              {selectedFeature.custom.shape === 'rect' && (
+                <UnitNumberField
+                  label="Height"
+                  valueMm={selectedFeature.custom.height ?? selectedFeature.custom.width}
+                  units={units}
+                  minMm={0.5}
+                  onChangeMm={(v) =>
+                    onUpdateFeature(selectedFeature.id, { custom: { ...selectedFeature.custom!, height: v } })
+                  }
+                />
+              )}
+            </>
+          )}
           {selectedFeature.type === 'standoff' && selectedFeature.standoff && (
             <>
               <UnitNumberField

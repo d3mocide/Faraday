@@ -3,7 +3,9 @@ import type { ConnectorCategory } from '../types/project';
 
 export type ArmedFeatureTemplate =
   | { type: 'connector-cutout'; connectorId: string; label: string }
-  | { type: 'standoff'; label: string };
+  | { type: 'standoff'; label: string }
+  | { type: 'vent'; label: string }
+  | { type: 'custom-hole'; label: string };
 
 interface FeaturePaletteProps {
   armed: ArmedFeatureTemplate | null;
@@ -63,6 +65,24 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
           onClick={() => onArm({ type: 'standoff', label: 'Standoff' })}
         >
           Standoff (PCB mount)
+        </button>
+      </section>
+
+      <section>
+        <h4>Openings</h4>
+        <button
+          type="button"
+          className={armed?.type === 'vent' ? 'palette-item armed' : 'palette-item'}
+          onClick={() => onArm({ type: 'vent', label: 'Vent Panel' })}
+        >
+          Vent Panel (slots/honeycomb)
+        </button>
+        <button
+          type="button"
+          className={armed?.type === 'custom-hole' ? 'palette-item armed' : 'palette-item'}
+          onClick={() => onArm({ type: 'custom-hole', label: 'Custom Hole' })}
+        >
+          Custom Hole (circle/rect)
         </button>
       </section>
 

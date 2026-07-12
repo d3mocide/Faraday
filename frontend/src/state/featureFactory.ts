@@ -25,6 +25,30 @@ export function buildFeatureFromTemplate(
     };
   }
 
+  if (template.type === 'vent') {
+    return {
+      id,
+      type: 'vent',
+      face,
+      u,
+      v,
+      rotationDeg: 0,
+      vent: { pattern: 'slots', areaWidth: 30, areaHeight: 20, slotWidth: 2, slotSpacing: 5 },
+    };
+  }
+
+  if (template.type === 'custom-hole') {
+    return {
+      id,
+      type: 'custom-hole',
+      face,
+      u,
+      v,
+      rotationDeg: 0,
+      custom: { shape: 'circle', width: 8 },
+    };
+  }
+
   return {
     id,
     type: 'connector-cutout',
