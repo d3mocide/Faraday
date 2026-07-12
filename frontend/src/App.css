@@ -255,6 +255,28 @@
   font-size: 12px;
   max-height: 120px;
   overflow: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.viewport-error-text {
+  flex: 1 1 auto;
+}
+
+.viewport-error-undo {
+  flex: 0 0 auto;
+  background: #7a2e35;
+  border: 1px solid #a5434c;
+  color: #ffe4e7;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.viewport-error-undo:hover {
+  background: #a5434c;
 }
 
 .inspector-panel {
