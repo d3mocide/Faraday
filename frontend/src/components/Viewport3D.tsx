@@ -18,6 +18,14 @@ function explodeOffset(lidView: LidView, bodyHeight: number): number {
   return lidView === 'exploded' ? Math.max(15, bodyHeight * 0.4) : 0;
 }
 
+/** A candidate (face, u, v) an align/mirror inspector control is hovering over, previewed in the
+ * viewport before the user commits by clicking -- see AlignMirrorControls in InspectorPanel.tsx. */
+export interface PreviewTarget {
+  face: Face;
+  u: number;
+  v: number;
+}
+
 interface Viewport3DProps {
   meshes: EnclosureMeshes | null;
   body: EnclosureBody;
@@ -29,10 +37,12 @@ interface Viewport3DProps {
   onSelectFeature: (id: string | null) => void;
   onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
   onResizeBody: (patch: BodyResizePatch) => void;
+  previewTarget: PreviewTarget | null;
 }
 
 const FEATURE_MARKER_COLOR = 0xffb454;
 const FEATURE_MARKER_SELECTED_COLOR = 0xff5a5a;
+const PREVIEW_MARKER_COLOR = 0x6fd3ff;
 const HANDLE_COLOR = 0x6fd3ff;
 const MIN_DIMENSION = 5; // mm, matches the numeric field mins in InspectorPanel
 const SNAP_MM = 2; // mm, feature drag snapping tolerance (edges, center lines, other features)
@@ -55,6 +65,7 @@ export function Viewport3D({
   onSelectFeature,
   onUpdateFeature,
   onResizeBody,
+  previewTarget,
 }: Viewport3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -66,6 +77,7 @@ export function Viewport3D({
   const ghostBoardGroupRef = useRef<THREE.Group | null>(null);
   const handleGroupRef = useRef<THREE.Group | null>(null);
   const highlightMeshRef = useRef<THREE.Mesh | null>(null);
+  const previewMarkerRef = useRef<THREE.Mesh | null>(null);
 
   // Latest-value refs so the pointer handlers (set up once, in the mount effect) always see
   // current props without needing to re-attach DOM listeners on every render.
@@ -175,6 +187,22 @@ export function Viewport3D({
     highlightMesh.visible = false;
     scene.add(highlightMesh);
     highlightMeshRef.current = highlightMesh;
+
+    // Ghost marker for an align/mirror control's hover preview (see AlignMirrorControls in
+    // InspectorPanel.tsx) -- larger and translucent so it reads as "not committed yet" next to
+    // the solid feature markers. Never added to markerGroup, so it's never a raycast/selection
+    // target.
+    const previewMaterial = new THREE.MeshBasicMaterial({
+      color: PREVIEW_MARKER_COLOR,
+      transparent: true,
+      opacity: 0.5,
+      depthTest: false,
+    });
+    const previewMarker = new THREE.Mesh(new THREE.SphereGeometry(2, 16, 16), previewMaterial);
+    previewMarker.visible = false;
+    previewMarker.renderOrder = 1;
+    scene.add(previewMarker);
+    previewMarkerRef.current = previewMarker;
 
     let animationFrame: number;
     const animate = () => {
@@ -486,6 +514,8 @@ export function Viewport3D({
       lidMaterial.dispose();
       highlightMesh.geometry.dispose();
       highlightMaterial.dispose();
+      previewMarker.geometry.dispose();
+      previewMaterial.dispose();
       container.removeChild(renderer.domElement);
       cameraRef.current = null;
       rendererRef.current = null;
@@ -493,6 +523,7 @@ export function Viewport3D({
       ghostBoardGroupRef.current = null;
       handleGroupRef.current = null;
       highlightMeshRef.current = null;
+      previewMarkerRef.current = null;
     };
   }, []);
 
@@ -555,6 +586,26 @@ export function Viewport3D({
       selectedMaterial.dispose();
     };
   }, [features, body, selectedFeatureId, lidView]);
+
+  // Align/mirror hover preview -- see PreviewTarget. Positioned the same way a feature marker is
+  // (toWorld + a small offset along the face normal), but it isn't tied to any real Feature, so it
+  // doesn't participate in featureOnLid/lid-offset bookkeeping: it's only ever shown while hovering
+  // an inspector control for the currently selected feature, and callers only ever preview a
+  // target on that feature's own face.
+  useEffect(() => {
+    const marker = previewMarkerRef.current;
+    if (!marker) return;
+    if (!previewTarget) {
+      marker.visible = false;
+      return;
+    }
+    const geom = bodyGeometry(body);
+    const frame = faceFrame(previewTarget.face, geom);
+    const [x, y, z] = frame.toWorld(previewTarget.u, previewTarget.v);
+    const [nx, ny, nz] = frame.normalAt(previewTarget.u, previewTarget.v);
+    marker.position.set(x + nx * 1.5, y + ny * 1.5, z + nz * 1.5);
+    marker.visible = true;
+  }, [previewTarget, body]);
 
   // Ghost boards: a translucent PCB volume floating on its standoffs for every board-mount
   // feature. Display-only -- never part of the raycast targets or the exported geometry -- so
