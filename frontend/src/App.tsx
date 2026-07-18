@@ -26,6 +26,7 @@ function App() {
   const setBodyDimension = useProjectStore((s) => s.setBodyDimension);
   const undo = useProjectStore((s) => s.undo);
   const redo = useProjectStore((s) => s.redo);
+  const canUndo = useProjectStore((s) => s.past.length > 0);
   const { meshes, error, isGenerating, client } = useLiveGeometry(project);
   const [exportOpen, setExportOpen] = useState(false);
   const [armed, setArmed] = useState<ArmedFeatureTemplate | null>(null);
@@ -102,7 +103,18 @@ function App() {
             </button>
           ))}
         </div>
-        {error && <div className="viewport-error">{error}</div>}
+        {error && (
+          <div className="viewport-error" role="alert">
+            <span className="viewport-error-text">
+              {error} The view still shows your last valid shape.
+            </span>
+            {canUndo && (
+              <button type="button" onClick={undo} className="viewport-error-undo">
+                Undo last change
+              </button>
+            )}
+          </div>
+        )}
       </div>
       <InspectorPanel
         selectedFeatureId={selectedFeatureId}
