@@ -407,6 +407,39 @@ errors in any run.
   and all 4 new board presets appear in the picker and correctly resize the body (checked
   Raspberry Pi 5 → 100×70×35mm, split height 22mm).
 
+## Align/mirror inspector controls (2026-07-18 session)
+
+- **New "Position" controls** in the selected-feature section of `InspectorPanel.tsx`: an
+  `AlignMirrorAxisRow` per axis (U and V) with three Align buttons (Start/Center/End, snapping that
+  axis to 0/0.5/1) and one Mirror button. Prompted by looking at SketchForge-3D
+  (github.com/Formsmith746/SketchForge-3D) for UI ideas worth borrowing — its align/mirror overlay's
+  "hover to preview, click to commit" interaction is the piece that carried over; the general-CAD
+  primitive-sculpting side of that project was deliberately left out, since it's exactly what
+  DESIGN.md §1 rules out as a non-goal.
+- **Align moves the selected feature; Mirror adds a duplicate** rather than moving it — flattening
+  mirror into a move would destroy the original placement a symmetric layout (e.g. two SMA
+  connectors mirrored left/right on a panel) still needs. Mirror is disabled when the feature is
+  already centered on that axis (reflecting would stack an identical duplicate on itself).
+- **New `state/alignMirror.ts`**: pure position math (`alignedPosition`, `mirroredPosition`) plus
+  `cloneFeatureAt`, which `structuredClone`s the feature (so nested specs like `standoff`/`board`/
+  `vent`/`connectorOverride` are copied, not shared) and assigns a fresh id.
+  `mirroredPosition` returns `null` at the disabled-mirror condition above, which both the button's
+  `disabled` state and its preview read.
+- **Hover/focus preview**: a new `PreviewTarget` (face + u/v) is lifted into `App` state (view-only,
+  same non-persisted precedent as `lidView` — never touches the project store, undo history, or
+  autosave) and passed to `Viewport3D`, which renders a translucent ghost marker (distinct from the
+  solid feature markers, not a raycast/selection target) at the hovered target. Cleared on click
+  (before the real update commits) and whenever `selectedFeatureId` changes, so a stale preview
+  can't linger past a selection change that doesn't fire the button's `onMouseLeave` (e.g. clicking
+  a different marker directly in the viewport).
+- Verified end-to-end with Playwright against the dev server: placed an off-center SMA cutout,
+  hovered Align Center on both axes (screenshotted the ghost preview), clicked to commit and
+  confirmed the marker moved to the face center; confirmed the Mirror button is disabled exactly
+  when centered on that axis; undid back to the off-center placement, mirrored the V axis, and
+  confirmed a second feature appeared in the list (screenshotted) and the ghost/committed positions
+  matched the expected reflection; confirmed Export still opens and packages STLs normally with the
+  mirrored duplicate present. No console errors in any step.
+
 ## Next steps (suggested order)
 
 All phases in DESIGN.md §13 (0 through 5) are implemented and verified, plus the 2026-07-12
@@ -469,6 +502,13 @@ never-verified Docker build.
   (PCB outline + hole pattern → standoffs, ghost-board preview) with the official Raspberry Pi
   hole patterns wired into the four Pi presets. Each chunk verified with Playwright before its
   commit; exported STLs re-checked watertight throughout.
+
+- **2026-07-18**: Added align/mirror controls to the selected-feature inspector (Align
+  Start/Center/End per axis, Mirror-to-duplicate per axis, with a hover/focus preview ghost marker
+  in the viewport) — see the "Align/mirror inspector controls" section above for the design
+  rationale (why Mirror duplicates instead of moving) and what was verified. Purely additive: new
+  `state/alignMirror.ts` module, new props threaded through `App`/`InspectorPanel`/`Viewport3D`, no
+  changes to the data model or CSG pipeline.
 
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->

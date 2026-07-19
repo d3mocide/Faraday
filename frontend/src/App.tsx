@@ -4,7 +4,7 @@ import { AppShell } from './components/AppShell';
 import { ExportModal } from './components/ExportModal';
 import { FeaturePalette, type ArmedFeatureTemplate } from './components/FeaturePalette';
 import { InspectorPanel } from './components/InspectorPanel';
-import { Viewport3D, type BodyResizePatch, type LidView } from './components/Viewport3D';
+import { Viewport3D, type BodyResizePatch, type LidView, type PreviewTarget } from './components/Viewport3D';
 import { useLiveGeometry } from './csg/useLiveGeometry';
 import { buildFeatureFromTemplate } from './state/featureFactory';
 import { useAutosave } from './state/useAutosave';
@@ -34,8 +34,18 @@ function App() {
   // View-only lid presentation -- deliberately not in the project store, so it never dirties
   // undo history, autosave, or saved project files.
   const [lidView, setLidView] = useState<LidView>('assembled');
+  // Align/mirror hover-preview target (see AlignMirrorAxisRow in InspectorPanel.tsx) -- also
+  // view-only, same non-persisted precedent as lidView.
+  const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
 
   useAutosave(project);
+
+  // A stale preview can otherwise linger if the selected feature changes (or gets deselected)
+  // while a button is still focused/hovered -- e.g. clicking a different marker in the viewport
+  // doesn't fire the align button's onMouseLeave.
+  useEffect(() => {
+    setPreviewTarget(null);
+  }, [selectedFeatureId]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -89,6 +99,7 @@ function App() {
           onSelectFeature={setSelectedFeatureId}
           onUpdateFeature={updateFeature}
           onResizeBody={handleResizeBody}
+          previewTarget={previewTarget}
         />
         <div className="viewport-toolbar" role="group" aria-label="Lid view">
           <span>Lid</span>
@@ -121,6 +132,8 @@ function App() {
         onSelectFeature={setSelectedFeatureId}
         onUpdateFeature={updateFeature}
         onRemoveFeature={handleRemoveFeature}
+        onAddFeature={addFeature}
+        onPreviewTarget={setPreviewTarget}
       />
       {exportOpen && client && (
         <ExportModal client={client} project={project} onClose={() => setExportOpen(false)} />

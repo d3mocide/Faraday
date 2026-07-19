@@ -3,6 +3,8 @@ import { findConnector } from '../connectors/library';
 import { useProjectStore } from '../state/projectStore';
 import { displayStep, displayToMm, mmToDisplay, roundForDisplay, unitLabel } from '../state/units';
 import { cornerHolePattern } from '../state/featureFactory';
+import { alignedPosition, cloneFeatureAt, mirroredPosition, type Axis, type AxisTarget } from '../state/alignMirror';
+import type { PreviewTarget } from './Viewport3D';
 import type {
   BoardMountSpec,
   BodyShape,
@@ -304,11 +306,90 @@ function VentFields({
   );
 }
 
+/** One axis's Start/Center/End align buttons plus its Mirror button, borrowed from SketchForge-
+ * 3D's align/mirror overlay pattern: hovering (or focusing, for keyboard users) a button previews
+ * the resulting position in the viewport via onPreviewTarget, and clicking commits it. Align moves
+ * the selected feature in place; Mirror adds a reflected duplicate instead, since flattening it
+ * into a move would destroy the original placement a symmetric layout still needs. */
+function AlignMirrorAxisRow({
+  feature,
+  axis,
+  label,
+  onUpdateFeature,
+  onAddFeature,
+  onSelectFeature,
+  onPreviewTarget,
+}: {
+  feature: Feature;
+  axis: Axis;
+  label: string;
+  onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
+  onAddFeature: (feature: Feature) => void;
+  onSelectFeature: (id: string | null) => void;
+  onPreviewTarget: (target: PreviewTarget | null) => void;
+}) {
+  const preview = (target: AxisTarget | null) => {
+    if (target === null) {
+      onPreviewTarget(null);
+      return;
+    }
+    onPreviewTarget({ face: feature.face, ...alignedPosition(feature, axis, target) });
+  };
+  const mirrored = mirroredPosition(feature, axis);
+  const previewMirror = (show: boolean) => {
+    onPreviewTarget(show && mirrored ? { face: feature.face, ...mirrored } : null);
+  };
+
+  return (
+    <div className="align-row">
+      <span className="align-row-label">{label}</span>
+      <div className="align-row-buttons">
+        {([0, 0.5, 1] as AxisTarget[]).map((target, i) => (
+          <button
+            key={target}
+            type="button"
+            onClick={() => {
+              onUpdateFeature(feature.id, alignedPosition(feature, axis, target));
+              onPreviewTarget(null);
+            }}
+            onMouseEnter={() => preview(target)}
+            onMouseLeave={() => preview(null)}
+            onFocus={() => preview(target)}
+            onBlur={() => preview(null)}
+          >
+            {['Start', 'Center', 'End'][i]}
+          </button>
+        ))}
+        <button
+          type="button"
+          disabled={!mirrored}
+          title={mirrored ? `Duplicate, mirrored across the face's ${label} center` : 'Already centered on this axis'}
+          onClick={() => {
+            if (!mirrored) return;
+            const copy = cloneFeatureAt(feature, mirrored);
+            onAddFeature(copy);
+            onSelectFeature(copy.id);
+            onPreviewTarget(null);
+          }}
+          onMouseEnter={() => previewMirror(true)}
+          onMouseLeave={() => previewMirror(false)}
+          onFocus={() => previewMirror(true)}
+          onBlur={() => previewMirror(false)}
+        >
+          Mirror
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface InspectorPanelProps {
   selectedFeatureId: string | null;
   onSelectFeature: (id: string | null) => void;
   onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
   onRemoveFeature: (id: string) => void;
+  onAddFeature: (feature: Feature) => void;
+  onPreviewTarget: (target: PreviewTarget | null) => void;
 }
 
 export function InspectorPanel({
@@ -316,6 +397,8 @@ export function InspectorPanel({
   onSelectFeature,
   onUpdateFeature,
   onRemoveFeature,
+  onAddFeature,
+  onPreviewTarget,
 }: InspectorPanelProps) {
   const project = useProjectStore((s) => s.project);
   const setBodyShape = useProjectStore((s) => s.setBodyShape);
@@ -545,6 +628,26 @@ export function InspectorPanel({
             step={5}
             onChange={(v) => onUpdateFeature(selectedFeature.id, { rotationDeg: v })}
           />
+          <div className="align-mirror">
+            <AlignMirrorAxisRow
+              feature={selectedFeature}
+              axis="u"
+              label="U"
+              onUpdateFeature={onUpdateFeature}
+              onAddFeature={onAddFeature}
+              onSelectFeature={onSelectFeature}
+              onPreviewTarget={onPreviewTarget}
+            />
+            <AlignMirrorAxisRow
+              feature={selectedFeature}
+              axis="v"
+              label="V"
+              onUpdateFeature={onUpdateFeature}
+              onAddFeature={onAddFeature}
+              onSelectFeature={onSelectFeature}
+              onPreviewTarget={onPreviewTarget}
+            />
+          </div>
           {selectedFeature.type === 'connector-cutout' && selectedFeature.connectorId && (
             <ConnectorSizeFields
               feature={selectedFeature}
