@@ -164,6 +164,7 @@ export function generateEnclosure(
   // Apply per-face features (Section 7 step 5). Subtractive features (cutouts, vents, custom
   // holes) target whichever piece the split assigns them to; standoffs always union to the base.
   for (const feature of project.features) {
+    if (feature.hidden) continue;
     let cutout: Manifold | null = null;
     if (feature.type === 'connector-cutout' && feature.connectorId) {
       const entry = findConnector(feature.connectorId);

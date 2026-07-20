@@ -106,6 +106,8 @@ export interface Feature {
   vent?: VentSpec;
   custom?: { shape: 'circle' | 'rect'; width: number; height?: number };
   board?: BoardMountSpec; // for 'board-mount'
+  hidden?: boolean; // when true, feature is hidden from CSG generation and 3D preview
+  locked?: boolean; // when true, feature is locked against 3D drag gestures
 }
 
 export type ConnectorCategory =

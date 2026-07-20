@@ -11,19 +11,13 @@ import { useAutosave } from './state/useAutosave';
 import { useProjectStore } from './state/projectStore';
 import type { Face } from './types/project';
 
-const LID_VIEW_LABELS: Record<LidView, string> = {
-  assembled: 'Assembled',
-  ghost: 'Ghost',
-  hidden: 'Hidden',
-  exploded: 'Exploded',
-};
-
 function App() {
   const project = useProjectStore((s) => s.project);
   const addFeature = useProjectStore((s) => s.addFeature);
   const updateFeature = useProjectStore((s) => s.updateFeature);
   const removeFeature = useProjectStore((s) => s.removeFeature);
   const setBodyDimension = useProjectStore((s) => s.setBodyDimension);
+  const setSplitHeight = useProjectStore((s) => s.setSplitHeight);
   const undo = useProjectStore((s) => s.undo);
   const redo = useProjectStore((s) => s.redo);
   const canUndo = useProjectStore((s) => s.past.length > 0);
@@ -34,6 +28,7 @@ function App() {
   // View-only lid presentation -- deliberately not in the project store, so it never dirties
   // undo history, autosave, or saved project files.
   const [lidView, setLidView] = useState<LidView>('assembled');
+  const [showHandles, setShowHandles] = useState(true);
   // Align/mirror hover-preview target (see AlignMirrorAxisRow in InspectorPanel.tsx) -- also
   // view-only, same non-persisted precedent as lidView.
   const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
@@ -77,6 +72,7 @@ function App() {
     if (patch.width !== undefined) setBodyDimension('width', patch.width);
     if (patch.height !== undefined) setBodyDimension('height', patch.height);
     if (patch.diameter !== undefined) setBodyDimension('diameter', patch.diameter);
+    if (patch.splitHeight !== undefined) setSplitHeight(patch.splitHeight);
   };
 
   const handleRemoveFeature = (id: string) => {
@@ -93,6 +89,7 @@ function App() {
           body={project.body}
           features={project.features}
           lidView={lidView}
+          showHandles={showHandles}
           placementArmed={armed !== null}
           onPlaceFeature={handlePlaceFeature}
           selectedFeatureId={selectedFeatureId}
@@ -101,19 +98,6 @@ function App() {
           onResizeBody={handleResizeBody}
           previewTarget={previewTarget}
         />
-        <div className="viewport-toolbar" role="group" aria-label="Lid view">
-          <span>Lid</span>
-          {(Object.keys(LID_VIEW_LABELS) as LidView[]).map((view) => (
-            <button
-              key={view}
-              type="button"
-              className={lidView === view ? 'active' : ''}
-              onClick={() => setLidView(view)}
-            >
-              {LID_VIEW_LABELS[view]}
-            </button>
-          ))}
-        </div>
         {error && (
           <div className="viewport-error" role="alert">
             <span className="viewport-error-text">
@@ -129,6 +113,10 @@ function App() {
       </div>
       <InspectorPanel
         selectedFeatureId={selectedFeatureId}
+        lidView={lidView}
+        onSetLidView={setLidView}
+        showHandles={showHandles}
+        onToggleShowHandles={setShowHandles}
         onSelectFeature={setSelectedFeatureId}
         onUpdateFeature={updateFeature}
         onRemoveFeature={handleRemoveFeature}

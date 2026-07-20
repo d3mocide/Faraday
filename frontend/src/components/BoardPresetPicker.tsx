@@ -18,11 +18,13 @@ export function BoardPresetPicker({ onClose }: BoardPresetPickerProps) {
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true">
       <div className="modal preset-modal">
-        <h3>Start from a board</h3>
-        <p className="preset-modal-hint">
-          Sets body size, wall thickness, and split height to fit the board; clears any placed
-          features. Starter dimensions -- verify against your actual hardware.
-        </p>
+        <div className="preset-modal-header">
+          <h3>Start from a board</h3>
+          <p className="preset-modal-hint">
+            Sets body size, wall thickness, and split height to fit the board; clears any placed
+            features. Starter dimensions -- verify against your actual hardware.
+          </p>
+        </div>
         <ul className="preset-list">
           {BOARD_PRESETS.map((preset) => (
             <li key={preset.id}>
@@ -33,9 +35,11 @@ export function BoardPresetPicker({ onClose }: BoardPresetPickerProps) {
             </li>
           ))}
         </ul>
-        <button type="button" onClick={onClose}>
-          Cancel
-        </button>
+        <div className="preset-modal-footer">
+          <button type="button" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   );

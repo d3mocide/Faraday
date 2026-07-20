@@ -8,7 +8,7 @@ import { meshDataToBufferGeometry } from '../csg/meshToBufferGeometry';
 import { snapValue } from '../csg/snapping';
 import type { EnclosureBody, Face, Feature } from '../types/project';
 
-export type BodyResizePatch = Partial<{ length: number; width: number; height: number; diameter: number }>;
+export type BodyResizePatch = Partial<{ length: number; width: number; height: number; diameter: number; splitHeight: number }>;
 
 /** View-only lid presentation — never part of the saved project or undo history. */
 export type LidView = 'assembled' | 'ghost' | 'hidden' | 'exploded';
@@ -31,6 +31,7 @@ interface Viewport3DProps {
   body: EnclosureBody;
   features: Feature[];
   lidView: LidView;
+  showHandles?: boolean;
   placementArmed: boolean;
   onPlaceFeature: (face: Face, u: number, v: number) => void;
   selectedFeatureId: string | null;
@@ -52,6 +53,7 @@ type DragState =
   | { type: 'none' }
   | { type: 'corner' }
   | { type: 'height' }
+  | { type: 'split' }
   | { type: 'feature'; id: string; face: Face };
 
 export function Viewport3D({
@@ -59,6 +61,7 @@ export function Viewport3D({
   body,
   features,
   lidView,
+  showHandles = true,
   placementArmed,
   onPlaceFeature,
   selectedFeatureId,
@@ -144,6 +147,10 @@ export function Viewport3D({
     grid.rotation.x = Math.PI / 2;
     scene.add(grid);
 
+    const axesHelper = new THREE.AxesHelper(40);
+    axesHelper.position.set(-135, -135, 0);
+    scene.add(axesHelper);
+
     const baseMaterial = new THREE.MeshStandardMaterial({
       color: 0x9aa5b1,
       roughness: 0.6,
@@ -176,9 +183,11 @@ export function Viewport3D({
     const highlightMaterial = new THREE.MeshBasicMaterial({
       color: 0x6fd3ff,
       transparent: true,
-      opacity: 0.25,
+      opacity: 0.3,
       side: THREE.DoubleSide,
-      depthTest: true,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
     });
     const highlightMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
@@ -293,23 +302,24 @@ export function Viewport3D({
       controls.enabled = enabled;
     };
 
-    // PlaneGeometry's default normal is +Z; these are the rotations that lay it flush against
-    // each box face's plane. (Using lookAt() here instead would gimbal-lock on front/back, whose
-    // normal is parallel to the default up vector.) The overlay material is double-sided, so the
-    // exact sign of each rotation doesn't matter -- only which world plane it ends up in does.
+    // PlaneGeometry's default normal is +Z. Three.js Euler 'XYZ' builds R = Rx(x)*Ry(y)*Rz(z),
+    // so the ry (middle) component, not rz, is what pivots a plane from the XZ into the YZ plane.
+    // front/back only need Rx(±π/2) to swing the plane up from XY into XZ; left/right additionally
+    // need Ry(±π/2) to swing it from XZ into YZ. The overlay is double-sided, so normal sign is
+    // irrelevant -- only which world plane the geometry ends up in matters.
     const HIGHLIGHT_ROTATION: Partial<Record<Face, [number, number, number]>> = {
       top: [0, 0, 0],
       bottom: [Math.PI, 0, 0],
       front: [Math.PI / 2, 0, 0],
       back: [-Math.PI / 2, 0, 0],
-      left: [0, -Math.PI / 2, 0],
-      right: [0, Math.PI / 2, 0],
+      left: [Math.PI / 2, -Math.PI / 2, 0],
+      right: [Math.PI / 2, Math.PI / 2, 0],
     };
 
     // A cylinder's curved lateral wall has no single tangent plane, so 'side' highlights the
     // whole lateral surface as an open cylindrical band -- the direct analogue of how a box's
     // hover highlight already covers its whole (flat) face rather than a local patch.
-    const updateHighlight = (face: Face | null) => {
+    const updateHighlight = (face: Face | null, hitOnLid = false) => {
       const geom = bodyGeometry(bodyRef.current);
       if (!face) {
         highlightMesh.visible = false;
@@ -318,44 +328,73 @@ export function Viewport3D({
       highlightMesh.visible = true;
       highlightMesh.geometry.dispose();
 
+      const outerHeight = geom.height;
+      const isExploded = lidViewRef.current === 'exploded';
+      const explodeZ = explodeOffset(lidViewRef.current, outerHeight);
+      const split = effectiveSplitHeight(bodyRef.current);
+
       if (geom.shape === 'cylinder' && face === 'side') {
-        const { diameter, height } = geom;
+        const { diameter } = geom;
+        const sideH = isExploded ? (hitOnLid ? outerHeight - split : split) : outerHeight;
+        const zCenter = isExploded
+          ? hitOnLid
+            ? split + sideH / 2 + explodeZ
+            : split / 2
+          : outerHeight / 2;
+
         highlightMesh.geometry = new THREE.CylinderGeometry(
           diameter / 2 + 0.2,
           diameter / 2 + 0.2,
-          height,
+          sideH,
           48,
           1,
           true,
         );
-        highlightMesh.position.set(0, 0, height / 2);
+        highlightMesh.position.set(0, 0, zCenter);
         highlightMesh.rotation.set(Math.PI / 2, 0, 0);
         return;
       }
 
       if (geom.shape === 'cylinder') {
-        const { diameter, height } = geom;
+        const { diameter } = geom;
         highlightMesh.geometry = new THREE.CircleGeometry(diameter / 2, 48);
-        const z =
-          face === 'top' ? height + 0.2 + explodeOffset(lidViewRef.current, height) : -0.2;
+        const z = face === 'top' ? outerHeight + 0.2 + explodeZ : -0.2;
         highlightMesh.position.set(0, 0, z);
         highlightMesh.rotation.set(face === 'top' ? 0 : Math.PI, 0, 0);
         return;
       }
 
-      const frame = faceFrame(face, geom);
-      const [su, sv] = faceSize(face, geom);
-      const [x, y, z] = frame.toWorld(0.5, 0.5);
-      const [nx, ny, nz] = frame.normalAt(0.5, 0.5);
-      highlightMesh.position.set(x + nx * 0.2, y + ny * 0.2, z + nz * 0.2);
-      highlightMesh.geometry = new THREE.PlaneGeometry(su, sv);
-      highlightMesh.rotation.set(...(HIGHLIGHT_ROTATION[face] ?? [0, 0, 0]));
-
-      // 'top' is the only face that lives entirely on the lid — follow it when exploded. Side
-      // faces straddle the split, so their (whole-face) highlight stays at the model position.
-      if (face === 'top') {
-        highlightMesh.position.z += explodeOffset(lidViewRef.current, geom.height);
+      if (face === 'top' || face === 'bottom') {
+        const { length, width } = geom;
+        const z = face === 'top' ? outerHeight + 0.2 + explodeZ : -0.2;
+        highlightMesh.position.set(0, 0, z);
+        highlightMesh.geometry = new THREE.PlaneGeometry(length, width);
+        highlightMesh.rotation.set(...(HIGHLIGHT_ROTATION[face] ?? [0, 0, 0]));
+        return;
       }
+
+      // Side faces (front, back, left, right)
+      // Small vertical inset (EDGE_INSET on each end) keeps the plane's bottom/top edges from
+      // being exactly coplanar with Z=0 (the grid) and Z=outerHeight (the enclosure top face),
+      // which prevents a polygon-offset depth artifact that makes the bottom appear to dip below
+      // the floor from shallow viewing angles.
+      const EDGE_INSET = 0.5;
+      const sideH = isExploded ? (hitOnLid ? outerHeight - split : split) : outerHeight;
+      const sv = Math.max(1, sideH - EDGE_INSET * 2);
+      const zCenter = isExploded
+        ? hitOnLid
+          ? split + EDGE_INSET + sv / 2 + explodeZ
+          : EDGE_INSET + sv / 2
+        : EDGE_INSET + sv / 2;
+
+      const su = face === 'front' || face === 'back' ? geom.length : geom.width;
+      highlightMesh.geometry = new THREE.PlaneGeometry(su, sv);
+
+      const frame = faceFrame(face, geom);
+      const [x, y] = frame.toWorld(0.5, 0.5);
+      const [nx, ny] = frame.normalAt(0.5, 0.5);
+      highlightMesh.position.set(x + nx * 0.2, y + ny * 0.2, zCenter);
+      highlightMesh.rotation.set(...(HIGHLIGHT_ROTATION[face] ?? [0, 0, 0]));
     };
 
     const handlePointerDown = (event: PointerEvent) => {
@@ -368,7 +407,7 @@ export function Viewport3D({
 
       const handleHit = raycaster.intersectObjects(handleGroup.children, false)[0];
       if (handleHit) {
-        const handleType = handleHit.object.userData.handleType as 'corner' | 'height';
+        const handleType = handleHit.object.userData.handleType as 'corner' | 'height' | 'split';
         dragState.current = { type: handleType };
         setControlsEnabled(false);
         return;
@@ -378,9 +417,17 @@ export function Viewport3D({
       if (markerHit) {
         const featureId = markerHit.object.userData.featureId as string;
         const face = markerHit.object.userData.face as Face;
+        const targetFeature = featuresRef.current.find((f) => f.id === featureId);
+        callbacksRef.current.onSelectFeature(featureId);
+
+        if (targetFeature?.locked) {
+          // Locked feature: select in inspector, but gate/prevent 3D dragging
+          dragState.current = { type: 'none' };
+          return;
+        }
+
         dragState.current = { type: 'feature', id: featureId, face };
         setControlsEnabled(false);
-        callbacksRef.current.onSelectFeature(featureId);
         return;
       }
 
@@ -415,6 +462,21 @@ export function Viewport3D({
         if (raycaster.ray.intersectPlane(heightDragPlane(), scratchVec)) {
           const height = Math.max(scratchVec.z, MIN_DIMENSION);
           callbacksRef.current.onResizeBody({ height });
+        }
+        return;
+      }
+
+      if (dragState.current.type === 'split') {
+        raycaster.setFromCamera(pointer, camera);
+        if (raycaster.ray.intersectPlane(heightDragPlane(), scratchVec)) {
+          const body = bodyRef.current;
+          const outerH = body.shape === 'box' ? body.outer.height : body.outer.height;
+          // Keep split within [wallThickness+1, outerHeight-wallThickness-1] so both lid and
+          // body retain at least 1mm of interior room.
+          const minSplit = body.wallThickness + 1;
+          const maxSplit = outerH - body.wallThickness - 1;
+          const splitHeight = Math.min(Math.max(scratchVec.z, minSplit), maxSplit);
+          callbacksRef.current.onResizeBody({ splitHeight });
         }
         return;
       }
@@ -457,7 +519,7 @@ export function Viewport3D({
         bodyRef.current.shape,
       );
       // Highlight the face placement would actually target (interior floor -> 'bottom', etc.).
-      updateHighlight(resolveInteriorFace(face, modelPoint(hit)));
+      updateHighlight(resolveInteriorFace(face, modelPoint(hit)), hit.object === lidMeshRef.current);
     };
 
     const handlePointerUp = (event: PointerEvent) => {
@@ -567,6 +629,7 @@ export function Viewport3D({
     const selectedMaterial = new THREE.MeshStandardMaterial({ color: FEATURE_MARKER_SELECTED_COLOR });
     const lidOffset = explodeOffset(lidView, body.outer.height);
     for (const feature of features) {
+      if (feature.hidden) continue;
       const onLid = featureOnLid(feature, body);
       // Markers ride their piece: lifted with an exploded lid, gone with a hidden one.
       if (onLid && lidView === 'hidden') continue;
@@ -574,7 +637,17 @@ export function Viewport3D({
       const [x, y, z] = frame.toWorld(feature.u, feature.v);
       const [nx, ny, nz] = frame.normalAt(feature.u, feature.v);
       const marker = new THREE.Mesh(geometry, feature.id === selectedFeatureId ? selectedMaterial : normalMaterial);
-      marker.position.set(x + nx * 1.5, y + ny * 1.5, z + nz * 1.5 + (onLid ? lidOffset : 0));
+      let markerX = x + nx * 1.5;
+      let markerY = y + ny * 1.5;
+      let markerZ = z + nz * 1.5 + (onLid ? lidOffset : 0);
+
+      if (feature.type === 'standoff' && feature.standoff) {
+        markerZ = body.wallThickness + feature.standoff.height + 1.2;
+      } else if (feature.type === 'board-mount' && feature.board) {
+        markerZ = body.wallThickness + feature.board.standoff.height + 1.2;
+      }
+
+      marker.position.set(markerX, markerY, markerZ);
       marker.userData.featureId = feature.id;
       marker.userData.face = feature.face;
       group.add(marker);
@@ -645,17 +718,19 @@ export function Viewport3D({
     };
   }, [features, body]);
 
-  // Plan-view resize handle(s) (box: 4 corner cubes; cylinder: 1 radius cube) and the height
-  // cone, repositioned whenever the body resizes.
+  // Plan-view resize handle(s) (box: 4 corner cubes; cylinder: 1 radius cube), height cone,
+  // and split-height handle (diamond disc at the lid seam), repositioned whenever body resizes.
   useEffect(() => {
     const group = handleGroupRef.current;
     if (!group) return;
 
     for (const child of [...group.children]) group.remove(child);
+    if (!showHandles) return;
 
     const cornerGeometry = new THREE.BoxGeometry(3, 3, 3);
     const cornerMaterial = new THREE.MeshStandardMaterial({ color: HANDLE_COLOR });
-    const { height } = body.outer;
+    const split = effectiveSplitHeight(body);
+    const effectiveHeight = lidView === 'hidden' ? split : body.outer.height;
 
     const positions: Array<[number, number]> =
       body.shape === 'box'
@@ -669,7 +744,7 @@ export function Viewport3D({
 
     for (const [x, y] of positions) {
       const handle = new THREE.Mesh(cornerGeometry, cornerMaterial);
-      handle.position.set(x, y, height);
+      handle.position.set(x, y, effectiveHeight);
       handle.userData.handleType = 'corner';
       group.add(handle);
     }
@@ -677,9 +752,47 @@ export function Viewport3D({
     const heightGeometry = new THREE.ConeGeometry(2, 5, 12);
     const heightMaterial = new THREE.MeshStandardMaterial({ color: HANDLE_COLOR });
     const heightHandle = new THREE.Mesh(heightGeometry, heightMaterial);
-    heightHandle.position.set(0, 0, height + 4);
+    heightHandle.rotation.x = Math.PI / 2;
+    heightHandle.position.set(0, 0, effectiveHeight + 4);
     heightHandle.userData.handleType = 'height';
     group.add(heightHandle);
+
+    // Split-height handle: a small diamond (OctahedronGeometry) sitting on the seam between
+    // lid and body, colour-coded amber so it's visually distinct from the resize handles.
+    // Only shown in assembled/exploded views where the seam is meaningful to interact with.
+    const SPLIT_COLOR = 0xffa040;
+    if (lidView === 'assembled' || lidView === 'exploded') {
+      const splitGeo = new THREE.OctahedronGeometry(2.5, 0);
+      const splitMat = new THREE.MeshStandardMaterial({ color: SPLIT_COLOR });
+      const splitHandle = new THREE.Mesh(splitGeo, splitMat);
+      // Place it at the right-front corner of the footprint so it's always visible and reachable.
+      const edgeX = body.shape === 'box' ? body.outer.length / 2 + 3 : body.outer.diameter / 2 + 3;
+      const edgeY = body.shape === 'box' ? -body.outer.width / 2 : 0;
+      splitHandle.position.set(edgeX, edgeY, split);
+      splitHandle.userData.handleType = 'split';
+      group.add(splitHandle);
+
+      // Two small arrow-cones above/below the diamond to hint at vertical draggability.
+      const arrowGeo = new THREE.ConeGeometry(1.2, 3, 8);
+      const arrowMat = new THREE.MeshStandardMaterial({ color: SPLIT_COLOR });
+      const arrowUp = new THREE.Mesh(arrowGeo, arrowMat);
+      arrowUp.rotation.x = Math.PI / 2;
+      arrowUp.position.set(edgeX, edgeY, split + 4.5);
+      arrowUp.userData.handleType = 'split';
+      group.add(arrowUp);
+      const arrowDown = new THREE.Mesh(arrowGeo, arrowMat);
+      arrowDown.rotation.x = -Math.PI / 2;
+      arrowDown.position.set(edgeX, edgeY, split - 4.5);
+      arrowDown.userData.handleType = 'split';
+      group.add(arrowDown);
+
+      return () => {
+        cornerGeometry.dispose(); cornerMaterial.dispose();
+        heightGeometry.dispose(); heightMaterial.dispose();
+        splitGeo.dispose(); splitMat.dispose();
+        arrowGeo.dispose(); arrowMat.dispose();
+      };
+    }
 
     return () => {
       cornerGeometry.dispose();
@@ -687,7 +800,15 @@ export function Viewport3D({
       heightGeometry.dispose();
       heightMaterial.dispose();
     };
-  }, [body]);
+  }, [body, lidView, showHandles]);
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
+  return (
+    <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <div className="viewport-orientation-badge">
+        <span className="axis-dot red"></span><span>X (Length)</span>
+        <span className="axis-dot green"></span><span>Y (Width)</span>
+        <span className="axis-dot blue"></span><span>Z (Height)</span>
+      </div>
+    </div>
+  );
 }
