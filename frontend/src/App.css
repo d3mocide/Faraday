@@ -60,7 +60,7 @@
 
 .preset-modal {
   width: 90vw;
-  max-width: 760px;
+  max-width: 960px;
   max-height: 85vh;
   display: flex;
   flex-direction: column;
@@ -75,6 +75,36 @@
   color: var(--text-dim);
   font-size: 12px;
   margin: -4px 0 14px;
+}
+
+.preset-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin: 0 0 14px;
+  flex: 0 0 auto;
+}
+
+.preset-tab {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim, #9aa5b1);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.preset-tab:hover {
+  color: var(--text, #e1e4e8);
+}
+
+.preset-tab.active {
+  color: var(--accent, #6fd3ff);
+  border-bottom-color: var(--accent, #6fd3ff);
+  font-weight: 600;
 }
 
 .preset-list {
@@ -798,11 +828,13 @@
   flex: 0 0 auto;
 }
 
-/* Docked just above the orientation gizmo (12px margin + 104px viewport) so all orientation
-   info lives in one lower-right cluster instead of being split across opposite corners. */
+/* Docked at the viewport's bottom-right edge, below the orientation gizmo (see
+   GIZMO_MARGIN_BOTTOM in Viewport3D.tsx, which reserves the clearance this needs), so all
+   orientation info lives in one lower-right cluster instead of being split across opposite
+   corners. */
 .viewport-orientation-badge {
   position: absolute;
-  bottom: 124px;
+  bottom: 12px;
   right: 12px;
   display: flex;
   align-items: center;
@@ -813,6 +845,7 @@
   border: 1px solid rgba(255, 255, 255, 0.12);
   backdrop-filter: blur(4px);
   font-size: 11px;
+  line-height: 16px;
   color: var(--text-dim, #9aa5b1);
   pointer-events: none;
   z-index: 10;
