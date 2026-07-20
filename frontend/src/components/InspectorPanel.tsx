@@ -464,7 +464,7 @@ function AlignMirrorAxisRow({
   );
 }
 
-function SidebarSectionIcon({ type }: { type: 'viewport' | 'body' | 'corners' | 'fasteners' | 'layers' | 'inspector' }) {
+function SidebarSectionIcon({ type }: { type: 'viewport' | 'body' | 'fasteners' | 'layers' | 'inspector' }) {
   const iconStyle = { width: 14, height: 14, strokeWidth: 2 };
   switch (type) {
     case 'viewport':
@@ -480,12 +480,6 @@ function SidebarSectionIcon({ type }: { type: 'viewport' | 'body' | 'corners' | 
           <path d="M21 8L12 3 3 8l9 5 9-5z" />
           <path d="M3 8v8l9 5 9-5V8" />
           <path d="M12 13v8" />
-        </svg>
-      );
-    case 'corners':
-      return (
-        <svg className="card-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" style={iconStyle}>
-          <path d="M4 20h16V4H10L4 10v10z" />
         </svg>
       );
     case 'fasteners':
@@ -615,7 +609,7 @@ export function InspectorPanel({
 
   return (
     <div className="inspector-panel">
-      <SectionCard title="Viewport & Lid View" icon={<SidebarSectionIcon type="viewport" />} defaultOpen={true}>
+      <SectionCard title="View" icon={<SidebarSectionIcon type="viewport" />} defaultOpen={true}>
         <div className="subgroup-title">Lid Presentation Mode</div>
         <div className="lid-view-buttons">
           {(['assembled', 'ghost', 'hidden', 'exploded'] as LidView[]).map((mode) => (
@@ -638,87 +632,6 @@ export function InspectorPanel({
           <span>Show 3D Resize Handles</span>
         </label>
       </SectionCard>
-      <SectionCard title="Body" icon={<SidebarSectionIcon type="body" />}>
-        <label className="field">
-          <span>Shape</span>
-          <select value={body.shape} onChange={(e) => setBodyShape(e.target.value as BodyShape)}>
-            <option value="box">Box</option>
-            <option value="cylinder">Cylinder</option>
-          </select>
-        </label>
-        {body.shape === 'box' ? (
-          <FieldsGrid2Col>
-            <UnitNumberField
-              label="Length"
-              valueMm={body.outer.length}
-              units={units}
-              minMm={5}
-              onChangeMm={(v) => setBodyDimension('length', v)}
-            />
-            <UnitNumberField
-              label="Width"
-              valueMm={body.outer.width}
-              units={units}
-              minMm={5}
-              onChangeMm={(v) => setBodyDimension('width', v)}
-            />
-          </FieldsGrid2Col>
-        ) : (
-          <UnitNumberField
-            label="Diameter"
-            valueMm={body.outer.diameter}
-            units={units}
-            minMm={5}
-            onChangeMm={(v) => setBodyDimension('diameter', v)}
-          />
-        )}
-        <FieldsGrid2Col>
-          <UnitNumberField
-            label="Height"
-            valueMm={body.outer.height}
-            units={units}
-            minMm={5}
-            onChangeMm={(v) => setBodyDimension('height', v)}
-          />
-          <UnitNumberField
-            label="Wall thickness"
-            valueMm={body.wallThickness}
-            units={units}
-            minMm={0.8}
-            maxMm={minPlanDimension / 2 - 0.5}
-            onChangeMm={setWallThickness}
-          />
-        </FieldsGrid2Col>
-      </SectionCard>
-
-      {body.shape === 'box' && (
-        <SectionCard title="Corners" icon={<SidebarSectionIcon type="corners" />}>
-          <FieldsGrid2Col>
-            <label className="field">
-              <span>Style</span>
-              <select
-                value={body.cornerStyle.type}
-                onChange={(e) => setCornerStyleType(e.target.value as CornerStyleType)}
-              >
-                <option value="sharp">Sharp</option>
-                <option value="rounded">Rounded</option>
-                <option value="chamfered">Chamfered</option>
-              </select>
-            </label>
-            {body.cornerStyle.type !== 'sharp' && (
-              <UnitNumberField
-                label="Corner radius"
-                valueMm={body.cornerStyle.radius}
-                units={units}
-                minMm={0.5}
-                maxMm={minPlanDimension / 2 - 0.5}
-                onChangeMm={setCornerRadius}
-              />
-            )}
-          </FieldsGrid2Col>
-        </SectionCard>
-      )}
-
       <SectionCard title="Lid & Fasteners" icon={<SidebarSectionIcon type="fasteners" />}>
         <label className="field">
           <span>Type</span>
@@ -848,6 +761,87 @@ export function InspectorPanel({
               onChangeMm={setGasketDepth}
             />
           </FieldsGrid2Col>
+        )}
+      </SectionCard>
+
+      <SectionCard title="Body" icon={<SidebarSectionIcon type="body" />}>
+        <label className="field">
+          <span>Shape</span>
+          <select value={body.shape} onChange={(e) => setBodyShape(e.target.value as BodyShape)}>
+            <option value="box">Box</option>
+            <option value="cylinder">Cylinder</option>
+          </select>
+        </label>
+        {body.shape === 'box' ? (
+          <FieldsGrid2Col>
+            <UnitNumberField
+              label="Length"
+              valueMm={body.outer.length}
+              units={units}
+              minMm={5}
+              onChangeMm={(v) => setBodyDimension('length', v)}
+            />
+            <UnitNumberField
+              label="Width"
+              valueMm={body.outer.width}
+              units={units}
+              minMm={5}
+              onChangeMm={(v) => setBodyDimension('width', v)}
+            />
+          </FieldsGrid2Col>
+        ) : (
+          <UnitNumberField
+            label="Diameter"
+            valueMm={body.outer.diameter}
+            units={units}
+            minMm={5}
+            onChangeMm={(v) => setBodyDimension('diameter', v)}
+          />
+        )}
+        <FieldsGrid2Col>
+          <UnitNumberField
+            label="Height"
+            valueMm={body.outer.height}
+            units={units}
+            minMm={5}
+            onChangeMm={(v) => setBodyDimension('height', v)}
+          />
+          <UnitNumberField
+            label="Wall thickness"
+            valueMm={body.wallThickness}
+            units={units}
+            minMm={0.8}
+            maxMm={minPlanDimension / 2 - 0.5}
+            onChangeMm={setWallThickness}
+          />
+        </FieldsGrid2Col>
+        {body.shape === 'box' && (
+          <div className="inspector-subgroup">
+            <div className="subgroup-title">Corner Style</div>
+            <FieldsGrid2Col>
+              <label className="field">
+                <span>Style</span>
+                <select
+                  value={body.cornerStyle.type}
+                  onChange={(e) => setCornerStyleType(e.target.value as CornerStyleType)}
+                >
+                  <option value="sharp">Sharp</option>
+                  <option value="rounded">Rounded</option>
+                  <option value="chamfered">Chamfered</option>
+                </select>
+              </label>
+              {body.cornerStyle.type !== 'sharp' && (
+                <UnitNumberField
+                  label="Corner radius"
+                  valueMm={body.cornerStyle.radius}
+                  units={units}
+                  minMm={0.5}
+                  maxMm={minPlanDimension / 2 - 0.5}
+                  onChangeMm={setCornerRadius}
+                />
+              )}
+            </FieldsGrid2Col>
+          </div>
         )}
       </SectionCard>
 

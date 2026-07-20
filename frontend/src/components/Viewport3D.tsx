@@ -151,6 +151,69 @@ export function Viewport3D({
     axesHelper.position.set(-135, -135, 0);
     scene.add(axesHelper);
 
+    // --- Orientation gizmo: a camera-synced axes triad rendered into a small scissored
+    // viewport in the lower-right corner, so the current X/Y/Z orientation is readable at all
+    // times regardless of where the in-scene AxesHelper has orbited to. Same renderer, second
+    // scene + ortho camera; the gizmo camera copies the main camera's direction each frame. ---
+    const gizmoScene = new THREE.Scene();
+    const gizmoCamera = new THREE.OrthographicCamera(-1.9, 1.9, 1.9, -1.9, 0.1, 10);
+    gizmoCamera.up.set(0, 0, 1);
+
+    const makeGizmoSprite = (draw: (ctx: CanvasRenderingContext2D, size: number) => void): THREE.Sprite => {
+      const size = 64;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      draw(canvas.getContext('2d')!, size);
+      const texture = new THREE.CanvasTexture(canvas);
+      const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false });
+      return new THREE.Sprite(material);
+    };
+
+    // Translucent disc behind the triad so it stays readable over any model color.
+    const gizmoBackdrop = makeGizmoSprite((ctx, size) => {
+      ctx.fillStyle = 'rgba(26, 30, 37, 0.75)';
+      ctx.strokeStyle = 'rgba(111, 211, 255, 0.25)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
+    gizmoBackdrop.scale.setScalar(3.8);
+    gizmoBackdrop.renderOrder = -1;
+    gizmoScene.add(gizmoBackdrop);
+
+    // Axis colors match the top-right legend badge (.axis-dot in App.css).
+    const gizmoAxes = [
+      { dir: new THREE.Vector3(1, 0, 0), color: 0xff5555, css: '#ff5555', label: 'X' },
+      { dir: new THREE.Vector3(0, 1, 0), color: 0x50fa7b, css: '#50fa7b', label: 'Y' },
+      { dir: new THREE.Vector3(0, 0, 1), color: 0x8be9fd, css: '#8be9fd', label: 'Z' },
+    ];
+    for (const axis of gizmoAxes) {
+      gizmoScene.add(new THREE.ArrowHelper(axis.dir, new THREE.Vector3(), 1.05, axis.color, 0.3, 0.16));
+      // Dim stub for the negative half, so "which way is minus" reads too (Blender-style).
+      const negGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(),
+        axis.dir.clone().multiplyScalar(-0.65),
+      ]);
+      gizmoScene.add(new THREE.Line(negGeo, new THREE.LineBasicMaterial({ color: axis.color, transparent: true, opacity: 0.35 })));
+      const label = makeGizmoSprite((ctx, size) => {
+        ctx.font = 'bold 40px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = axis.css;
+        ctx.fillText(axis.label, size / 2, size / 2 + 2);
+      });
+      label.scale.setScalar(0.55);
+      label.position.copy(axis.dir).multiplyScalar(1.5);
+      gizmoScene.add(label);
+    }
+
+    const GIZMO_SIZE = 104; // CSS px, square viewport in the corner
+    const GIZMO_MARGIN = 12;
+    const rendererSize = new THREE.Vector2();
+
     const baseMaterial = new THREE.MeshStandardMaterial({
       color: 0x9aa5b1,
       roughness: 0.6,
@@ -217,6 +280,25 @@ export function Viewport3D({
     const animate = () => {
       controls.update();
       renderer.render(scene, camera);
+
+      // Gizmo overlay pass: scissor to the lower-right corner, aim the ortho camera along the
+      // main camera's current view direction (relative to the orbit target, so panning doesn't
+      // skew it), and draw the triad on top of the already-rendered frame.
+      renderer.getSize(rendererSize);
+      const gx = rendererSize.x - GIZMO_SIZE - GIZMO_MARGIN;
+      const gy = GIZMO_MARGIN; // WebGL viewport origin is bottom-left
+      gizmoCamera.position.copy(camera.position).sub(controls.target).normalize().multiplyScalar(5);
+      gizmoCamera.lookAt(0, 0, 0);
+      renderer.autoClear = false;
+      renderer.clearDepth();
+      renderer.setScissorTest(true);
+      renderer.setScissor(gx, gy, GIZMO_SIZE, GIZMO_SIZE);
+      renderer.setViewport(gx, gy, GIZMO_SIZE, GIZMO_SIZE);
+      renderer.render(gizmoScene, gizmoCamera);
+      renderer.setScissorTest(false);
+      renderer.setViewport(0, 0, rendererSize.x, rendererSize.y);
+      renderer.autoClear = true;
+
       animationFrame = requestAnimationFrame(animate);
     };
     animate();
@@ -578,6 +660,17 @@ export function Viewport3D({
       highlightMaterial.dispose();
       previewMarker.geometry.dispose();
       previewMaterial.dispose();
+      gizmoScene.traverse((obj) => {
+        // Sprites (and ArrowHelper parts) share static library geometries -- only dispose the
+        // per-instance materials/textures we created, plus the negative-stub line geometries.
+        if (obj instanceof THREE.Sprite) {
+          obj.material.map?.dispose();
+          obj.material.dispose();
+        } else if (obj instanceof THREE.Line) {
+          obj.geometry.dispose();
+          (obj.material as THREE.Material).dispose();
+        }
+      });
       container.removeChild(renderer.domElement);
       cameraRef.current = null;
       rendererRef.current = null;
