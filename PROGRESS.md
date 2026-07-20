@@ -524,5 +524,29 @@ never-verified Docker build.
 - **2026-07-20**: Replaced All Emojis with Clean Vector SVG Icons in `InspectorPanel.tsx` & `App.css`: (1) Added `<SidebarSectionIcon type="..." />` with 6 vector SVG section icons (`viewport`, `body`, `corners`, `fasteners`, `layers`, `inspector`) matching CAD palette styling. (2) Replaced Feature Layers action button emojis with vector SVG icons (`SvgEyeIcon`, `SvgEyeOffIcon`, `SvgLockIcon`, `SvgUnlockIcon`, `SvgCopyIcon`, `SvgTrashIcon`).
 - **2026-07-20**: Added a camera-synced orientation gizmo + condensed the inspector sidebar: (1) New always-visible XYZ orientation gizmo in the lower-right corner of the viewport (`Viewport3D.tsx`) — a second scene (arrow triad + axis-letter sprites + dim negative stubs over a translucent disc backdrop) rendered by the same renderer into a scissored 104px viewport each frame, with an ortho camera that copies the main camera's direction relative to the orbit target so it tracks orbiting but ignores panning. Axis colors match the top-right legend badge. The in-scene `AxesHelper` at the grid corner is kept for on-plane reference. (2) Sidebar reorder in `InspectorPanel.tsx` per user request: `Lid & Fasteners` now sits directly under the view card, which was renamed `Viewport & Lid View` → `View` (it holds only view-only settings; the old name collided confusingly with `Lid & Fasteners` once they became neighbors). (3) The standalone `Corners` card was merged into `Body` as a "Corner Style" subgroup (corner style is a body property; one fewer top-level card). Card order is now View → Lid & Fasteners → Body → Feature Layers → Inspector. Verified with Playwright: gizmo renders and visibly rotates when orbiting (screenshot-compared), card order/merge confirmed in the DOM, Corner Style correctly disappears for a cylinder body, lid view buttons still work, no console errors.
 
+- **2026-07-20**: Follow-up to the gizmo/sidebar PR (#8), per user request: (1) **XYZ legend moved
+  into the lower-right orientation cluster** — `.viewport-orientation-badge` now docks just above
+  the gizmo instead of the opposite (top-right) corner, so all orientation info lives in one place;
+  kept (not deleted) because it's the only element mapping axes to dimension names (X=Length etc.).
+  (2) **Placeable board-mount presets in the palette**: new "Boards" group with 6 entries
+  (Pi 3B/4B/5, Pi Zero, Pi Pico, Arduino Uno R3, Arduino Mega 2560, Adafruit Feather) that place a
+  board-mount with the board's documented outline + hole pattern. Data lives in a new
+  `presets/boardMounts.ts`; the Pi mounts previously private to `presets/boards.ts` moved there and
+  are imported back, so enclosure presets and palette presets share one source of truth. The
+  armed template gained an optional `boardPresetId`, resolved in `featureFactory` with a
+  `structuredClone` so placements never alias library objects. Arduino/Feather/Pico patterns are
+  from the official board drawings/datasheets — same "verify before printing" disclaimer as ever.
+  (3) **View card toggles** for grid + floor axes (one `gridGroup` in `Viewport3D`), ghost boards,
+  and feature markers — view-only App state like `lidView`; hidden markers are also excluded from
+  the pointer raycast (three doesn't skip invisible meshes) so they can't be click-selected.
+  (4) **Feature Layers bulk actions**: Hide/Show all and Lock/Unlock all buttons above the layer
+  list (loop over `updateFeature`; the store's history debounce coalesces it into one undo step).
+  (5) **PG7/PG9/PG11 cable gland** entries added to the connector library (misc). Deferred to
+  future PRs (agreed with user, CSG-heavy): chamfered top edges / lid-side corner treatment,
+  snap-fit wedge profile, and true multi-select in Feature Layers. Verified with Playwright:
+  badge position, Boards group rendering/search/armed state, a placed Pi Zero mount carrying the
+  exact 65×30 / ±29,±11.5 spec in the store, all three view toggles (screenshot-compared), bulk
+  hide/lock across 2 features, gland search hits, no console errors; `lint` + `build` pass.
+
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->

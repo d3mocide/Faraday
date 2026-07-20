@@ -1,5 +1,6 @@
 import type { BoardPresetBody } from '../state/projectStore';
 import type { BoardMountSpec } from '../types/project';
+import { PI_FULL_SIZE_MOUNT, PI_ZERO_MOUNT } from './boardMounts';
 
 export interface BoardPreset {
   id: string;
@@ -8,39 +9,10 @@ export interface BoardPreset {
   body: BoardPresetBody;
   /** Present only where the board's mounting-hole pattern is officially documented (e.g. the
    * Raspberry Pi mechanical drawings) — applying the preset then drops in a centered
-   * board-mount feature with the real hole layout. */
+   * board-mount feature with the real hole layout. Shared with the palette's placeable
+   * board-mount presets (`presets/boardMounts.ts`) so the two stay in sync. */
   boardMount?: BoardMountSpec;
 }
-
-/** Raspberry Pi 3B/4B/5 share one published pattern: 85x56mm board, four M2.5 holes 3.5mm in
- * from the corners on the left edge and a 58x49mm grid (so the pattern is NOT centered on the
- * board -- the right pair sits 23.5mm from the right edge). Offsets here are from board center. */
-const PI_FULL_SIZE_MOUNT: BoardMountSpec = {
-  boardWidth: 85,
-  boardDepth: 56,
-  boardThickness: 1.6,
-  holes: [
-    { x: -39, y: -24.5 },
-    { x: 19, y: -24.5 },
-    { x: -39, y: 24.5 },
-    { x: 19, y: 24.5 },
-  ],
-  standoff: { outerDiameter: 6, screwHoleDiameter: 2.2, height: 4 },
-};
-
-/** Pi Zero family: 65x30mm board, M2.5 holes 3.5mm from every corner (58x23mm grid, centered). */
-const PI_ZERO_MOUNT: BoardMountSpec = {
-  boardWidth: 65,
-  boardDepth: 30,
-  boardThickness: 1.6,
-  holes: [
-    { x: -29, y: -11.5 },
-    { x: 29, y: -11.5 },
-    { x: -29, y: 11.5 },
-    { x: 29, y: 11.5 },
-  ],
-  standoff: { outerDiameter: 6, screwHoleDiameter: 2.2, height: 4 },
-};
 
 /**
  * Starting points sized to comfortably fit the named board plus a few mm of clearance on each

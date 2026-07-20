@@ -32,6 +32,9 @@ interface Viewport3DProps {
   features: Feature[];
   lidView: LidView;
   showHandles?: boolean;
+  showGrid?: boolean;
+  showGhostBoards?: boolean;
+  showMarkers?: boolean;
   placementArmed: boolean;
   onPlaceFeature: (face: Face, u: number, v: number) => void;
   selectedFeatureId: string | null;
@@ -62,6 +65,9 @@ export function Viewport3D({
   features,
   lidView,
   showHandles = true,
+  showGrid = true,
+  showGhostBoards = true,
+  showMarkers = true,
   placementArmed,
   onPlaceFeature,
   selectedFeatureId,
@@ -81,12 +87,14 @@ export function Viewport3D({
   const handleGroupRef = useRef<THREE.Group | null>(null);
   const highlightMeshRef = useRef<THREE.Mesh | null>(null);
   const previewMarkerRef = useRef<THREE.Mesh | null>(null);
+  const gridGroupRef = useRef<THREE.Group | null>(null);
 
   // Latest-value refs so the pointer handlers (set up once, in the mount effect) always see
   // current props without needing to re-attach DOM listeners on every render.
   const bodyRef = useRef(body);
   const featuresRef = useRef(features);
   const lidViewRef = useRef(lidView);
+  const showMarkersRef = useRef(showMarkers);
   const placementArmedRef = useRef(placementArmed);
   const callbacksRef = useRef({ onPlaceFeature, onSelectFeature, onUpdateFeature, onResizeBody });
 
@@ -143,13 +151,16 @@ export function Viewport3D({
     fill.position.set(-150, 100, -100);
     scene.add(fill);
 
+    // Grid + the on-plane axes helper toggle together (one "floor reference" visual).
+    const gridGroup = new THREE.Group();
     const grid = new THREE.GridHelper(300, 30, 0x3a3f47, 0x2a2e35);
     grid.rotation.x = Math.PI / 2;
-    scene.add(grid);
-
+    gridGroup.add(grid);
     const axesHelper = new THREE.AxesHelper(40);
     axesHelper.position.set(-135, -135, 0);
-    scene.add(axesHelper);
+    gridGroup.add(axesHelper);
+    scene.add(gridGroup);
+    gridGroupRef.current = gridGroup;
 
     // --- Orientation gizmo: a camera-synced axes triad rendered into a small scissored
     // viewport in the lower-right corner, so the current X/Y/Z orientation is readable at all
@@ -495,7 +506,10 @@ export function Viewport3D({
         return;
       }
 
-      const markerHit = raycaster.intersectObjects(markerGroup.children, false)[0];
+      // Hidden markers must not be pickable (three's raycaster doesn't skip invisible meshes).
+      const markerHit = showMarkersRef.current
+        ? raycaster.intersectObjects(markerGroup.children, false)[0]
+        : undefined;
       if (markerHit) {
         const featureId = markerHit.object.userData.featureId as string;
         const face = markerHit.object.userData.face as Face;
@@ -679,8 +693,22 @@ export function Viewport3D({
       handleGroupRef.current = null;
       highlightMeshRef.current = null;
       previewMarkerRef.current = null;
+      gridGroupRef.current = null;
     };
   }, []);
+
+  // View-only visibility toggles (grid/floor axes, ghost boards, feature markers) -- same
+  // non-persisted precedent as lidView.
+  useEffect(() => {
+    if (gridGroupRef.current) gridGroupRef.current.visible = showGrid;
+  }, [showGrid]);
+  useEffect(() => {
+    if (ghostBoardGroupRef.current) ghostBoardGroupRef.current.visible = showGhostBoards;
+  }, [showGhostBoards]);
+  useEffect(() => {
+    if (markerGroupRef.current) markerGroupRef.current.visible = showMarkers;
+    showMarkersRef.current = showMarkers;
+  }, [showMarkers]);
 
   useEffect(() => {
     if (!meshes) return;

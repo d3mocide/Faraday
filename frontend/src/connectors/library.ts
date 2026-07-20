@@ -148,6 +148,33 @@ export const CONNECTOR_LIBRARY: ConnectorLibraryEntry[] = [
     notes:
       'Anti-rotation D hole for a panel toggle/rocker with a keyed bushing — verify diameter and flat against your switch.',
   },
+  {
+    id: 'cable-gland-pg7',
+    label: 'PG7 Cable Gland',
+    category: 'misc',
+    holeShape: 'circle',
+    diameter: 12.5,
+    notes:
+      'Clearance for a PG7 gland thread (3-6.5mm cable) — the go-to for sealed cable entry on outdoor radio boxes. Verify against your gland.',
+  },
+  {
+    id: 'cable-gland-pg9',
+    label: 'PG9 Cable Gland',
+    category: 'misc',
+    holeShape: 'circle',
+    diameter: 15.2,
+    notes:
+      'Clearance for a PG9 gland thread (4-8mm cable). Verify against your gland.',
+  },
+  {
+    id: 'cable-gland-pg11',
+    label: 'PG11 Cable Gland',
+    category: 'misc',
+    holeShape: 'circle',
+    diameter: 18.6,
+    notes:
+      'Clearance for a PG11 gland thread (5-10mm cable). Verify against your gland.',
+  },
 ];
 
 export function findConnector(id: string): ConnectorLibraryEntry | undefined {

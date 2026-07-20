@@ -1,4 +1,5 @@
 import type { ArmedFeatureTemplate } from '../components/FeaturePalette';
+import { findBoardMountPreset } from '../presets/boardMounts';
 import type { EnclosureProject, Face, Feature } from '../types/project';
 
 /** The classic 4-corner mounting pattern: holes inset from each board corner by `inset` mm. */
@@ -45,6 +46,20 @@ export function buildFeatureFromTemplate(
   }
 
   if (template.type === 'board-mount') {
+    const preset = template.boardPresetId ? findBoardMountPreset(template.boardPresetId) : undefined;
+    if (preset) {
+      // Clone so the placed feature never shares nested holes/standoff objects with the library
+      // entry (same precedent as cloneFeatureAt in alignMirror.ts).
+      return {
+        id,
+        type: 'board-mount',
+        face: 'bottom',
+        u,
+        v,
+        rotationDeg: 0,
+        board: structuredClone(preset.mount),
+      };
+    }
     const boardWidth = 50;
     const boardDepth = 40;
     return {
