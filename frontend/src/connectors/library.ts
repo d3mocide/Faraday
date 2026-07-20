@@ -149,6 +149,28 @@ export const CONNECTOR_LIBRARY: ConnectorLibraryEntry[] = [
       'Anti-rotation D hole for a panel toggle/rocker with a keyed bushing — verify diameter and flat against your switch.',
   },
   {
+    id: 'usb-a-dual-stack',
+    label: 'USB-A Dual Stack Cutout',
+    category: 'usb',
+    holeShape: 'rect',
+    width: 13.3,
+    height: 15.6,
+    cornerRadius: 1.0,
+    notes:
+      'Opening for a stacked double USB-A receptacle (Raspberry Pi style) — verify against your specific connector.',
+  },
+  {
+    id: 'microsd-slot',
+    label: 'MicroSD Card Slot',
+    category: 'misc',
+    holeShape: 'rect',
+    width: 12.0,
+    height: 3.0,
+    cornerRadius: 0.5,
+    notes:
+      'Access slot for a push-fit microSD card (card is 11x1mm; extra clearance for fingers/angle) — verify against your board.',
+  },
+  {
     id: 'cable-gland-pg7',
     label: 'PG7 Cable Gland',
     category: 'misc',

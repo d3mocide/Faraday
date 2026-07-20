@@ -1,6 +1,23 @@
 import type { BoardPresetBody } from '../state/projectStore';
-import type { BoardMountSpec } from '../types/project';
+import type { BoardMountSpec, Face } from '../types/project';
 import { PI_FULL_SIZE_MOUNT, PI_ZERO_MOUNT } from './boardMounts';
+
+/** One wall cutout in a preset's IO layout, positioned relative to the (centered) board rather
+ * than the enclosure, so the same layout survives a body-size tweak of the preset. Horizontal
+ * placement follows the face's u axis (+X for front/back, +Y for left/right — see
+ * csg/faceFrame.ts); vertical placement is measured from the board's TOP surface (negative for
+ * underside ports like a microSD slot). Port centerlines come from the board's official
+ * mechanical drawing; the mm-above-board heights are connector-datasheet approximations — same
+ * "verify before printing" tier as the connector library. */
+export interface BoardIoCutout {
+  /** Connector library entry to cut... */
+  connectorId?: string;
+  /** ...or a one-off custom hole for ports with no library entry. */
+  custom?: { shape: 'circle' | 'rect'; width: number; height?: number };
+  face: Face;
+  alongMm: number;
+  aboveBoardMm: number;
+}
 
 export interface BoardPreset {
   id: string;
@@ -12,6 +29,9 @@ export interface BoardPreset {
    * board-mount feature with the real hole layout. Shared with the palette's placeable
    * board-mount presets (`presets/boardMounts.ts`) so the two stay in sync. */
   boardMount?: BoardMountSpec;
+  /** Wall cutouts for the board's IO ports, only meaningful alongside `boardMount` (positions
+   * derive from the centered board). Present only where port centerlines are documented. */
+  io?: BoardIoCutout[];
 }
 
 /**
@@ -46,9 +66,18 @@ export const BOARD_PRESETS: BoardPreset[] = [
     id: 'raspberry-pi-zero',
     label: 'Raspberry Pi Zero (W/2 W)',
     notes:
-      'Fits the board with clearance for the header, micro-USB, and mini-HDMI ports. Includes the official 58x23mm M2.5 mounting pattern.',
+      'Fits the board with the official 58x23mm M2.5 mounting pattern and the IO layout cut into the walls: mini-HDMI, both micro-USB ports, and the microSD slot. Port heights are approximations — verify before printing.',
     body: { outer: { length: 75, width: 40, height: 20 }, wallThickness: 2, splitHeight: 13 },
     boardMount: PI_ZERO_MOUNT,
+    // Front-edge centerlines (from the board's left edge): mini-HDMI 12.4, USB OTG 41.4,
+    // USB PWR 54.0, per the official drawing. Converted to offsets from the 65x30 board center.
+    // The Zero's microSD is top-mounted on the left edge (unlike the full-size Pis' underside slot).
+    io: [
+      { connectorId: 'hdmi-mini', face: 'front', alongMm: -20.1, aboveBoardMm: 1.6 },
+      { connectorId: 'usb-micro-b', face: 'front', alongMm: 8.9, aboveBoardMm: 1.4 },
+      { connectorId: 'usb-micro-b', face: 'front', alongMm: 21.5, aboveBoardMm: 1.4 },
+      { connectorId: 'microsd-slot', face: 'left', alongMm: 0, aboveBoardMm: 1.0 },
+    ],
   },
   {
     id: 'seeed-xiao',
@@ -58,12 +87,35 @@ export const BOARD_PRESETS: BoardPreset[] = [
     body: { outer: { length: 30, width: 24, height: 14 }, wallThickness: 2, splitHeight: 9 },
   },
   {
-    id: 'raspberry-pi-3-4',
-    label: 'Raspberry Pi 3B/4B',
+    id: 'raspberry-pi-3',
+    label: 'Raspberry Pi 3B',
     notes:
-      'Fits the full-size 85x56mm Pi board with clearance for the USB/Ethernet stack, GPIO header, and (on the 4B) micro-HDMI ports. Includes the official 58x49mm M2.5 mounting pattern.',
+      'Fits the full-size 85x56mm Pi board with clearance for the USB/Ethernet stack and GPIO header. Includes the official 58x49mm M2.5 mounting pattern (no IO layout — the 3B port arrangement differs from the 4B).',
     body: { outer: { length: 100, width: 70, height: 30 }, wallThickness: 2, splitHeight: 20 },
     boardMount: PI_FULL_SIZE_MOUNT,
+  },
+  {
+    id: 'raspberry-pi-4',
+    label: 'Raspberry Pi 4B',
+    notes:
+      'Fits the 85x56mm 4B with the official mounting pattern AND its full IO layout cut into the walls: USB-C, 2x micro-HDMI, audio jack, 2x USB stacks, Ethernet, microSD slot. Port centerlines from the official drawing; heights are approximations — verify before printing.',
+    // Split height sits above the tallest port opening (the USB stacks top out ~23.5mm) so every
+    // cutout lands cleanly in the base rather than straddling the lid seam.
+    body: { outer: { length: 100, width: 70, height: 30 }, wallThickness: 2, splitHeight: 24 },
+    boardMount: PI_FULL_SIZE_MOUNT,
+    // Front-edge centerlines (from the board's left edge): USB-C 11.2, HDMI0 26.0, HDMI1 39.5,
+    // audio 54.0. Right-edge centerlines (from the board's front edge): USB2 9.0, USB3 27.0,
+    // Ethernet 45.75. Converted to offsets from the 85x56 board center.
+    io: [
+      { connectorId: 'usb-c-panel', face: 'front', alongMm: -31.3, aboveBoardMm: 1.6 },
+      { connectorId: 'hdmi-micro', face: 'front', alongMm: -16.5, aboveBoardMm: 1.6 },
+      { connectorId: 'hdmi-micro', face: 'front', alongMm: -3.0, aboveBoardMm: 1.6 },
+      { connectorId: 'audio-trs-3.5mm', face: 'front', alongMm: 11.5, aboveBoardMm: 3.0 },
+      { connectorId: 'usb-a-dual-stack', face: 'right', alongMm: -19.0, aboveBoardMm: 8.0 },
+      { connectorId: 'usb-a-dual-stack', face: 'right', alongMm: -1.0, aboveBoardMm: 8.0 },
+      { connectorId: 'ethernet-rj45', face: 'right', alongMm: 17.75, aboveBoardMm: 6.8 },
+      { connectorId: 'microsd-slot', face: 'left', alongMm: 0, aboveBoardMm: -2.8 },
+    ],
   },
   {
     id: 'raspberry-pi-5',

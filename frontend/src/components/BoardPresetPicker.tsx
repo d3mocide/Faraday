@@ -1,4 +1,5 @@
 import { BOARD_PRESETS } from '../presets/boards';
+import { buildPresetFeatures } from '../state/featureFactory';
 import { useProjectStore } from '../state/projectStore';
 
 interface BoardPresetPickerProps {
@@ -11,7 +12,7 @@ export function BoardPresetPicker({ onClose }: BoardPresetPickerProps) {
   const handlePick = (presetId: string) => {
     const preset = BOARD_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
-    applyBoardPreset(preset.body, preset.boardMount);
+    applyBoardPreset(preset.body, buildPresetFeatures(preset));
     onClose();
   };
 
