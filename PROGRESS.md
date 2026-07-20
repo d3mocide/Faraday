@@ -469,6 +469,26 @@ board mounts). Remaining ideas, roughly by value for radio projects:
 - More board IO layouts (see the preset-IO section below): Pi 5 and Pi 3B port centerlines were
   deliberately NOT guessed — add them only from the official mechanical drawings.
 
+### Captured: complete-preset-designs roadmap (2026-07-20, agreed with repo owner — its own PR)
+
+Only Pi 4B and Pi Zero are "complete designs" (size + mount + IO). Planned expansion, in value
+order — all data-only against the existing `BoardPreset.io` plumbing, no new architecture:
+
+1. **Pi 3B + Pi 5 IO layouts** — port centerlines sourced from the official Raspberry Pi
+   mechanical drawings (fetch the drawings; do not guess — the 3B port arrangement differs from
+   the 4B, and the 5 differs again). HAT Stack preset then inherits the base Pi's wall ports.
+2. **Promote the palette-only mounts to full enclosure presets**: Pi Pico, Arduino Uno R3,
+   Arduino Mega 2560, Adafruit Feather. Their IO is simple (Pico/Feather: one USB centered on the
+   short edge; Uno/Mega: USB-B + DC barrel, positions in Arduino's official DXF).
+3. **New boards with officially documented mechanicals**: Jetson Nano / Orin Nano dev kit,
+   BeagleBone Black, Raspberry Pi Compute Module carrier boards (per repo owner's pick).
+4. Possibly a non-board "sealed outdoor node" starter preset (gasket on, PG9 gland, SMA
+   bulkhead) — partly blocked on the case-mounting features above.
+
+Boards WITHOUT reliable published mounting/port drawings (generic ESP32 DevKits, Heltec V3,
+T-Beam, XIAO/RTL-SDR which lack mounting holes) stay dimension-only on purpose — the generic
+board-mount + hand-placed cutouts serve those better than shipped-wrong holes would.
+
 Also still open from earlier phases, not blocking: the ~845KB main bundle (see below), and the
 never-verified Docker build.
 
