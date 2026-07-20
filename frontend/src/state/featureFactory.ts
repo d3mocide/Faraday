@@ -1,4 +1,6 @@
 import type { ArmedFeatureTemplate } from '../components/FeaturePalette';
+import { findBoardMountPreset } from '../presets/boardMounts';
+import type { BoardPreset } from '../presets/boards';
 import type { EnclosureProject, Face, Feature } from '../types/project';
 
 /** The classic 4-corner mounting pattern: holes inset from each board corner by `inset` mm. */
@@ -20,6 +22,44 @@ export function cornerHolePattern(
 function defaultStandoffHeight(project: EnclosureProject): number {
   const { wallThickness, lid } = project.body;
   return Math.max(Math.min(10, lid.splitHeight - wallThickness - 2), 2);
+}
+
+/** Expands a board preset into the features applying it should place: the centered board-mount,
+ * plus one wall cutout per IO port. Port positions are stored board-relative in the preset
+ * (`BoardIoCutout`), so this converts them to face (u,v) against the preset's own body dims:
+ * horizontal via the face's u axis (u = x/l + 0.5 for front/back, y/w + 0.5 for left/right,
+ * matching csg/faceFrame.ts), vertical from the board's top surface (floor + standoff + board). */
+export function buildPresetFeatures(preset: BoardPreset): Feature[] {
+  if (!preset.boardMount) return [];
+  const features: Feature[] = [
+    {
+      id: crypto.randomUUID(),
+      type: 'board-mount',
+      face: 'bottom',
+      u: 0.5,
+      v: 0.5,
+      rotationDeg: 0,
+      board: structuredClone(preset.boardMount),
+    },
+  ];
+
+  const { length, width, height } = preset.body.outer;
+  const boardTopZ =
+    preset.body.wallThickness + preset.boardMount.standoff.height + preset.boardMount.boardThickness;
+  for (const port of preset.io ?? []) {
+    const uExtent = port.face === 'left' || port.face === 'right' ? width : length;
+    features.push({
+      id: crypto.randomUUID(),
+      type: port.connectorId ? 'connector-cutout' : 'custom-hole',
+      face: port.face,
+      u: 0.5 + port.alongMm / uExtent,
+      v: (boardTopZ + port.aboveBoardMm) / height,
+      rotationDeg: 0,
+      connectorId: port.connectorId,
+      custom: port.custom ? structuredClone(port.custom) : undefined,
+    });
+  }
+  return features;
 }
 
 /** Turns an armed palette template plus a viewport click into a placeable Feature. */
@@ -45,6 +85,20 @@ export function buildFeatureFromTemplate(
   }
 
   if (template.type === 'board-mount') {
+    const preset = template.boardPresetId ? findBoardMountPreset(template.boardPresetId) : undefined;
+    if (preset) {
+      // Clone so the placed feature never shares nested holes/standoff objects with the library
+      // entry (same precedent as cloneFeatureAt in alignMirror.ts).
+      return {
+        id,
+        type: 'board-mount',
+        face: 'bottom',
+        u,
+        v,
+        rotationDeg: 0,
+        board: structuredClone(preset.mount),
+      };
+    }
     const boardWidth = 50;
     const boardDepth = 40;
     return {

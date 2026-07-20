@@ -41,10 +41,23 @@ export function isWatertight(mesh: MeshData): boolean {
 
   const edgeCounts = new Map<string, number>();
   for (let t = 0; t < indices.length; t += 3) {
+    // A triangle degenerate in the RAW index buffer is a genuine mesh error...
+    if (
+      indices[t] === indices[t + 1] ||
+      indices[t + 1] === indices[t + 2] ||
+      indices[t] === indices[t + 2]
+    ) {
+      return false;
+    }
     const a = remap[indices[t]];
     const b = remap[indices[t + 1]];
     const c = remap[indices[t + 2]];
-    if (a === b || b === c || a === c) return false; // degenerate triangle
+    // ...but one collapsed only by our own 1-micron quantization is a measurement artifact
+    // (a sub-micron sliver, e.g. where a boss grazes a rounded interior corner), not a hole:
+    // dropping it leaves its neighbours' edges merged into one pair, so the closed-surface
+    // count below still balances. Failing on these produced false negatives on meshes with
+    // zero unmatched edges.
+    if (a === b || b === c || a === c) continue;
     bumpEdge(edgeCounts, a, b);
     bumpEdge(edgeCounts, b, c);
     bumpEdge(edgeCounts, c, a);

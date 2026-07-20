@@ -29,6 +29,9 @@ function App() {
   // undo history, autosave, or saved project files.
   const [lidView, setLidView] = useState<LidView>('assembled');
   const [showHandles, setShowHandles] = useState(true);
+  const [showGrid, setShowGrid] = useState(true);
+  const [showGhostBoards, setShowGhostBoards] = useState(true);
+  const [showMarkers, setShowMarkers] = useState(true);
   // Align/mirror hover-preview target (see AlignMirrorAxisRow in InspectorPanel.tsx) -- also
   // view-only, same non-persisted precedent as lidView.
   const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
@@ -90,6 +93,9 @@ function App() {
           features={project.features}
           lidView={lidView}
           showHandles={showHandles}
+          showGrid={showGrid}
+          showGhostBoards={showGhostBoards}
+          showMarkers={showMarkers}
           placementArmed={armed !== null}
           onPlaceFeature={handlePlaceFeature}
           selectedFeatureId={selectedFeatureId}
@@ -117,6 +123,12 @@ function App() {
         onSetLidView={setLidView}
         showHandles={showHandles}
         onToggleShowHandles={setShowHandles}
+        showGrid={showGrid}
+        onToggleShowGrid={setShowGrid}
+        showGhostBoards={showGhostBoards}
+        onToggleShowGhostBoards={setShowGhostBoards}
+        showMarkers={showMarkers}
+        onToggleShowMarkers={setShowMarkers}
         onSelectFeature={setSelectedFeatureId}
         onUpdateFeature={updateFeature}
         onRemoveFeature={handleRemoveFeature}

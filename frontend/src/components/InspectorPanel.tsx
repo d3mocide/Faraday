@@ -567,6 +567,12 @@ interface InspectorPanelProps {
   onSetLidView: (view: LidView) => void;
   showHandles: boolean;
   onToggleShowHandles: (show: boolean) => void;
+  showGrid: boolean;
+  onToggleShowGrid: (show: boolean) => void;
+  showGhostBoards: boolean;
+  onToggleShowGhostBoards: (show: boolean) => void;
+  showMarkers: boolean;
+  onToggleShowMarkers: (show: boolean) => void;
   onSelectFeature: (id: string | null) => void;
   onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
   onRemoveFeature: (id: string) => void;
@@ -580,6 +586,12 @@ export function InspectorPanel({
   onSetLidView,
   showHandles,
   onToggleShowHandles,
+  showGrid,
+  onToggleShowGrid,
+  showGhostBoards,
+  onToggleShowGhostBoards,
+  showMarkers,
+  onToggleShowMarkers,
   onSelectFeature,
   onUpdateFeature,
   onRemoveFeature,
@@ -630,6 +642,30 @@ export function InspectorPanel({
             onChange={(e) => onToggleShowHandles(e.target.checked)}
           />
           <span>Show 3D Resize Handles</span>
+        </label>
+        <label className="field field-checkbox">
+          <input
+            type="checkbox"
+            checked={showGrid}
+            onChange={(e) => onToggleShowGrid(e.target.checked)}
+          />
+          <span>Show Grid &amp; Floor Axes</span>
+        </label>
+        <label className="field field-checkbox">
+          <input
+            type="checkbox"
+            checked={showGhostBoards}
+            onChange={(e) => onToggleShowGhostBoards(e.target.checked)}
+          />
+          <span>Show Ghost Boards</span>
+        </label>
+        <label className="field field-checkbox">
+          <input
+            type="checkbox"
+            checked={showMarkers}
+            onChange={(e) => onToggleShowMarkers(e.target.checked)}
+          />
+          <span>Show Feature Markers</span>
         </label>
       </SectionCard>
       <SectionCard title="Lid & Fasteners" icon={<SidebarSectionIcon type="fasteners" />}>
@@ -848,7 +884,24 @@ export function InspectorPanel({
       <SectionCard title="Feature Layers" icon={<SidebarSectionIcon type="layers" />} badge={project.features.length}>
         {project.features.length === 0 ? (
           <p className="feature-list-empty">None placed yet — pick one from the palette, then click a face.</p>
-        ) : (
+        ) : (() => {
+          const allHidden = project.features.every((f) => f.hidden);
+          const allLocked = project.features.every((f) => f.locked);
+          const setAll = (patch: Partial<Feature>) => {
+            for (const f of project.features) onUpdateFeature(f.id, patch);
+          };
+          return (
+            <>
+              <div className="layer-bulk-actions">
+                <button type="button" className="btn-secondary" onClick={() => setAll({ hidden: !allHidden })}>
+                  {allHidden ? <SvgEyeIcon /> : <SvgEyeOffIcon />}
+                  <span>{allHidden ? 'Show all' : 'Hide all'}</span>
+                </button>
+                <button type="button" className="btn-secondary" onClick={() => setAll({ locked: !allLocked })}>
+                  {allLocked ? <SvgUnlockIcon /> : <SvgLockIcon />}
+                  <span>{allLocked ? 'Unlock all' : 'Lock all'}</span>
+                </button>
+              </div>
           <div className="placed-features-list">
             {project.features.map((feature) => {
               const isSelected = feature.id === selectedFeatureId;
@@ -920,7 +973,9 @@ export function InspectorPanel({
               );
             })}
           </div>
-        )}
+            </>
+          );
+        })()}
       </SectionCard>
 
       {selectedFeature && (() => {

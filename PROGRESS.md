@@ -449,13 +449,45 @@ board mounts). Remaining ideas, roughly by value for radio projects:
 - Text embossing/engraving (project name, port labels next to cutouts) — needs a font→polygon
   path (e.g. opentype.js) feeding a Manifold extrude.
 - Case-mounting features: pole/mast clamp bosses, keyhole wall hangers, external flange tabs;
-  cable glands (PG7/PG9 are just library entries) and zip-tie anchors.
+  zip-tie anchors (PG7/PG9/PG11 cable glands landed as library entries 2026-07-20).
 - Battery features: 18650 holder pocket, LiPo tray with strap slots.
 - Printability: chamfered hole edges, thin-wall/feature-collision warnings, snap-fit wedge
   profile upgrade (see Phase 5 notes), 3MF export alongside STL.
 - Smaller UI gaps: drag-to-reposition snapping still doesn't snap across faces or across a
   cylinder's u=0/u=1 wrap; ghost boards could render their hole positions; a top-down 2D floor
   view would make dense board layouts easier to edit than the 3D view.
+
+### Captured sidebar/inspector ideas (2026-07-20, agreed with repo owner — each its own PR)
+
+- **Body card**: chamfered top edges / lid-side corner treatment for printability (CSG work —
+  needs watertightness verification across the corner-style × lid-type matrix).
+- **Lid & Fasteners card**: the snap-fit wedge profile upgrade already flagged in the Phase 5
+  notes (replace the plain sphere nub/pocket with a lead-in ramp + catching ledge).
+- **Feature Layers card**: true multi-select (the 2026-07-20 bulk Hide/Lock-all buttons cover the
+  all-or-nothing case; multi-select needs the selection model to become a set, rippling through
+  `App`/`Viewport3D`/`InspectorPanel`).
+- More board IO layouts (see the preset-IO section below): Pi 5 and Pi 3B port centerlines were
+  deliberately NOT guessed — add them only from the official mechanical drawings.
+
+### Captured: complete-preset-designs roadmap (2026-07-20, agreed with repo owner — its own PR)
+
+Only Pi 4B and Pi Zero are "complete designs" (size + mount + IO). Planned expansion, in value
+order — all data-only against the existing `BoardPreset.io` plumbing, no new architecture:
+
+1. **Pi 3B + Pi 5 IO layouts** — port centerlines sourced from the official Raspberry Pi
+   mechanical drawings (fetch the drawings; do not guess — the 3B port arrangement differs from
+   the 4B, and the 5 differs again). HAT Stack preset then inherits the base Pi's wall ports.
+2. **Promote the palette-only mounts to full enclosure presets**: Pi Pico, Arduino Uno R3,
+   Arduino Mega 2560, Adafruit Feather. Their IO is simple (Pico/Feather: one USB centered on the
+   short edge; Uno/Mega: USB-B + DC barrel, positions in Arduino's official DXF).
+3. **New boards with officially documented mechanicals**: Jetson Nano / Orin Nano dev kit,
+   BeagleBone Black, Raspberry Pi Compute Module carrier boards (per repo owner's pick).
+4. Possibly a non-board "sealed outdoor node" starter preset (gasket on, PG9 gland, SMA
+   bulkhead) — partly blocked on the case-mounting features above.
+
+Boards WITHOUT reliable published mounting/port drawings (generic ESP32 DevKits, Heltec V3,
+T-Beam, XIAO/RTL-SDR which lack mounting holes) stay dimension-only on purpose — the generic
+board-mount + hand-placed cutouts serve those better than shipped-wrong holes would.
 
 Also still open from earlier phases, not blocking: the ~845KB main bundle (see below), and the
 never-verified Docker build.
@@ -523,6 +555,57 @@ never-verified Docker build.
 - **2026-07-20**: Fixed Sidebar Overflow & Card Height Clipping in `App.css`: (1) Removed `overflow: hidden` from `.inspector-card` and set `overflow: visible` on `.inspector-card` and `.card-body` so section cards expand dynamically to fit 100% of their content without truncating inputs or labels. (2) Updated `.inspector-panel` to `height: 100%; overflow-y: auto; padding: 10px 0 30px 10px;` and added `margin-right: 10px` on `.inspector-card` so the outer scrollbar sits cleanly on the far right window edge.
 - **2026-07-20**: Replaced All Emojis with Clean Vector SVG Icons in `InspectorPanel.tsx` & `App.css`: (1) Added `<SidebarSectionIcon type="..." />` with 6 vector SVG section icons (`viewport`, `body`, `corners`, `fasteners`, `layers`, `inspector`) matching CAD palette styling. (2) Replaced Feature Layers action button emojis with vector SVG icons (`SvgEyeIcon`, `SvgEyeOffIcon`, `SvgLockIcon`, `SvgUnlockIcon`, `SvgCopyIcon`, `SvgTrashIcon`).
 - **2026-07-20**: Added a camera-synced orientation gizmo + condensed the inspector sidebar: (1) New always-visible XYZ orientation gizmo in the lower-right corner of the viewport (`Viewport3D.tsx`) — a second scene (arrow triad + axis-letter sprites + dim negative stubs over a translucent disc backdrop) rendered by the same renderer into a scissored 104px viewport each frame, with an ortho camera that copies the main camera's direction relative to the orbit target so it tracks orbiting but ignores panning. Axis colors match the top-right legend badge. The in-scene `AxesHelper` at the grid corner is kept for on-plane reference. (2) Sidebar reorder in `InspectorPanel.tsx` per user request: `Lid & Fasteners` now sits directly under the view card, which was renamed `Viewport & Lid View` → `View` (it holds only view-only settings; the old name collided confusingly with `Lid & Fasteners` once they became neighbors). (3) The standalone `Corners` card was merged into `Body` as a "Corner Style" subgroup (corner style is a body property; one fewer top-level card). Card order is now View → Lid & Fasteners → Body → Feature Layers → Inspector. Verified with Playwright: gizmo renders and visibly rotates when orbiting (screenshot-compared), card order/merge confirmed in the DOM, Corner Style correctly disappears for a cylinder body, lid view buttons still work, no console errors.
+
+- **2026-07-20**: Follow-up to the gizmo/sidebar PR (#8), per user request: (1) **XYZ legend moved
+  into the lower-right orientation cluster** — `.viewport-orientation-badge` now docks just above
+  the gizmo instead of the opposite (top-right) corner, so all orientation info lives in one place;
+  kept (not deleted) because it's the only element mapping axes to dimension names (X=Length etc.).
+  (2) **Placeable board-mount presets in the palette**: new "Boards" group with 6 entries
+  (Pi 3B/4B/5, Pi Zero, Pi Pico, Arduino Uno R3, Arduino Mega 2560, Adafruit Feather) that place a
+  board-mount with the board's documented outline + hole pattern. Data lives in a new
+  `presets/boardMounts.ts`; the Pi mounts previously private to `presets/boards.ts` moved there and
+  are imported back, so enclosure presets and palette presets share one source of truth. The
+  armed template gained an optional `boardPresetId`, resolved in `featureFactory` with a
+  `structuredClone` so placements never alias library objects. Arduino/Feather/Pico patterns are
+  from the official board drawings/datasheets — same "verify before printing" disclaimer as ever.
+  (3) **View card toggles** for grid + floor axes (one `gridGroup` in `Viewport3D`), ghost boards,
+  and feature markers — view-only App state like `lidView`; hidden markers are also excluded from
+  the pointer raycast (three doesn't skip invisible meshes) so they can't be click-selected.
+  (4) **Feature Layers bulk actions**: Hide/Show all and Lock/Unlock all buttons above the layer
+  list (loop over `updateFeature`; the store's history debounce coalesces it into one undo step).
+  (5) **PG7/PG9/PG11 cable gland** entries added to the connector library (misc). Deferred to
+  future PRs (agreed with user, CSG-heavy): chamfered top edges / lid-side corner treatment,
+  snap-fit wedge profile, and true multi-select in Feature Layers. Verified with Playwright:
+  badge position, Boards group rendering/search/armed state, a placed Pi Zero mount carrying the
+  exact 65×30 / ±29,±11.5 spec in the store, all three view toggles (screenshot-compared), bulk
+  hide/lock across 2 features, gland search hits, no console errors; `lint` + `build` pass.
+
+- **2026-07-20**: Board preset IO layouts, per user request ("click RPi 4, get a preset case at
+  all the right sizes"): (1) **`BoardPreset` gained an `io` array** (`BoardIoCutout` in
+  `presets/boards.ts`): wall cutouts stored board-relative (mm along the face's u axis from the
+  board center; mm above the board's top surface, negative for underside ports), expanded to
+  face/(u,v) features by the new `buildPresetFeatures()` in `state/featureFactory.ts`.
+  `applyBoardPreset` now takes prebuilt features instead of a bare `BoardMountSpec`. (2) The
+  combined "Raspberry Pi 3B/4B" preset **split into 3B (mount only) and 4B (mount + full IO)** —
+  one IO layout can't serve both since the 3B's port arrangement differs; 3B/Pi 5 centerlines were
+  not guessed. The **Pi 4B layout** (USB-C, 2× micro-HDMI, audio, 2× USB-A dual stacks, Ethernet,
+  underside microSD) uses the official drawing's port centerlines; its `splitHeight` moved 20→24
+  so the tallest opening (USB stack, tops out ~23.5mm) clears the lid seam instead of straddling
+  it. The **Pi Zero preset** got its (smaller) IO layout too. Port heights-above-board are
+  datasheet approximations — "verify before printing" tier. (3) New library entries:
+  `usb-a-dual-stack` (13.3×15.6 stacked receptacle), `microsd-slot` (12×3). (4) New
+  `test/presetFeatures.test.ts` in the vitest CSG harness: every io `connectorId` resolves, io
+  implies a board mount, every opening (not just centerline) sits inside its face between floor
+  and split, and every mount-carrying preset generates watertight base+lid at export quality.
+  (5) That harness caught a **pre-existing false negative in `test/helpers/geometry.ts`**: the
+  Pi Zero body (75×40, screw-boss M2.5, rounded corners) yields two sub-micron sliver triangles
+  that the helper's own 1µm vertex quantization collapses, which it then reported as "degenerate →
+  not watertight" despite zero unmatched edges (verified by dumping the edge histogram). Fix:
+  raw-index degenerates still fail, but triangles collapsed only by the quantized merge are
+  skipped — their neighbours' edge pairing stays balanced. Verified with Playwright: applying Pi
+  4B places 9 features on the correct faces (screenshots show the real Pi 4 port order in the
+  walls), Zero places 5, 3B places 1, undo restores the previous preset's features; no console
+  errors; `lint`/`build`/`test` (35 passing) all green.
 
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->

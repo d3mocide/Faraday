@@ -798,9 +798,11 @@
   flex: 0 0 auto;
 }
 
+/* Docked just above the orientation gizmo (12px margin + 104px viewport) so all orientation
+   info lives in one lower-right cluster instead of being split across opposite corners. */
 .viewport-orientation-badge {
   position: absolute;
-  top: 12px;
+  bottom: 124px;
   right: 12px;
   display: flex;
   align-items: center;
@@ -837,6 +839,19 @@
 .axis-dot.blue {
   background: #8be9fd;
   box-shadow: 0 0 4px rgba(139, 233, 253, 0.5);
+}
+
+.layer-bulk-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.layer-bulk-actions .btn-secondary {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
 }
 
 .placed-feature-card.hidden-layer {

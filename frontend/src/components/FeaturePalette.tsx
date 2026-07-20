@@ -1,11 +1,12 @@
 import { useState, useMemo } from 'react';
 import { CONNECTOR_LIBRARY } from '../connectors/library';
+import { BOARD_MOUNT_PRESETS } from '../presets/boardMounts';
 import type { ConnectorCategory, ConnectorLibraryEntry } from '../types/project';
 
 export type ArmedFeatureTemplate =
   | { type: 'connector-cutout'; connectorId: string; label: string }
   | { type: 'standoff'; label: string }
-  | { type: 'board-mount'; label: string }
+  | { type: 'board-mount'; label: string; boardPresetId?: string }
   | { type: 'vent'; label: string }
   | { type: 'custom-hole'; label: string };
 
@@ -28,8 +29,18 @@ const CATEGORY_LABELS: Record<ConnectorCategory, string> = {
   misc: 'Misc',
 };
 
-function CategoryIcon({ category }: { category: FilterCategory }) {
+function CategoryIcon({ category }: { category: FilterCategory | 'boards' }) {
   switch (category) {
+    case 'boards':
+      return (
+        <svg className="cat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="4" y="4" width="16" height="16" rx="2" />
+          <circle cx="8" cy="8" r="1.5" />
+          <circle cx="16" cy="8" r="1.5" />
+          <circle cx="8" cy="16" r="1.5" />
+          <circle cx="16" cy="16" r="1.5" />
+        </svg>
+      );
     case 'mounting':
       return (
         <svg className="cat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -139,6 +150,11 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
     (matchesQuery('Standoff (PCB mount)', 'PCB mount standoffs', 'M2.2/M3') ||
       matchesQuery('Board Mount', 'outline + mounting holes', 'PCB Grid'));
 
+  const filteredBoardPresets =
+    activeCategory === 'all' || activeCategory === 'mounting'
+      ? BOARD_MOUNT_PRESETS.filter((preset) => matchesQuery(preset.label, preset.notes, preset.badge))
+      : [];
+
   const showOpenings =
     (activeCategory === 'all' || activeCategory === 'openings') &&
     (matchesQuery('Vent Panel', 'slots/honeycomb cooling', 'Vent') ||
@@ -148,7 +164,7 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
     <div className="feature-palette">
       <div className="palette-header">
         <h3>Features</h3>
-        <span className="palette-count">{CONNECTOR_LIBRARY.length + 4} parts</span>
+        <span className="palette-count">{CONNECTOR_LIBRARY.length + BOARD_MOUNT_PRESETS.length + 4} parts</span>
       </div>
 
       <div className="palette-search">
@@ -256,6 +272,38 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
           </section>
         )}
 
+        {filteredBoardPresets.length > 0 && (
+          <section className="palette-group">
+            <div className="group-title">
+              <CategoryIcon category="boards" />
+              <span>Boards ({filteredBoardPresets.length})</span>
+            </div>
+            <div className="card-grid">
+              {filteredBoardPresets.map((preset) => {
+                const isArmed =
+                  armed?.type === 'board-mount' && armed.boardPresetId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className={isArmed ? 'palette-card armed' : 'palette-card'}
+                    title={preset.notes}
+                    onClick={() =>
+                      onArm({ type: 'board-mount', boardPresetId: preset.id, label: preset.label })
+                    }
+                  >
+                    <div className="card-top">
+                      <span className="card-name">{preset.label}</span>
+                      <span className="dim-badge">{preset.badge}</span>
+                    </div>
+                    <span className="card-note">{preset.notes}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         {showOpenings && (
           <section className="palette-group">
             <div className="group-title">
@@ -321,7 +369,7 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
           </section>
         )}
 
-        {!showMounting && !showOpenings && filteredConnectors.length === 0 && (
+        {!showMounting && !showOpenings && filteredBoardPresets.length === 0 && filteredConnectors.length === 0 && (
           <div className="palette-empty">
             <p>No features match "{search}"</p>
             <button type="button" onClick={() => setSearch('')}>
