@@ -111,6 +111,17 @@ export const CONNECTOR_LIBRARY: ConnectorLibraryEntry[] = [
     notes: 'Micro-USB receptacle shell opening — verify against your specific connector.',
   },
   {
+    id: 'usb-mini-b',
+    label: 'Mini-USB (B) Panel Cutout',
+    category: 'usb',
+    holeShape: 'rect',
+    width: 7.0,
+    height: 4.0,
+    cornerRadius: 0.8,
+    notes:
+      'Mini-USB Type AB receptacle shell opening (e.g. BeagleBone Black) — sized from the connector family envelope, not a single manufacturer drawing; verify against your specific part.',
+  },
+  {
     id: 'usb-b-panel',
     label: 'USB-B Panel Cutout',
     category: 'usb',

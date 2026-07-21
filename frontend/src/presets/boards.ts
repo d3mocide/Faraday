@@ -1,6 +1,6 @@
 import type { BoardPresetBody } from '../state/projectStore';
 import type { BoardMountSpec, Face } from '../types/project';
-import { PI_FULL_SIZE_MOUNT, PI_ZERO_MOUNT } from './boardMounts';
+import { BEAGLEBONE_BLACK_MOUNT, PI_FULL_SIZE_MOUNT, PI_ZERO_MOUNT } from './boardMounts';
 
 /** One wall cutout in a preset's IO layout, positioned relative to the (centered) board rather
  * than the enclosure, so the same layout survives a body-size tweak of the preset. Horizontal
@@ -134,6 +134,26 @@ export const BOARD_PRESETS: BoardPreset[] = [
       'Extra-tall variant of the Pi 3/4/5 footprint to clear a stacked HAT board on the 40-pin GPIO header (header + HAT + standoffs). Includes the official 58x49mm M2.5 mounting pattern.',
     body: { outer: { length: 100, width: 70, height: 45 }, wallThickness: 2, splitHeight: 20 },
     boardMount: PI_FULL_SIZE_MOUNT,
+  },
+  {
+    id: 'beaglebone-black',
+    label: 'BeagleBone Black',
+    notes:
+      'Fits the 86.4x54.6mm board with the official (non-corner-symmetric) M3 mounting pattern and its IO layout: DC barrel jack, Mini-USB client, Ethernet on one short edge; USB-A host, micro-HDMI, and the underside microSD slot on the other. Board width has a documentation discrepancy in the official SRM (53.34mm prose vs. 54.61mm in the dimensioned drawing) -- 54.61mm is used here, cross-checked against the mounting-hole symmetry; verify before printing.',
+    body: { outer: { length: 105, width: 75, height: 35 }, wallThickness: 2, splitHeight: 24 },
+    boardMount: BEAGLEBONE_BLACK_MOUNT,
+    // Left-edge centerlines (from board center, Y axis): DC jack -17.78, Ethernet +6.985,
+    // Mini-USB +16.8275. Right-edge centerlines: USB-A -13.97, micro-HDMI -2.159, microSD +3.955.
+    // Sourced from BeagleBoard.org's official assembly/placement data (Rev C); connector heights
+    // above the board are datasheet-derived approximations, same tier as the connector library.
+    io: [
+      { connectorId: 'dc-barrel-5.5x2.1', face: 'left', alongMm: -17.78, aboveBoardMm: 4.0 },
+      { connectorId: 'ethernet-rj45', face: 'left', alongMm: 6.985, aboveBoardMm: 6.8 },
+      { connectorId: 'usb-mini-b', face: 'left', alongMm: 16.8275, aboveBoardMm: 1.6 },
+      { connectorId: 'usb-a-panel', face: 'right', alongMm: -13.97, aboveBoardMm: 4.5 },
+      { connectorId: 'hdmi-micro', face: 'right', alongMm: -2.159, aboveBoardMm: 1.6 },
+      { connectorId: 'microsd-slot', face: 'right', alongMm: 3.955, aboveBoardMm: -2.5 },
+    ],
   },
   {
     id: 'sealed-outdoor-node',

@@ -43,6 +43,25 @@ export const PI_ZERO_MOUNT: BoardMountSpec = {
   standoff: { outerDiameter: 6, screwHoleDiameter: 2.2, height: 4 },
 };
 
+/** BeagleBone Black: 86.36x54.61mm board (per the official dimensioned drawing at
+ * docs.beagleboard.org/boards/beaglebone/black/ch09.html -- the page's own prose text says
+ * 53.34mm, which conflicts with that same drawing's mounting-hole symmetry; 54.61mm is what the
+ * hole geometry cross-checks against, so it's used here, flagged as a documentation discrepancy
+ * worth a caliper check). NOT a corner-symmetric pattern: 4x M3 holes, the left pair sits
+ * 14.605mm in from the left edge, the right pair only 6.35mm in from the right edge. */
+export const BEAGLEBONE_BLACK_MOUNT: BoardMountSpec = {
+  boardWidth: 86.36,
+  boardDepth: 54.61,
+  boardThickness: 1.6,
+  holes: [
+    { x: -28.575, y: -24.13 },
+    { x: 37.465, y: -20.955 },
+    { x: -28.575, y: 24.13 },
+    { x: 37.465, y: 20.955 },
+  ],
+  standoff: { outerDiameter: 7, screwHoleDiameter: 3.2, height: 4 },
+};
+
 export const BOARD_MOUNT_PRESETS: BoardMountPreset[] = [
   {
     id: 'pi-full-size',
@@ -131,6 +150,14 @@ export const BOARD_MOUNT_PRESETS: BoardMountPreset[] = [
       ],
       standoff: { outerDiameter: 5, screwHoleDiameter: 2.2, height: 4 },
     },
+  },
+  {
+    id: 'beaglebone-black',
+    label: 'BeagleBone Black',
+    badge: '86.4×54.6mm',
+    notes:
+      'Official mounting pattern from the BeagleBoard.org SRM mechanical drawing -- NOT corner-symmetric (M3, right pair sits closer to its edge than the left pair).',
+    mount: BEAGLEBONE_BLACK_MOUNT,
   },
 ];
 
