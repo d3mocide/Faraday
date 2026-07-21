@@ -92,10 +92,18 @@ export const BOARD_PRESETS: BoardPreset[] = [
   },
   {
     id: 'seeed-xiao',
-    label: 'Seeed Studio XIAO (RP2040/ESP32-C3/SAMD21)',
+    label: 'Seeed Studio XIAO (SAMD21/RP2040/nRF52840)',
     notes:
-      'All XIAO variants share the same ~21x17.5mm board footprint; fits any of them with room for the USB-C port and a couple of pin headers.',
+      'These XIAO variants share the same ~20x17.5mm board footprint; fits any of them with room for the USB-C port and a couple of pin headers. No mounting holes on any XIAO board -- the family is designed to plug into shields via edge-castellated pins, not to be screwed down.',
     body: { outer: { length: 30, width: 24, height: 14 }, wallThickness: 2, splitHeight: 9 },
+  },
+  {
+    id: 'seeed-xiao-esp32',
+    label: 'Seeed Studio XIAO ESP32 (C3/S3/C6)',
+    notes:
+      "All three XIAO ESP32 variants share the same ~21x17.8mm footprint and a USB-C port centered on a short edge (position confirmed from Seeed's official pinout diagrams; exact centerline isn't dimensioned in a published drawing, so it's placed centered as a safe default). Like every XIAO board, there are no mounting holes -- dimension + USB-C cutout only. All three variants also carry an external U.FL/IPEX WiFi/BT antenna connector on the board (position not officially dimensioned) -- not cut here since routing it outside the case is optional and user-specific; add a small passthrough by hand if you need one.",
+    body: { outer: { length: 30, width: 24, height: 15 }, wallThickness: 2, splitHeight: 9 },
+    io: [{ connectorId: 'usb-c-panel', face: 'left', alongMm: 0, aboveBoardMm: 2.5 }],
   },
   {
     id: 'raspberry-pi-3',

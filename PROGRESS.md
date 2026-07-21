@@ -702,5 +702,21 @@ never-verified Docker build.
   server (screenshots + zero console errors). `tsc -b`, `oxlint`, `npm run test`, and `npm run
   build` all clean.
 
+- **2026-07-21 (follow-up)**: Added a real "Seeed Studio XIAO ESP32 (C3/S3/C6)" preset per user
+  request, upgrading it beyond the existing dimension-only `seeed-xiao` entry. Confirmed via the
+  official Seeed XIAO Series SoM User Manual and per-variant getting-started wiki pages that **no
+  XIAO board of any kind has mounting holes** (the whole family plugs into shields via
+  edge-castellated pins instead of screws) — this validates a precedent already assumed elsewhere
+  in this file, now sourced. All three ESP32 variants share a ~21×17.8mm footprint with a USB-C
+  port centered on a short edge and an external U.FL/IPEX antenna connector (position not
+  officially dimensioned by Seeed, so not cut — noted as an optional manual addition). New preset
+  uses the board-less `io` path (no `boardMount`, real `io`) added earlier this session for the
+  Jetson preset — same rationale: a real board with a real, sourced port position, but genuinely no
+  hole pattern to place. The original `seeed-xiao` entry was relabeled to drop "ESP32-C3" (now
+  covers only SAMD21/RP2040/nRF52840, the non-WiFi variants) since it's superseded by the dedicated
+  entry for WiFi users. Board preset count: 17 → 18. `presetFeatures.test.ts` allowlist extended;
+  44 tests passing (up from 43). Playwright-verified the USB-C cutout renders on the expected face
+  with the expected shape, zero console errors; `tsc -b`, `oxlint`, `npm run build` all clean.
+
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->
