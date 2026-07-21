@@ -5,6 +5,7 @@ import type {
   EnclosureBody,
   EnclosureProject,
   Feature,
+  GasketSpec,
   LidType,
   ScrewCount,
   ScrewInsertType,
@@ -18,6 +19,10 @@ export interface BoardPresetBody {
   outer: { length: number; width: number; height: number };
   wallThickness: number;
   splitHeight: number;
+  /** Only set by non-board "starter" presets (e.g. the sealed outdoor node) that want the gasket
+   * channel on by default -- omitted everywhere else so applying a board preset never clobbers a
+   * gasket the user already had enabled (see applyBoardPreset below). */
+  gasket?: GasketSpec;
 }
 
 interface ProjectStore {
@@ -210,7 +215,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
           outer: preset.outer,
           wallThickness: preset.wallThickness,
           cornerStyle: p.body.shape === 'box' ? p.body.cornerStyle : { type: 'rounded', radius: 3 },
-          lid: { ...p.body.lid, splitHeight: preset.splitHeight },
+          lid: {
+            ...p.body.lid,
+            splitHeight: preset.splitHeight,
+            ...(preset.gasket ? { gasket: preset.gasket } : {}),
+          },
         },
         features: features ?? [],
       })),

@@ -33,6 +33,7 @@ function projectFromPreset(preset: BoardPreset): EnclosureProject {
         splitHeight: preset.body.splitHeight,
         wallGap: 0.2,
         screw: { size: 'M2.5', insertType: 'heat-set', count: 4 },
+        gasket: preset.body.gasket,
       },
     },
     features: buildPresetFeatures(preset),
@@ -51,9 +52,16 @@ describe('board preset IO layouts', () => {
     }
   });
 
-  it('io is only defined alongside a board mount', () => {
+  it('every preset with io produces a board-mount or is a documented board-less starter', () => {
+    // Board-less presets (no boardMount) measure their io ports from the interior floor instead
+    // of a board's top surface -- see buildPresetFeatures in featureFactory.ts. Only the sealed
+    // outdoor node is expected to use that path today; anything else with io but no boardMount is
+    // probably a mistake (a board preset missing its mount pattern).
+    const knownBoardless = new Set(['sealed-outdoor-node']);
     for (const preset of BOARD_PRESETS) {
-      if (preset.io) expect(preset.boardMount, preset.id).toBeDefined();
+      if (preset.io && !preset.boardMount) {
+        expect(knownBoardless.has(preset.id), `${preset.id} has io but no boardMount`).toBe(true);
+      }
     }
   });
 
@@ -79,7 +87,7 @@ describe('board preset IO layouts', () => {
     }
   });
 
-  for (const preset of BOARD_PRESETS.filter((p) => p.boardMount)) {
+  for (const preset of BOARD_PRESETS.filter((p) => p.boardMount || (p.io && p.io.length > 0))) {
     it(`${preset.id}: full preset generates watertight base + lid`, () => {
       const result = generateEnclosure(wasm, projectFromPreset(preset), 'export');
       const base = extractMeshData(result.base);

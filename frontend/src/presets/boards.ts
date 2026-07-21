@@ -8,7 +8,9 @@ import { PI_FULL_SIZE_MOUNT, PI_ZERO_MOUNT } from './boardMounts';
  * csg/faceFrame.ts); vertical placement is measured from the board's TOP surface (negative for
  * underside ports like a microSD slot). Port centerlines come from the board's official
  * mechanical drawing; the mm-above-board heights are connector-datasheet approximations — same
- * "verify before printing" tier as the connector library. */
+ * "verify before printing" tier as the connector library. On a preset with no `boardMount` (a
+ * board-less starter like the sealed outdoor node), there's no board top to measure from, so
+ * `aboveBoardMm` is re-anchored to the interior floor instead — see buildPresetFeatures. */
 export interface BoardIoCutout {
   /** Connector library entry to cut... */
   connectorId?: string;
@@ -132,5 +134,21 @@ export const BOARD_PRESETS: BoardPreset[] = [
       'Extra-tall variant of the Pi 3/4/5 footprint to clear a stacked HAT board on the 40-pin GPIO header (header + HAT + standoffs). Includes the official 58x49mm M2.5 mounting pattern.',
     body: { outer: { length: 100, width: 70, height: 45 }, wallThickness: 2, splitHeight: 20 },
     boardMount: PI_FULL_SIZE_MOUNT,
+  },
+  {
+    id: 'sealed-outdoor-node',
+    label: 'Sealed Outdoor Node (starter)',
+    notes:
+      'Non-board starter for a weatherproof outdoor radio project: gasket channel enabled by default, an SMA bulkhead on the front wall for an antenna, and a PG9 cable gland on the back wall for a sealed power/data cable entry. Dimension-only otherwise -- drop in your own board-mount and standoffs to fit your hardware. Does not attempt pole/mast mounting clamps (not yet implemented in this app).',
+    body: {
+      outer: { length: 110, width: 70, height: 40 },
+      wallThickness: 3,
+      splitHeight: 22,
+      gasket: { width: 2, depth: 1.5 },
+    },
+    io: [
+      { connectorId: 'sma-bulkhead-female', face: 'front', alongMm: 0, aboveBoardMm: 11 },
+      { connectorId: 'cable-gland-pg9', face: 'back', alongMm: 0, aboveBoardMm: 8 },
+    ],
   },
 ];
