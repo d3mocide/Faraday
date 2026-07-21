@@ -231,6 +231,25 @@ export const BOARD_PRESETS: BoardPreset[] = [
     ],
   },
   {
+    id: 'jetson-orin-nano-devkit',
+    label: 'NVIDIA Jetson Orin Nano Developer Kit',
+    notes:
+      "Fits the official 100x79mm carrier board (P3768) with headroom for the module + stock heatsink/fan stack (34.77mm total kit height per NVIDIA's official mechanical spec) and its edge IO: DC power jack (takes a 2.5mm-pin plug, NOT the more common 2.1mm), DisplayPort, 2x USB-A 3.2, Ethernet, USB-C (recovery/data only, no power delivery on this board). No board-mount -- NVIDIA's public datasheet does not dimension mounting-hole positions and the official CAD reference-design package did not yield a confidently-verified hole pattern, so this stays dimension + IO only, per the 'don't guess' rule. Needs top ventilation for the fan (not modeled). MIPI-CSI camera connectors and the underside M.2 slots are internal, not cut.",
+    body: { outer: { length: 112, width: 92, height: 46 }, wallThickness: 2, splitHeight: 38 },
+    // Front-edge centerlines (from board center, CAD-sourced from the official Allegro
+    // placement export): DC jack -48.0, DisplayPort -31.24, USB-A -11.4, USB-A +5.6,
+    // Ethernet +22.95, USB-C +37.975. Heights above the floor assume a nominal ~4mm foot (no
+    // board-mount standoff is generated here since the hole pattern is unconfirmed).
+    io: [
+      { connectorId: 'dc-barrel-5.5x2.1', face: 'front', alongMm: -48.0, aboveBoardMm: 9.6 },
+      { connectorId: 'displayport-panel', face: 'front', alongMm: -31.24, aboveBoardMm: 8.0 },
+      { connectorId: 'usb-a-dual-stack', face: 'front', alongMm: -11.4, aboveBoardMm: 13.4 },
+      { connectorId: 'usb-a-dual-stack', face: 'front', alongMm: 5.6, aboveBoardMm: 13.4 },
+      { connectorId: 'ethernet-rj45', face: 'front', alongMm: 22.95, aboveBoardMm: 12.35 },
+      { connectorId: 'usb-c-panel', face: 'front', alongMm: 37.975, aboveBoardMm: 7.35 },
+    ],
+  },
+  {
     id: 'sealed-outdoor-node',
     label: 'Sealed Outdoor Node (starter)',
     notes:

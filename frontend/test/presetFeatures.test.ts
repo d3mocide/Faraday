@@ -54,10 +54,12 @@ describe('board preset IO layouts', () => {
 
   it('every preset with io produces a board-mount or is a documented board-less starter', () => {
     // Board-less presets (no boardMount) measure their io ports from the interior floor instead
-    // of a board's top surface -- see buildPresetFeatures in featureFactory.ts. Only the sealed
-    // outdoor node is expected to use that path today; anything else with io but no boardMount is
-    // probably a mistake (a board preset missing its mount pattern).
-    const knownBoardless = new Set(['sealed-outdoor-node']);
+    // of a board's top surface -- see buildPresetFeatures in featureFactory.ts. The sealed outdoor
+    // node has no board at all; the Jetson devkit has a real board but ships without a boardMount
+    // because NVIDIA's official docs don't dimension its mounting holes (see its preset notes).
+    // Anything else with io but no boardMount is probably a mistake (a board preset missing its
+    // mount pattern).
+    const knownBoardless = new Set(['sealed-outdoor-node', 'jetson-orin-nano-devkit']);
     for (const preset of BOARD_PRESETS) {
       if (preset.io && !preset.boardMount) {
         expect(knownBoardless.has(preset.id), `${preset.id} has io but no boardMount`).toBe(true);
