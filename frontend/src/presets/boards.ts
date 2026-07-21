@@ -4,6 +4,7 @@ import {
   ARDUINO_MEGA_MOUNT,
   ARDUINO_UNO_MOUNT,
   BEAGLEBONE_BLACK_MOUNT,
+  CM4_IO_MOUNT,
   FEATHER_MOUNT,
   PI_FULL_SIZE_MOUNT,
   PI_ZERO_MOUNT,
@@ -206,6 +207,27 @@ export const BOARD_PRESETS: BoardPreset[] = [
       { connectorId: 'usb-a-panel', face: 'right', alongMm: -13.97, aboveBoardMm: 4.5 },
       { connectorId: 'hdmi-micro', face: 'right', alongMm: -2.159, aboveBoardMm: 1.6 },
       { connectorId: 'microsd-slot', face: 'right', alongMm: 3.955, aboveBoardMm: -2.5 },
+    ],
+  },
+  {
+    id: 'pi-cm4-io',
+    label: 'Raspberry Pi CM4 IO Board',
+    notes:
+      'Fits the official 160x90mm CM4 IO Board carrier with its 7-hole mounting pattern (3 primary + 4 HAT-compatible) and edge IO: 2x full-size HDMI, Ethernet, a USB-A dual stack, microSD (CM4 Lite only), the DC barrel power jack, and the micro-USB rpiboot port. Does NOT model the vertical PCIe x1 socket -- that connector mounts perpendicular to the board (like a desktop PCIe slot) and needs its own internal height clearance, not a wall cutout; add manually if you need it. Board thickness and connector heights are unverified approximations -- verify before printing.',
+    body: { outer: { length: 180, width: 105, height: 40 }, wallThickness: 2, splitHeight: 26 },
+    boardMount: CM4_IO_MOUNT,
+    // Bottom-edge centerlines (from the board's left edge, per the official drawing's own
+    // dimension chain): HDMI0 23.0, HDMI1 48.0, Ethernet 74.0, USB dual-stack 93.0,
+    // microSD 121.25, DC jack 145.0, micro-USB (rpiboot) 153.5. Converted to offsets from the
+    // 160x90 board center.
+    io: [
+      { connectorId: 'hdmi-full-size', face: 'front', alongMm: -57, aboveBoardMm: 5.6 },
+      { connectorId: 'hdmi-full-size', face: 'front', alongMm: -32, aboveBoardMm: 5.6 },
+      { connectorId: 'ethernet-rj45', face: 'front', alongMm: -6, aboveBoardMm: 6.8 },
+      { connectorId: 'usb-a-dual-stack', face: 'front', alongMm: 13, aboveBoardMm: 8.0 },
+      { connectorId: 'microsd-slot', face: 'front', alongMm: 41.25, aboveBoardMm: -2.8 },
+      { connectorId: 'dc-barrel-5.5x2.1', face: 'front', alongMm: 65, aboveBoardMm: 4.0 },
+      { connectorId: 'usb-micro-b', face: 'front', alongMm: 73.5, aboveBoardMm: 1.5 },
     ],
   },
   {

@@ -125,6 +125,28 @@ export const FEATHER_MOUNT: BoardMountSpec = {
   standoff: { outerDiameter: 5, screwHoleDiameter: 2.2, height: 4 },
 };
 
+/** Raspberry Pi Compute Module 4 IO Board: 160x90mm carrier, per the official mechanical drawing
+ * (raspberrypi.com/documentation, CM4 IO Board datasheet Ch.3 Fig.2). Combines the 3-hole
+ * asymmetric primary mounting pattern with the 4-hole 58x49mm HAT-compatible pattern the
+ * datasheet explicitly calls out ("mounting holes are also provided so that standard HATs may be
+ * used") -- 7 usable standoff points total. The CM4 module's own 4 support-pillar holes (inboard,
+ * for the module itself, not the enclosure) are deliberately excluded. M2.5 (2.7mm) holes. */
+export const CM4_IO_MOUNT: BoardMountSpec = {
+  boardWidth: 160,
+  boardDepth: 90,
+  boardThickness: 1.6, // not stated in the official datasheet -- unverified standard-PCB assumption
+  holes: [
+    { x: -69, y: -37 },
+    { x: -69, y: 32 },
+    { x: 65, y: 32 },
+    { x: -76.5, y: -41.5 },
+    { x: -18.5, y: -41.5 },
+    { x: -76.5, y: 7.5 },
+    { x: -18.5, y: 7.5 },
+  ],
+  standoff: { outerDiameter: 6, screwHoleDiameter: 2.7, height: 4 },
+};
+
 export const BOARD_MOUNT_PRESETS: BoardMountPreset[] = [
   {
     id: 'pi-full-size',
@@ -175,6 +197,14 @@ export const BOARD_MOUNT_PRESETS: BoardMountPreset[] = [
     notes:
       'Official mounting pattern from the BeagleBoard.org SRM mechanical drawing -- NOT corner-symmetric (M3, right pair sits closer to its edge than the left pair).',
     mount: BEAGLEBONE_BLACK_MOUNT,
+  },
+  {
+    id: 'pi-cm4-io',
+    label: 'Raspberry Pi CM4 IO Board',
+    badge: '160×90mm',
+    notes:
+      '7-hole pattern from the official mechanical drawing: 3 primary mounting holes plus the 4-hole 58×49mm HAT-compatible pattern (M2.5).',
+    mount: CM4_IO_MOUNT,
   },
 ];
 
