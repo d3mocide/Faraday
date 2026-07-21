@@ -222,7 +222,11 @@ export function Viewport3D({
     }
 
     const GIZMO_SIZE = 104; // CSS px, square viewport in the corner
-    const GIZMO_MARGIN = 12;
+    const GIZMO_MARGIN = 12; // right-edge margin
+    // Bottom-edge clearance is taller than GIZMO_MARGIN so the axis-key badge
+    // (.viewport-orientation-badge in App.css) fits below the gizmo, docked at the
+    // viewport's own bottom edge, instead of overlapping it.
+    const GIZMO_MARGIN_BOTTOM = 46;
     const rendererSize = new THREE.Vector2();
 
     const baseMaterial = new THREE.MeshStandardMaterial({
@@ -297,7 +301,7 @@ export function Viewport3D({
       // skew it), and draw the triad on top of the already-rendered frame.
       renderer.getSize(rendererSize);
       const gx = rendererSize.x - GIZMO_SIZE - GIZMO_MARGIN;
-      const gy = GIZMO_MARGIN; // WebGL viewport origin is bottom-left
+      const gy = GIZMO_MARGIN_BOTTOM; // WebGL viewport origin is bottom-left
       gizmoCamera.position.copy(camera.position).sub(controls.target).normalize().multiplyScalar(5);
       gizmoCamera.lookAt(0, 0, 0);
       renderer.autoClear = false;

@@ -607,5 +607,20 @@ never-verified Docker build.
   walls), Zero places 5, 3B places 1, undo restores the previous preset's features; no console
   errors; `lint`/`build`/`test` (35 passing) all green.
 
+- **2026-07-20**: Two small UI polish requests. (1) **Orientation gizmo/axis-key swap**: the
+  `.viewport-orientation-badge` (X/Y/Z legend) used to dock just *above* the lower-right
+  orientation gizmo; moved it to dock at the viewport's bottom-right corner *below* the gizmo
+  instead, per user request from a screenshot. The gizmo itself (WebGL scissor viewport in
+  `Viewport3D.tsx`) shifted up via a new `GIZMO_MARGIN_BOTTOM` constant (46px, vs. the unchanged
+  12px `GIZMO_MARGIN` used for the right edge) to leave room; the badge got a `line-height: 16px`
+  so its rendered height is deterministic and lines up with that clearance. (2) **`BoardPresetPicker`
+  tabs + widened modal**: split the "Start from a board" preset grid into two tabs — "Complete
+  Boards (IO)" (presets with a populated `io` array: Pi Zero, Pi 4B) and "Case Only" (everything
+  else, whether or not it has a `boardMount` — RTL-SDR/Heltec/LILYGO/XIAO have neither; Pi
+  3B/5/HAT-stack have mount only). `.preset-modal` max-width went 760px → 960px. Verified with
+  Playwright: both tabs render their expected preset sets, switching tabs and picking a preset
+  from the non-default tab still applies body dims correctly and closes the modal, no console
+  errors; `tsc -b` and `oxlint` clean.
+
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->
