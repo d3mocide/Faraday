@@ -101,9 +101,25 @@ export const BOARD_PRESETS: BoardPreset[] = [
     id: 'raspberry-pi-3',
     label: 'Raspberry Pi 3B',
     notes:
-      'Fits the full-size 85x56mm Pi board with clearance for the USB/Ethernet stack and GPIO header. Includes the official 58x49mm M2.5 mounting pattern (no IO layout — the 3B port arrangement differs from the 4B).',
-    body: { outer: { length: 100, width: 70, height: 30 }, wallThickness: 2, splitHeight: 20 },
+      "Fits the full-size 85x56mm Pi board with the official mounting pattern AND its own IO layout (the 3B's port arrangement differs from the 4B's -- notably Ethernet sits nearest the front edge here, the opposite order from the 4B): micro-USB power, full-size HDMI, combo audio/composite jack, 2x USB dual-stack, Ethernet, underside microSD. The audio/composite jack is really a 4-pole TRRS combo connector; the library's plain 3.5mm TRS entry is the closest available match, not exact. Port centerlines from the official mechanical drawing; heights are approximations -- verify before printing.",
+    // Split height sits above the tallest port opening (the USB stacks top out ~23.4mm), same
+    // margin as the 4B.
+    body: { outer: { length: 100, width: 70, height: 30 }, wallThickness: 2, splitHeight: 24 },
     boardMount: PI_FULL_SIZE_MOUNT,
+    // Front-edge centerlines (from the board's left edge): micro-USB power 10.6, HDMI 32.0,
+    // audio/composite 53.5. Right-edge centerlines (from the board's front edge): Ethernet 10.25,
+    // USB dual-stack #1 29.0, USB dual-stack #2 47.0. Converted to offsets from the 85x56 board
+    // center. microSD position is not dimensioned in the official drawing (underside,
+    // top-assembly-view-only) -- centered as a placeholder, same as every other Pi preset.
+    io: [
+      { connectorId: 'usb-micro-b', face: 'front', alongMm: -31.9, aboveBoardMm: 1.4 },
+      { connectorId: 'hdmi-full-size', face: 'front', alongMm: -10.5, aboveBoardMm: 3.25 },
+      { connectorId: 'audio-trs-3.5mm', face: 'front', alongMm: 11.0, aboveBoardMm: 3.0 },
+      { connectorId: 'ethernet-rj45', face: 'right', alongMm: -17.75, aboveBoardMm: 6.8 },
+      { connectorId: 'usb-a-dual-stack', face: 'right', alongMm: 1.0, aboveBoardMm: 8.0 },
+      { connectorId: 'usb-a-dual-stack', face: 'right', alongMm: 19.0, aboveBoardMm: 8.0 },
+      { connectorId: 'microsd-slot', face: 'left', alongMm: 0, aboveBoardMm: -2.8 },
+    ],
   },
   {
     id: 'raspberry-pi-4',
@@ -132,17 +148,42 @@ export const BOARD_PRESETS: BoardPreset[] = [
     id: 'raspberry-pi-5',
     label: 'Raspberry Pi 5',
     notes:
-      'Same 85x56mm board footprint as the 3B/4B, sized a bit taller to leave headroom for the official active cooler. Includes the official 58x49mm M2.5 mounting pattern.',
-    body: { outer: { length: 100, width: 70, height: 35 }, wallThickness: 2, splitHeight: 22 },
+      "Same 85x56mm board footprint as the 3B/4B, sized a bit taller to leave headroom for the official active cooler. Includes the official mounting pattern AND its own IO layout: USB-C power, 2x micro-HDMI, 2x USB dual-stack, Ethernet, underside microSD -- the 3.5mm audio jack was removed on the Pi 5, so unlike the 4B there is no audio cutout here. Same Ethernet-nearest-front port order as the 3B (not the 4B's order). Port centerlines from the official mechanical drawing, which also gives real connector-height side views for USB-C/micro-HDMI; heights are approximations elsewhere -- verify before printing.",
+    // Split height sits above the tallest port opening (the USB stacks top out ~23.4mm), same
+    // margin as the 3B/4B.
+    body: { outer: { length: 100, width: 70, height: 35 }, wallThickness: 2, splitHeight: 24 },
     boardMount: PI_FULL_SIZE_MOUNT,
+    // Front-edge centerlines (from the board's left edge): USB-C 11.2, HDMI0 25.8, HDMI1 39.2.
+    // Right-edge centerlines (from the board's front edge): Ethernet 10.2, USB dual-stack #1 29.1,
+    // USB dual-stack #2 47.0. Converted to offsets from the 85x56 board center. microSD position
+    // is not dimensioned in the official drawing (underside) -- centered as a placeholder.
+    io: [
+      { connectorId: 'usb-c-panel', face: 'front', alongMm: -31.3, aboveBoardMm: 1.6 },
+      { connectorId: 'hdmi-micro', face: 'front', alongMm: -16.7, aboveBoardMm: 1.6 },
+      { connectorId: 'hdmi-micro', face: 'front', alongMm: -3.3, aboveBoardMm: 1.6 },
+      { connectorId: 'ethernet-rj45', face: 'right', alongMm: -17.8, aboveBoardMm: 6.8 },
+      { connectorId: 'usb-a-dual-stack', face: 'right', alongMm: 1.1, aboveBoardMm: 8.0 },
+      { connectorId: 'usb-a-dual-stack', face: 'right', alongMm: 19.0, aboveBoardMm: 8.0 },
+      { connectorId: 'microsd-slot', face: 'left', alongMm: 0, aboveBoardMm: -2.8 },
+    ],
   },
   {
     id: 'raspberry-pi-hat-stack',
     label: 'Raspberry Pi + HAT Stack',
     notes:
-      'Extra-tall variant of the Pi 3/4/5 footprint to clear a stacked HAT board on the 40-pin GPIO header (header + HAT + standoffs). Includes the official 58x49mm M2.5 mounting pattern.',
-    body: { outer: { length: 100, width: 70, height: 45 }, wallThickness: 2, splitHeight: 20 },
+      "Extra-tall variant of the Pi 3/4/5 footprint to clear a stacked HAT board on the 40-pin GPIO header (header + HAT + standoffs). Includes the official mounting pattern and inherits the 4B's IO layout (USB-C, 2x micro-HDMI, audio jack, 2x USB dual-stack, Ethernet, underside microSD) -- swap the IO list by hand if you're stacking on a 3B or 5 instead, since their port arrangements differ.",
+    body: { outer: { length: 100, width: 70, height: 45 }, wallThickness: 2, splitHeight: 24 },
     boardMount: PI_FULL_SIZE_MOUNT,
+    io: [
+      { connectorId: 'usb-c-panel', face: 'front', alongMm: -31.3, aboveBoardMm: 1.6 },
+      { connectorId: 'hdmi-micro', face: 'front', alongMm: -16.5, aboveBoardMm: 1.6 },
+      { connectorId: 'hdmi-micro', face: 'front', alongMm: -3.0, aboveBoardMm: 1.6 },
+      { connectorId: 'audio-trs-3.5mm', face: 'front', alongMm: 11.5, aboveBoardMm: 3.0 },
+      { connectorId: 'usb-a-dual-stack', face: 'right', alongMm: -19.0, aboveBoardMm: 8.0 },
+      { connectorId: 'usb-a-dual-stack', face: 'right', alongMm: -1.0, aboveBoardMm: 8.0 },
+      { connectorId: 'ethernet-rj45', face: 'right', alongMm: 17.75, aboveBoardMm: 6.8 },
+      { connectorId: 'microsd-slot', face: 'left', alongMm: 0, aboveBoardMm: -2.8 },
+    ],
   },
   {
     id: 'raspberry-pi-pico',
