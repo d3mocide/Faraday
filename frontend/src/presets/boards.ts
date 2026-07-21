@@ -1,6 +1,14 @@
 import type { BoardPresetBody } from '../state/projectStore';
 import type { BoardMountSpec, Face } from '../types/project';
-import { BEAGLEBONE_BLACK_MOUNT, PI_FULL_SIZE_MOUNT, PI_ZERO_MOUNT } from './boardMounts';
+import {
+  ARDUINO_MEGA_MOUNT,
+  ARDUINO_UNO_MOUNT,
+  BEAGLEBONE_BLACK_MOUNT,
+  FEATHER_MOUNT,
+  PI_FULL_SIZE_MOUNT,
+  PI_ZERO_MOUNT,
+  PICO_MOUNT,
+} from './boardMounts';
 
 /** One wall cutout in a preset's IO layout, positioned relative to the (centered) board rather
  * than the enclosure, so the same layout survives a body-size tweak of the preset. Horizontal
@@ -134,6 +142,51 @@ export const BOARD_PRESETS: BoardPreset[] = [
       'Extra-tall variant of the Pi 3/4/5 footprint to clear a stacked HAT board on the 40-pin GPIO header (header + HAT + standoffs). Includes the official 58x49mm M2.5 mounting pattern.',
     body: { outer: { length: 100, width: 70, height: 45 }, wallThickness: 2, splitHeight: 20 },
     boardMount: PI_FULL_SIZE_MOUNT,
+  },
+  {
+    id: 'raspberry-pi-pico',
+    label: 'Raspberry Pi Pico (/W/2)',
+    notes:
+      'Fits the 51x21mm board with the official mounting pattern and its one port: a micro-USB centered on the short edge. Datasheet-confirmed 1mm PCB thickness (thinner than most boards this size).',
+    body: { outer: { length: 65, width: 35, height: 18 }, wallThickness: 2, splitHeight: 12 },
+    boardMount: PICO_MOUNT,
+    // The Pico's USB is centered (y=0) on a short edge, per the official datasheet's Figure 3.
+    io: [{ connectorId: 'usb-micro-b', face: 'left', alongMm: 0, aboveBoardMm: 1.5 }],
+  },
+  {
+    id: 'arduino-uno',
+    label: 'Arduino Uno R3',
+    notes:
+      'Fits the 68.6x53.4mm board with the official mounting pattern and its two ports: USB-B and the DC barrel jack, both on the same short edge. Port positions sourced from the official Eagle CAD board files, cross-checked against the datasheet drawing.',
+    body: { outer: { length: 85, width: 68, height: 35 }, wallThickness: 2, splitHeight: 22 },
+    boardMount: ARDUINO_UNO_MOUNT,
+    // Left-edge centerlines (from board center, Y axis): USB-B -11.43, DC jack +18.29.
+    io: [
+      { connectorId: 'usb-b-panel', face: 'left', alongMm: -11.43, aboveBoardMm: 5.5 },
+      { connectorId: 'dc-barrel-5.5x2.1', face: 'left', alongMm: 18.29, aboveBoardMm: 4.0 },
+    ],
+  },
+  {
+    id: 'arduino-mega',
+    label: 'Arduino Mega 2560',
+    notes:
+      'Fits the 101.6x53.34mm board with the official mounting pattern and its two ports: USB-B and the DC barrel jack, in the same corner layout as the Uno (confirmed from the Mega\'s own Eagle CAD file, not assumed identical).',
+    body: { outer: { length: 120, width: 68, height: 35 }, wallThickness: 2, splitHeight: 22 },
+    boardMount: ARDUINO_MEGA_MOUNT,
+    // Same Y offsets as the Uno -- board depth is unchanged, only length grew.
+    io: [
+      { connectorId: 'usb-b-panel', face: 'left', alongMm: -11.43, aboveBoardMm: 5.5 },
+      { connectorId: 'dc-barrel-5.5x2.1', face: 'left', alongMm: 18.29, aboveBoardMm: 4.0 },
+    ],
+  },
+  {
+    id: 'adafruit-feather',
+    label: 'Adafruit Feather',
+    notes:
+      'Fits the shared 50.8x22.86mm Feather footprint with its official mounting pattern and its one port: a micro-USB centered on the short edge (some newer Feather variants use USB-C instead -- swap the cutout if yours does).',
+    body: { outer: { length: 65, width: 38, height: 18 }, wallThickness: 2, splitHeight: 13 },
+    boardMount: FEATHER_MOUNT,
+    io: [{ connectorId: 'usb-micro-b', face: 'left', alongMm: 0, aboveBoardMm: 1.5 }],
   },
   {
     id: 'beaglebone-black',

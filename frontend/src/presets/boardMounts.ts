@@ -62,6 +62,69 @@ export const BEAGLEBONE_BLACK_MOUNT: BoardMountSpec = {
   standoff: { outerDiameter: 7, screwHoleDiameter: 3.2, height: 4 },
 };
 
+/** Pico (/W/2): 51x21mm board, official datasheet-confirmed 1mm PCB thickness (not the usual
+ * 1.6mm), four M2 holes on a 47x11.4mm grid, 2mm in from the short edges, centered. */
+export const PICO_MOUNT: BoardMountSpec = {
+  boardWidth: 51,
+  boardDepth: 21,
+  boardThickness: 1,
+  holes: [
+    { x: -23.5, y: -5.7 },
+    { x: 23.5, y: -5.7 },
+    { x: -23.5, y: 5.7 },
+    { x: 23.5, y: 5.7 },
+  ],
+  standoff: { outerDiameter: 5, screwHoleDiameter: 1.8, height: 4 },
+};
+
+/** Arduino Uno R3: 68.6x53.4mm board, classic 4-hole M3 pattern (irregular, not corner-symmetric)
+ * from the official board drawing. */
+export const ARDUINO_UNO_MOUNT: BoardMountSpec = {
+  boardWidth: 68.6,
+  boardDepth: 53.4,
+  boardThickness: 1.6,
+  holes: [
+    { x: -20.32, y: -24.13 },
+    { x: -19.05, y: 24.13 },
+    { x: 31.75, y: -8.89 },
+    { x: 31.75, y: 19.05 },
+  ],
+  standoff: { outerDiameter: 7, screwHoleDiameter: 2.7, height: 4 },
+};
+
+/** Arduino Mega 2560: 101.6x53.34mm board, Uno-compatible 4-hole pattern plus two extra holes on
+ * the long end (M3), per the official board drawing. */
+export const ARDUINO_MEGA_MOUNT: BoardMountSpec = {
+  boardWidth: 101.6,
+  boardDepth: 53.34,
+  boardThickness: 1.6,
+  holes: [
+    { x: -36.83, y: -24.13 },
+    { x: -35.56, y: 24.13 },
+    { x: 15.24, y: -8.89 },
+    { x: 15.24, y: 19.05 },
+    { x: 45.72, y: -24.13 },
+    { x: 39.37, y: 24.13 },
+  ],
+  standoff: { outerDiameter: 7, screwHoleDiameter: 2.7, height: 4 },
+};
+
+/** Shared Feather-spec footprint: 50.8x22.86mm board, four 2.5mm holes inset 2.54mm from the
+ * corners (45.72x17.78mm grid). PCB thickness is not stated anywhere in Adafruit's spec --
+ * 1.6mm is an unverified industry-standard assumption, same as the two Arduino boards above. */
+export const FEATHER_MOUNT: BoardMountSpec = {
+  boardWidth: 50.8,
+  boardDepth: 22.86,
+  boardThickness: 1.6,
+  holes: [
+    { x: -22.86, y: -8.89 },
+    { x: 22.86, y: -8.89 },
+    { x: -22.86, y: 8.89 },
+    { x: 22.86, y: 8.89 },
+  ],
+  standoff: { outerDiameter: 5, screwHoleDiameter: 2.2, height: 4 },
+};
+
 export const BOARD_MOUNT_PRESETS: BoardMountPreset[] = [
   {
     id: 'pi-full-size',
@@ -82,74 +145,28 @@ export const BOARD_MOUNT_PRESETS: BoardMountPreset[] = [
     label: 'Raspberry Pi Pico (/W/2)',
     badge: '51×21mm',
     notes: 'Datasheet 47×11.4mm pattern, four M2 holes 2mm in from the short edges, centered.',
-    mount: {
-      boardWidth: 51,
-      boardDepth: 21,
-      boardThickness: 1,
-      holes: [
-        { x: -23.5, y: -5.7 },
-        { x: 23.5, y: -5.7 },
-        { x: -23.5, y: 5.7 },
-        { x: 23.5, y: 5.7 },
-      ],
-      standoff: { outerDiameter: 5, screwHoleDiameter: 1.8, height: 4 },
-    },
+    mount: PICO_MOUNT,
   },
   {
     id: 'arduino-uno',
     label: 'Arduino Uno R3',
     badge: '68.6×53.4mm',
     notes: 'Classic 4-hole Arduino pattern from the official board drawing (M3, irregular layout — not corner-symmetric).',
-    mount: {
-      boardWidth: 68.6,
-      boardDepth: 53.4,
-      boardThickness: 1.6,
-      holes: [
-        { x: -20.32, y: -24.13 },
-        { x: -19.05, y: 24.13 },
-        { x: 31.75, y: -8.89 },
-        { x: 31.75, y: 19.05 },
-      ],
-      standoff: { outerDiameter: 7, screwHoleDiameter: 2.7, height: 4 },
-    },
+    mount: ARDUINO_UNO_MOUNT,
   },
   {
     id: 'arduino-mega',
     label: 'Arduino Mega 2560',
     badge: '101.6×53.3mm',
     notes: 'Uno-compatible 4-hole pattern plus two extra holes on the long end (M3), per the official board drawing.',
-    mount: {
-      boardWidth: 101.6,
-      boardDepth: 53.34,
-      boardThickness: 1.6,
-      holes: [
-        { x: -36.83, y: -24.13 },
-        { x: -35.56, y: 24.13 },
-        { x: 15.24, y: -8.89 },
-        { x: 15.24, y: 19.05 },
-        { x: 45.72, y: -24.13 },
-        { x: 39.37, y: 24.13 },
-      ],
-      standoff: { outerDiameter: 7, screwHoleDiameter: 2.7, height: 4 },
-    },
+    mount: ARDUINO_MEGA_MOUNT,
   },
   {
     id: 'adafruit-feather',
     label: 'Adafruit Feather',
     badge: '50.8×22.9mm',
     notes: 'Shared Feather-spec footprint: four 2.5mm holes inset 2.54mm from the corners (45.72×17.78mm grid).',
-    mount: {
-      boardWidth: 50.8,
-      boardDepth: 22.86,
-      boardThickness: 1.6,
-      holes: [
-        { x: -22.86, y: -8.89 },
-        { x: 22.86, y: -8.89 },
-        { x: -22.86, y: 8.89 },
-        { x: 22.86, y: 8.89 },
-      ],
-      standoff: { outerDiameter: 5, screwHoleDiameter: 2.2, height: 4 },
-    },
+    mount: FEATHER_MOUNT,
   },
   {
     id: 'beaglebone-black',
