@@ -5,6 +5,7 @@ import type {
   EnclosureBody,
   EnclosureProject,
   Feature,
+  GasketSpec,
   LidType,
   ScrewCount,
   ScrewInsertType,
@@ -18,6 +19,10 @@ export interface BoardPresetBody {
   outer: { length: number; width: number; height: number };
   wallThickness: number;
   splitHeight: number;
+  /** Only set by non-board "starter" presets (e.g. the sealed outdoor node) that want the gasket
+   * channel on by default -- omitted everywhere else so applying a board preset never clobbers a
+   * gasket the user already had enabled (see applyBoardPreset below). */
+  gasket?: GasketSpec;
 }
 
 interface ProjectStore {
@@ -37,6 +42,7 @@ interface ProjectStore {
   setScrewSize: (size: ScrewSize) => void;
   setScrewInsertType: (insertType: ScrewInsertType) => void;
   setScrewCount: (count: ScrewCount) => void;
+  setScrewEdgeInset: (edgeInset: number | undefined) => void;
   setGasketEnabled: (enabled: boolean) => void;
   setGasketWidth: (value: number) => void;
   setGasketDepth: (value: number) => void;
@@ -164,6 +170,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, count } } } };
       }),
 
+    setScrewEdgeInset: (edgeInset) =>
+      mutate((p) => {
+        const screw = p.body.lid.screw ?? defaultScrewSpec();
+        return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, edgeInset } } } };
+      }),
+
     setGasketEnabled: (enabled) =>
       mutate((p) => ({
         ...p,
@@ -210,7 +222,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
           outer: preset.outer,
           wallThickness: preset.wallThickness,
           cornerStyle: p.body.shape === 'box' ? p.body.cornerStyle : { type: 'rounded', radius: 3 },
-          lid: { ...p.body.lid, splitHeight: preset.splitHeight },
+          lid: {
+            ...p.body.lid,
+            splitHeight: preset.splitHeight,
+            ...(preset.gasket ? { gasket: preset.gasket } : {}),
+          },
         },
         features: features ?? [],
       })),

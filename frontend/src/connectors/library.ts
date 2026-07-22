@@ -91,6 +91,17 @@ export const CONNECTOR_LIBRARY: ConnectorLibraryEntry[] = [
     notes: 'Micro-HDMI receptacle shell opening (common on Raspberry Pi 4/5) — verify against your specific connector.',
   },
   {
+    id: 'displayport-panel',
+    label: 'DisplayPort Cutout',
+    category: 'video',
+    holeShape: 'rect',
+    width: 16.1,
+    height: 4.8,
+    cornerRadius: 0.5,
+    notes:
+      'Full-size DisplayPort receptacle shell opening — sized from the generic VESA-standard connector envelope, not a single manufacturer drawing; verify against your specific part.',
+  },
+  {
     id: 'ethernet-rj45',
     label: 'Ethernet (RJ45) Cutout',
     category: 'network',
@@ -109,6 +120,17 @@ export const CONNECTOR_LIBRARY: ConnectorLibraryEntry[] = [
     height: 3.0,
     cornerRadius: 0.8,
     notes: 'Micro-USB receptacle shell opening — verify against your specific connector.',
+  },
+  {
+    id: 'usb-mini-b',
+    label: 'Mini-USB (B) Panel Cutout',
+    category: 'usb',
+    holeShape: 'rect',
+    width: 7.0,
+    height: 4.0,
+    cornerRadius: 0.8,
+    notes:
+      'Mini-USB Type AB receptacle shell opening (e.g. BeagleBone Black) — sized from the connector family envelope, not a single manufacturer drawing; verify against your specific part.',
   },
   {
     id: 'usb-b-panel',

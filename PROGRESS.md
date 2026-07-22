@@ -466,24 +466,20 @@ board mounts). Remaining ideas, roughly by value for radio projects:
 - **Feature Layers card**: true multi-select (the 2026-07-20 bulk Hide/Lock-all buttons cover the
   all-or-nothing case; multi-select needs the selection model to become a set, rippling through
   `App`/`Viewport3D`/`InspectorPanel`).
-- More board IO layouts (see the preset-IO section below): Pi 5 and Pi 3B port centerlines were
-  deliberately NOT guessed — add them only from the official mechanical drawings.
 
-### Captured: complete-preset-designs roadmap (2026-07-20, agreed with repo owner — its own PR)
+### Complete-preset-designs roadmap (2026-07-20, agreed with repo owner — closed 2026-07-21, see session log)
 
-Only Pi 4B and Pi Zero are "complete designs" (size + mount + IO). Planned expansion, in value
-order — all data-only against the existing `BoardPreset.io` plumbing, no new architecture:
+All four items below (issue #10) are now done — see the 2026-07-21 session log entry for
+implementation notes. Kept here as a historical record of the original plan:
 
-1. **Pi 3B + Pi 5 IO layouts** — port centerlines sourced from the official Raspberry Pi
-   mechanical drawings (fetch the drawings; do not guess — the 3B port arrangement differs from
-   the 4B, and the 5 differs again). HAT Stack preset then inherits the base Pi's wall ports.
-2. **Promote the palette-only mounts to full enclosure presets**: Pi Pico, Arduino Uno R3,
-   Arduino Mega 2560, Adafruit Feather. Their IO is simple (Pico/Feather: one USB centered on the
-   short edge; Uno/Mega: USB-B + DC barrel, positions in Arduino's official DXF).
-3. **New boards with officially documented mechanicals**: Jetson Nano / Orin Nano dev kit,
-   BeagleBone Black, Raspberry Pi Compute Module carrier boards (per repo owner's pick).
-4. Possibly a non-board "sealed outdoor node" starter preset (gasket on, PG9 gland, SMA
-   bulkhead) — partly blocked on the case-mounting features above.
+1. ~~**Pi 3B + Pi 5 IO layouts**~~ — done.
+2. ~~**Promote the palette-only mounts to full enclosure presets**: Pi Pico, Arduino Uno R3,
+   Arduino Mega 2560, Adafruit Feather.~~ — done.
+3. ~~**New boards with officially documented mechanicals**: Jetson Orin Nano dev kit, BeagleBone
+   Black, Raspberry Pi CM4 IO Board.~~ — done.
+4. ~~Non-board "sealed outdoor node" starter preset (gasket on, PG9 gland, SMA bulkhead).~~ —
+   done, minus pole/mast mounting clamps (still not implemented anywhere in the app — see "Next
+   steps" below, unchanged).
 
 Boards WITHOUT reliable published mounting/port drawings (generic ESP32 DevKits, Heltec V3,
 T-Beam, XIAO/RTL-SDR which lack mounting holes) stay dimension-only on purpose — the generic
@@ -491,6 +487,75 @@ board-mount + hand-placed cutouts serve those better than shipped-wrong holes wo
 
 Also still open from earlier phases, not blocking: the ~845KB main bundle (see below), and the
 never-verified Docker build.
+
+## Complete preset designs (2026-07-21 session, issue #10)
+
+- **`buildPresetFeatures` and `BoardPresetBody` no longer require a `boardMount` to place `io`
+  cutouts or enable a gasket.** Previously a preset's IO ports were always positioned relative to
+  a board's top surface (`boardTopZ = wallThickness + standoff.height + boardThickness`); a
+  board-less preset now measures the same `aboveBoardMm` field from the interior floor instead
+  (`boardTopZ = wallThickness`). This is what makes the sealed outdoor node (no board at all) and
+  the Jetson Orin Nano devkit (a real board, but an unconfirmed hole pattern — see below) possible
+  without inventing new plumbing. `presetFeatures.test.ts` tracks the allowlist of presets
+  expected to use this path (`sealed-outdoor-node`, `jetson-orin-nano-devkit`) so a future preset
+  that's missing a `boardMount` by mistake still fails loudly.
+- **Pi 3B and Pi 5 got real IO layouts**, sourced from the official mechanical drawings, not
+  guessed. Two non-obvious findings the drawings themselves surfaced: the 3B/5 put Ethernet
+  nearest the front edge with the USB stacks farther back — the *opposite* front-to-back order
+  from the 4B — and the Pi 5 removed the 3.5mm audio jack entirely (no audio cutout in its io
+  list). All three Pi-full-size presets (3B, 5, HAT stack) needed `splitHeight` bumped to 24mm to
+  clear the USB dual-stack cutouts, matching the 4B's existing margin. The HAT stack preset
+  inherits the 4B's IO layout per the original plan; its notes flag that stacking on a 3B/5 needs
+  a different port list swapped in by hand.
+- **Pico, Arduino Uno R3, Arduino Mega 2560, and Adafruit Feather** were promoted from
+  palette-only mounts (`presets/boardMounts.ts`) to full `BOARD_PRESETS` entries with IO. Their
+  mount specs were extracted into named consts (`PICO_MOUNT`, `ARDUINO_UNO_MOUNT`, etc.) so the
+  palette entries and the new enclosure presets share one source of truth, same precedent as the
+  existing Pi mounts. Port positions came from Arduino's own Eagle CAD board files (cross-checked
+  against the datasheet drawings, not assumed identical between Uno and Mega even though they
+  turned out to match) and the Pico's official datasheet mechanical drawing. Connector heights
+  above the board follow the half-cutout-height convention already implicit in the Pi presets
+  (a connector's centerline sits at roughly half its own cutout height above the board, assuming
+  a flush-mounted shell) — made explicit here since there was no existing precedent value to reuse
+  for USB-B/DC-barrel/micro-USB in this context.
+- **Three new board presets** with officially documented mechanicals, each ships without guessing
+  anything the source didn't dimension:
+  - **BeagleBone Black** (86.4×54.6mm, non-corner-symmetric M3 pattern) — sourced from
+    BeagleBoard.org's official SRM drawing and assembly/placement data. Flags a real discrepancy
+    in BeagleBoard's own docs (prose says 53.34mm wide, the dimensioned drawing's own
+    mounting-hole symmetry only checks out at 54.61mm) rather than silently picking one. Needed a
+    new `usb-mini-b` connector library entry — BBB uses Mini-USB, not the Micro-USB every other
+    preset in this library uses.
+  - **Raspberry Pi CM4 IO Board** (160×90mm, 7-hole pattern: 3 primary + 4 HAT-compatible) —
+    sourced from the official datasheet's mechanical drawing via pixel measurement against its own
+    printed dimension callouts. Explicitly does NOT model the PCIe x1 socket, which mounts
+    perpendicular to the board (like a desktop slot) and needs internal height clearance rather
+    than a wall cutout — flagged in the preset's notes as a manual follow-up, not silently
+    dropped.
+  - **NVIDIA Jetson Orin Nano Developer Kit** (100×79mm carrier, sized for the 34.77mm module +
+    heatsink/fan stack) — port centerlines came from NVIDIA's official CAD reference-design
+    package (Allegro placement export), which is more precise than the datasheet's undimensioned
+    drawing. **Ships without a `boardMount`**: NVIDIA's public docs don't dimension mounting-hole
+    positions, and the official CAD package didn't yield a confidently-verified pattern, so per
+    the "don't guess hole positions" rule this stays dimension + IO only. Needed a new
+    `displayport-panel` connector entry (generic VESA envelope, no prior entry existed).
+- **Sealed outdoor node** starter preset: no board at all, gasket channel on by default, one SMA
+  bulkhead (antenna) and one PG9 cable gland (sealed cable entry) cutout. Does not attempt a
+  pole/mast mounting clamp — that feature doesn't exist anywhere in the app yet (still on the
+  "Next steps" list above), so the preset's notes say so rather than pretending it's covered.
+- All 17 board presets (was 11 at session start) are covered by `presetFeatures.test.ts`: every
+  `io` connectorId resolves in the library, every board-less `io` preset is on the explicit
+  allowlist above, every cutout's full extent (not just its centerline) clears the floor and lid
+  split, and every preset with a `boardMount` or `io` generates watertight base+lid meshes at
+  export quality (43 tests passing, up from 35).
+- Verified end-to-end with Playwright against the dev server: applied all 11 new/changed presets
+  and screenshotted each (default angle, plus a closer orbited/zoomed pass on 6 of them) —
+  confirmed cutouts land on the expected face in the expected left-to-right order with plausible
+  relative sizes (e.g. Jetson's front edge reads DC-jack/DisplayPort/USB-A/USB-A/Ethernet/USB-C
+  left to right exactly matching its sourced centerlines; BeagleBone and the Arduino boards
+  correctly show a *blank* front face since their real ports sit on the short edge, not the GPIO
+  edge). Zero console errors across all 11 preset applications. `tsc -b`, `oxlint`, `npm run test`
+  (43 passing), and `npm run build` all clean.
 
 ## Session log
 
@@ -621,6 +686,73 @@ never-verified Docker build.
   Playwright: both tabs render their expected preset sets, switching tabs and picking a preset
   from the non-default tab still applies body dims correctly and closes the modal, no console
   errors; `tsc -b` and `oxlint` clean.
+
+- **2026-07-21**: Closed out the complete-preset-designs roadmap (issue #10) — see the "Complete
+  preset designs" section above for full details. Pi 3B + Pi 5 got real IO layouts sourced from
+  the official mechanical drawings; Pico/Arduino Uno R3/Arduino Mega 2560/Adafruit Feather were
+  promoted from palette-only mounts to full presets with IO; three new board presets landed
+  (BeagleBone Black, Raspberry Pi CM4 IO Board, Jetson Orin Nano Developer Kit), each sourced from
+  official mechanicals and each flagging what those sources didn't give (BeagleBoard's own
+  board-width discrepancy, the CM4 IO board's unmodeled PCIe socket, the Jetson's unconfirmed
+  mounting holes); and a non-board "sealed outdoor node" starter preset (gasket + SMA + PG9 gland)
+  went in, which needed `buildPresetFeatures`/`BoardPresetBody` generalized to support `io`
+  cutouts and a gasket without a `boardMount`. Board preset count: 11 → 17. New connector library
+  entries: `usb-mini-b`, `displayport-panel`. `presetFeatures.test.ts` extended to cover every new
+  preset (43 tests, up from 35); Playwright-verified all 11 new/changed presets against the dev
+  server (screenshots + zero console errors). `tsc -b`, `oxlint`, `npm run test`, and `npm run
+  build` all clean.
+
+- **2026-07-21 (follow-up)**: Added a real "Seeed Studio XIAO ESP32 (C3/S3/C6)" preset per user
+  request, upgrading it beyond the existing dimension-only `seeed-xiao` entry. Confirmed via the
+  official Seeed XIAO Series SoM User Manual and per-variant getting-started wiki pages that **no
+  XIAO board of any kind has mounting holes** (the whole family plugs into shields via
+  edge-castellated pins instead of screws) — this validates a precedent already assumed elsewhere
+  in this file, now sourced. All three ESP32 variants share a ~21×17.8mm footprint with a USB-C
+  port centered on a short edge and an external U.FL/IPEX antenna connector (position not
+  officially dimensioned by Seeed, so not cut — noted as an optional manual addition). New preset
+  uses the board-less `io` path (no `boardMount`, real `io`) added earlier this session for the
+  Jetson preset — same rationale: a real board with a real, sourced port position, but genuinely no
+  hole pattern to place. The original `seeed-xiao` entry was relabeled to drop "ESP32-C3" (now
+  covers only SAMD21/RP2040/nRF52840, the non-WiFi variants) since it's superseded by the dedicated
+  entry for WiFi users. Board preset count: 17 → 18. `presetFeatures.test.ts` allowlist extended;
+  44 tests passing (up from 43). Playwright-verified the USB-C cutout renders on the expected face
+  with the expected shape, zero console errors; `tsc -b`, `oxlint`, `npm run build` all clean.
+
+- **2026-07-21 (follow-up 2)**: Fixed a real design bug the repo owner spotted from a screenshot:
+  **every board-mount preset's lid screw bosses overlapped the board itself**, not just the outer
+  walls. `bossPositions()` places corner bosses inset from the *interior cavity* corners, which
+  keeps them clear of the outer wall -- but says nothing about a board-mount sitting in the middle
+  of that same cavity. Since a board-mount's standoffs and the lid's screw bosses are two
+  independent solids that both `.add()` onto the base and both rise from the floor, an overlapping
+  boss still produces a perfectly valid (watertight) mesh -- it's a real-world assembly conflict,
+  not a geometry error, so nothing in the existing test suite could have caught it.
+  - Added a new `presetFeatures.test.ts` check (`bossPositions`/`bossRadiusFor` exported from
+    `csg/primitives.ts` for reuse) that computes, in plain 2D, whether the *default* lid's 4
+    corner bosses (screw-boss, M3, heat-set -- `state/defaultProject.ts`'s actual default, and the
+    worst case of the three screw sizes) clear each boardMount preset's board rectangle by a
+    minimum margin. Ran first to find the damage: **all 11 existing boardMount presets failed**,
+    including Pi 4B/Zero from earlier sessions that this PR never touched -- confirming it wasn't
+    specific to the boards added this session.
+  - Fixed by growing each preset's `body.outer` on whichever axis (length or width) needed the
+    smaller absolute increase to clear the board via that axis alone -- corner bosses are
+    symmetric, so one axis clearing fully is sufficient regardless of the other axis (see the new
+    doc comment on `BoardPreset.boardMount` in `presets/boards.ts`). Typical growth was
+    +10 to +20mm on one dimension; the other dimension was untouched. All 11 presets now pass with
+    a comfortable margin above the bare minimum, not a knife's-edge pass.
+  - Added the second half of the ask -- **adjustable screw spacing**: `ScrewSpec` gained an
+    optional `edgeInset` (mm from the interior wall to each boss center; undefined = the same
+    `bossRadius + 1` default as before, so no behavior changes unless a user touches it).
+    Threaded through `bossPositions()`/`bossPositionsCircular()` and both `applyScrewBossLid*`
+    functions. New "Screw edge inset" field in the Lid & Fasteners card (`InspectorPanel.tsx`)
+    shows the computed default and lets a user pull bosses toward the case's outer edge (or push
+    them further in) by hand -- useful for hand-tuning clearance on a custom board-mount the app
+    has no way to reason about automatically.
+  - Verified with Playwright: "Hidden" lid view + ghost board on the tightest presets (Pi Zero,
+    Pico) now visibly shows all 4 boss cylinders sitting outside the green board outline with real
+    air gaps, versus overlapping before the fix; the new inspector field renders with the correct
+    computed default (5.4mm for the default M3 heat-set screw) and no console errors.
+    `presetFeatures.test.ts` now 55 passing (up from 44, +11 boss-clearance checks); `tsc -b`,
+    `oxlint`, `npm run build` all clean.
 
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->

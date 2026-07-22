@@ -17,6 +17,11 @@ export interface ScrewSpec {
   size: ScrewSize;
   insertType: ScrewInsertType;
   count: ScrewCount;
+  /** mm from the interior cavity wall to each boss center. Undefined = the CSG default
+   * (bossRadius + 1mm, just enough to keep the boss inside the wall) -- see bossPositions in
+   * csg/primitives.ts. Lower values pull bosses toward the case's outer edge, which is also the
+   * lever for keeping them clear of a board-mount sitting in the middle of the cavity. */
+  edgeInset?: number;
 }
 
 export type LidType = 'friction-lip' | 'screw-boss' | 'snap-fit';
