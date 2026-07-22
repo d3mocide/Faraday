@@ -5,6 +5,7 @@ import { displayStep, displayToMm, mmToDisplay, roundForDisplay, unitLabel } fro
 import { cornerHolePattern } from '../state/featureFactory';
 import { alignedPosition, cloneFeatureAt, mirroredPosition, type Axis, type AxisTarget } from '../state/alignMirror';
 import { bodyGeometry, faceSize } from '../csg/faceFrame';
+import { bossRadiusFor } from '../csg/primitives';
 import type { LidView, PreviewTarget } from './Viewport3D';
 import type {
   BoardMountSpec,
@@ -610,6 +611,7 @@ export function InspectorPanel({
   const setScrewSize = useProjectStore((s) => s.setScrewSize);
   const setScrewInsertType = useProjectStore((s) => s.setScrewInsertType);
   const setScrewCount = useProjectStore((s) => s.setScrewCount);
+  const setScrewEdgeInset = useProjectStore((s) => s.setScrewEdgeInset);
   const setGasketEnabled = useProjectStore((s) => s.setGasketEnabled);
   const setGasketWidth = useProjectStore((s) => s.setGasketWidth);
   const setGasketDepth = useProjectStore((s) => s.setGasketDepth);
@@ -765,7 +767,25 @@ export function InspectorPanel({
                 <option value={8}>8</option>
               </select>
             </label>
+            <UnitNumberField
+              label="Screw edge inset"
+              valueMm={lid.screw.edgeInset ?? bossRadiusFor(lid.screw) + 1}
+              units={units}
+              minMm={0.5}
+              maxMm={Math.max(minPlanDimension / 2 - 2, 0.5)}
+              stepMm={0.1}
+              onChangeMm={setScrewEdgeInset}
+            />
           </FieldsGrid2Col>
+        )}
+        {lid.type === 'screw-boss' && lid.screw && (
+          <p className="field-hint">
+            Distance from the interior wall to each screw boss. Smaller pulls bosses toward the
+            case's outer edge -- useful for keeping them clear of a board-mount sitting in the
+            middle of the cavity. Default (
+            {roundForDisplay(mmToDisplay(bossRadiusFor(lid.screw) + 1, units), units)}
+            {unitLabel(units)}) is the minimum that reliably keeps the boss inside the wall.
+          </p>
         )}
 
         <label className="field field-checkbox">

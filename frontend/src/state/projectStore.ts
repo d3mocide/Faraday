@@ -42,6 +42,7 @@ interface ProjectStore {
   setScrewSize: (size: ScrewSize) => void;
   setScrewInsertType: (insertType: ScrewInsertType) => void;
   setScrewCount: (count: ScrewCount) => void;
+  setScrewEdgeInset: (edgeInset: number | undefined) => void;
   setGasketEnabled: (enabled: boolean) => void;
   setGasketWidth: (value: number) => void;
   setGasketDepth: (value: number) => void;
@@ -167,6 +168,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
       mutate((p) => {
         const screw = p.body.lid.screw ?? defaultScrewSpec();
         return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, count } } } };
+      }),
+
+    setScrewEdgeInset: (edgeInset) =>
+      mutate((p) => {
+        const screw = p.body.lid.screw ?? defaultScrewSpec();
+        return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, edgeInset } } } };
       }),
 
     setGasketEnabled: (enabled) =>

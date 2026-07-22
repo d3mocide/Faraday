@@ -3,11 +3,18 @@ import type { ManifoldToplevel } from 'manifold-3d';
 import { generateEnclosure } from '../src/csg/generateEnclosure';
 import { extractMeshData } from '../src/csg/manifoldToGeometry';
 import { findConnector } from '../src/connectors/library';
+import { bossPositions, bossRadiusFor } from '../src/csg/primitives';
 import { BOARD_PRESETS, type BoardPreset } from '../src/presets/boards';
 import { buildPresetFeatures } from '../src/state/featureFactory';
-import type { EnclosureProject } from '../src/types/project';
+import type { EnclosureProject, ScrewSpec } from '../src/types/project';
 import { getTestWasm } from './helpers/wasm';
 import { isWatertight } from './helpers/geometry';
+
+// The app's actual default project screw (state/defaultProject.ts) -- also the worst case for
+// boss-vs-board clearance, since it has the largest boss of the three screw sizes. A fresh
+// project applying any board preset gets exactly this, so it's what the clearance check below
+// verifies against.
+const DEFAULT_SCREW: ScrewSpec = { size: 'M3', insertType: 'heat-set', count: 4 };
 
 let wasm: ManifoldToplevel;
 beforeAll(async () => {
@@ -89,6 +96,34 @@ describe('board preset IO layouts', () => {
       }
     }
   });
+
+  for (const preset of BOARD_PRESETS.filter((p) => p.boardMount)) {
+    it(`${preset.id}: lid screw bosses (default M3 heat-set) clear the board footprint`, () => {
+      // Lid screw bosses and board-mount standoffs are two independent solids, both rising from
+      // the floor -- a boss union'd right on top of where the board itself sits is still a valid
+      // (watertight) manifold, so the export-quality watertightness test below can't catch this;
+      // it's a design/assembly conflict, not a geometry error. Checked in plain 2D here (no CSG
+      // needed) by reusing the app's own boss-placement math, not a re-derived approximation.
+      const { outer, wallThickness } = preset.body;
+      const innerLength = outer.length - 2 * wallThickness;
+      const innerWidth = outer.width - 2 * wallThickness;
+      const bossRadius = bossRadiusFor(DEFAULT_SCREW);
+      const positions = bossPositions(DEFAULT_SCREW.count, innerLength / 2, innerWidth / 2, bossRadius);
+      const board = preset.boardMount!;
+      const halfW = board.boardWidth / 2;
+      const halfD = board.boardDepth / 2;
+      const minClearance = 1; // mm of air gap wanted between the board edge and the boss body
+      for (const [bx, by] of positions) {
+        const dx = Math.max(Math.abs(bx) - halfW, 0);
+        const dy = Math.max(Math.abs(by) - halfD, 0);
+        const distanceFromBoard = Math.hypot(dx, dy);
+        expect(
+          distanceFromBoard,
+          `${preset.id}: boss at (${bx.toFixed(1)}, ${by.toFixed(1)}) is only ${distanceFromBoard.toFixed(1)}mm from the ${board.boardWidth}x${board.boardDepth}mm board (needs >= ${(bossRadius + minClearance).toFixed(1)}mm)`,
+        ).toBeGreaterThanOrEqual(bossRadius + minClearance);
+      }
+    });
+  }
 
   for (const preset of BOARD_PRESETS.filter((p) => p.boardMount || (p.io && p.io.length > 0))) {
     it(`${preset.id}: full preset generates watertight base + lid`, () => {

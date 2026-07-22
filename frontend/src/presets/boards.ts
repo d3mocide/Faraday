@@ -38,7 +38,13 @@ export interface BoardPreset {
   /** Present only where the board's mounting-hole pattern is officially documented (e.g. the
    * Raspberry Pi mechanical drawings) — applying the preset then drops in a centered
    * board-mount feature with the real hole layout. Shared with the palette's placeable
-   * board-mount presets (`presets/boardMounts.ts`) so the two stay in sync. */
+   * board-mount presets (`presets/boardMounts.ts`) so the two stay in sync. Every
+   * `boardMount`-carrying preset's `body.outer` is sized so the *default* lid (screw-boss, M3
+   * heat-set, 4 bosses -- see state/defaultProject.ts) clears the board itself, not just the
+   * outer walls: the board-mount's standoffs and the lid's corner screw bosses are independent
+   * solids that both rise from the floor, so a boss sitting on top of where the board physically
+   * is would be a real assembly conflict even though it unions into a perfectly valid (watertight)
+   * mesh -- test/presetFeatures.test.ts's boss-clearance check enforces this for every preset. */
   boardMount?: BoardMountSpec;
   /** Wall cutouts for the board's IO ports, only meaningful alongside `boardMount` (positions
    * derive from the centered board). Present only where port centerlines are documented. */
@@ -78,7 +84,7 @@ export const BOARD_PRESETS: BoardPreset[] = [
     label: 'Raspberry Pi Zero (W/2 W)',
     notes:
       'Fits the board with the official 58x23mm M2.5 mounting pattern and the IO layout cut into the walls: mini-HDMI, both micro-USB ports, and the microSD slot. Port heights are approximations — verify before printing.',
-    body: { outer: { length: 75, width: 40, height: 20 }, wallThickness: 2, splitHeight: 13 },
+    body: { outer: { length: 95, width: 40, height: 20 }, wallThickness: 2, splitHeight: 13 },
     boardMount: PI_ZERO_MOUNT,
     // Front-edge centerlines (from the board's left edge): mini-HDMI 12.4, USB OTG 41.4,
     // USB PWR 54.0, per the official drawing. Converted to offsets from the 65x30 board center.
@@ -112,7 +118,7 @@ export const BOARD_PRESETS: BoardPreset[] = [
       "Fits the full-size 85x56mm Pi board with the official mounting pattern AND its own IO layout (the 3B's port arrangement differs from the 4B's -- notably Ethernet sits nearest the front edge here, the opposite order from the 4B): micro-USB power, full-size HDMI, combo audio/composite jack, 2x USB dual-stack, Ethernet, underside microSD. The audio/composite jack is really a 4-pole TRRS combo connector; the library's plain 3.5mm TRS entry is the closest available match, not exact. Port centerlines from the official mechanical drawing; heights are approximations -- verify before printing.",
     // Split height sits above the tallest port opening (the USB stacks top out ~23.4mm), same
     // margin as the 4B.
-    body: { outer: { length: 100, width: 70, height: 30 }, wallThickness: 2, splitHeight: 24 },
+    body: { outer: { length: 115, width: 70, height: 30 }, wallThickness: 2, splitHeight: 24 },
     boardMount: PI_FULL_SIZE_MOUNT,
     // Front-edge centerlines (from the board's left edge): micro-USB power 10.6, HDMI 32.0,
     // audio/composite 53.5. Right-edge centerlines (from the board's front edge): Ethernet 10.25,
@@ -136,7 +142,7 @@ export const BOARD_PRESETS: BoardPreset[] = [
       'Fits the 85x56mm 4B with the official mounting pattern AND its full IO layout cut into the walls: USB-C, 2x micro-HDMI, audio jack, 2x USB stacks, Ethernet, microSD slot. Port centerlines from the official drawing; heights are approximations — verify before printing.',
     // Split height sits above the tallest port opening (the USB stacks top out ~23.5mm) so every
     // cutout lands cleanly in the base rather than straddling the lid seam.
-    body: { outer: { length: 100, width: 70, height: 30 }, wallThickness: 2, splitHeight: 24 },
+    body: { outer: { length: 115, width: 70, height: 30 }, wallThickness: 2, splitHeight: 24 },
     boardMount: PI_FULL_SIZE_MOUNT,
     // Front-edge centerlines (from the board's left edge): USB-C 11.2, HDMI0 26.0, HDMI1 39.5,
     // audio 54.0. Right-edge centerlines (from the board's front edge): USB2 9.0, USB3 27.0,
@@ -159,7 +165,7 @@ export const BOARD_PRESETS: BoardPreset[] = [
       "Same 85x56mm board footprint as the 3B/4B, sized a bit taller to leave headroom for the official active cooler. Includes the official mounting pattern AND its own IO layout: USB-C power, 2x micro-HDMI, 2x USB dual-stack, Ethernet, underside microSD -- the 3.5mm audio jack was removed on the Pi 5, so unlike the 4B there is no audio cutout here. Same Ethernet-nearest-front port order as the 3B (not the 4B's order). Port centerlines from the official mechanical drawing, which also gives real connector-height side views for USB-C/micro-HDMI; heights are approximations elsewhere -- verify before printing.",
     // Split height sits above the tallest port opening (the USB stacks top out ~23.4mm), same
     // margin as the 3B/4B.
-    body: { outer: { length: 100, width: 70, height: 35 }, wallThickness: 2, splitHeight: 24 },
+    body: { outer: { length: 115, width: 70, height: 35 }, wallThickness: 2, splitHeight: 24 },
     boardMount: PI_FULL_SIZE_MOUNT,
     // Front-edge centerlines (from the board's left edge): USB-C 11.2, HDMI0 25.8, HDMI1 39.2.
     // Right-edge centerlines (from the board's front edge): Ethernet 10.2, USB dual-stack #1 29.1,
@@ -180,7 +186,7 @@ export const BOARD_PRESETS: BoardPreset[] = [
     label: 'Raspberry Pi + HAT Stack',
     notes:
       "Extra-tall variant of the Pi 3/4/5 footprint to clear a stacked HAT board on the 40-pin GPIO header (header + HAT + standoffs). Includes the official mounting pattern and inherits the 4B's IO layout (USB-C, 2x micro-HDMI, audio jack, 2x USB dual-stack, Ethernet, underside microSD) -- swap the IO list by hand if you're stacking on a 3B or 5 instead, since their port arrangements differ.",
-    body: { outer: { length: 100, width: 70, height: 45 }, wallThickness: 2, splitHeight: 24 },
+    body: { outer: { length: 115, width: 70, height: 45 }, wallThickness: 2, splitHeight: 24 },
     boardMount: PI_FULL_SIZE_MOUNT,
     io: [
       { connectorId: 'usb-c-panel', face: 'front', alongMm: -31.3, aboveBoardMm: 1.6 },
@@ -198,7 +204,7 @@ export const BOARD_PRESETS: BoardPreset[] = [
     label: 'Raspberry Pi Pico (/W/2)',
     notes:
       'Fits the 51x21mm board with the official mounting pattern and its one port: a micro-USB centered on the short edge. Datasheet-confirmed 1mm PCB thickness (thinner than most boards this size).',
-    body: { outer: { length: 65, width: 35, height: 18 }, wallThickness: 2, splitHeight: 12 },
+    body: { outer: { length: 81, width: 35, height: 18 }, wallThickness: 2, splitHeight: 12 },
     boardMount: PICO_MOUNT,
     // The Pico's USB is centered (y=0) on a short edge, per the official datasheet's Figure 3.
     io: [{ connectorId: 'usb-micro-b', face: 'left', alongMm: 0, aboveBoardMm: 1.5 }],
@@ -208,7 +214,7 @@ export const BOARD_PRESETS: BoardPreset[] = [
     label: 'Arduino Uno R3',
     notes:
       'Fits the 68.6x53.4mm board with the official mounting pattern and its two ports: USB-B and the DC barrel jack, both on the same short edge. Port positions sourced from the official Eagle CAD board files, cross-checked against the datasheet drawing.',
-    body: { outer: { length: 85, width: 68, height: 35 }, wallThickness: 2, splitHeight: 22 },
+    body: { outer: { length: 99, width: 68, height: 35 }, wallThickness: 2, splitHeight: 22 },
     boardMount: ARDUINO_UNO_MOUNT,
     // Left-edge centerlines (from board center, Y axis): USB-B -11.43, DC jack +18.29.
     io: [
@@ -221,7 +227,7 @@ export const BOARD_PRESETS: BoardPreset[] = [
     label: 'Arduino Mega 2560',
     notes:
       'Fits the 101.6x53.34mm board with the official mounting pattern and its two ports: USB-B and the DC barrel jack, in the same corner layout as the Uno (confirmed from the Mega\'s own Eagle CAD file, not assumed identical).',
-    body: { outer: { length: 120, width: 68, height: 35 }, wallThickness: 2, splitHeight: 22 },
+    body: { outer: { length: 132, width: 68, height: 35 }, wallThickness: 2, splitHeight: 22 },
     boardMount: ARDUINO_MEGA_MOUNT,
     // Same Y offsets as the Uno -- board depth is unchanged, only length grew.
     io: [
@@ -234,7 +240,7 @@ export const BOARD_PRESETS: BoardPreset[] = [
     label: 'Adafruit Feather',
     notes:
       'Fits the shared 50.8x22.86mm Feather footprint with its official mounting pattern and its one port: a micro-USB centered on the short edge (some newer Feather variants use USB-C instead -- swap the cutout if yours does).',
-    body: { outer: { length: 65, width: 38, height: 18 }, wallThickness: 2, splitHeight: 13 },
+    body: { outer: { length: 65, width: 53, height: 18 }, wallThickness: 2, splitHeight: 13 },
     boardMount: FEATHER_MOUNT,
     io: [{ connectorId: 'usb-micro-b', face: 'left', alongMm: 0, aboveBoardMm: 1.5 }],
   },
@@ -243,7 +249,7 @@ export const BOARD_PRESETS: BoardPreset[] = [
     label: 'BeagleBone Black',
     notes:
       'Fits the 86.4x54.6mm board with the official (non-corner-symmetric) M3 mounting pattern and its IO layout: DC barrel jack, Mini-USB client, Ethernet on one short edge; USB-A host, micro-HDMI, and the underside microSD slot on the other. Board width has a documentation discrepancy in the official SRM (53.34mm prose vs. 54.61mm in the dimensioned drawing) -- 54.61mm is used here, cross-checked against the mounting-hole symmetry; verify before printing.',
-    body: { outer: { length: 105, width: 75, height: 35 }, wallThickness: 2, splitHeight: 24 },
+    body: { outer: { length: 105, width: 85, height: 35 }, wallThickness: 2, splitHeight: 24 },
     boardMount: BEAGLEBONE_BLACK_MOUNT,
     // Left-edge centerlines (from board center, Y axis): DC jack -17.78, Ethernet +6.985,
     // Mini-USB +16.8275. Right-edge centerlines: USB-A -13.97, micro-HDMI -2.159, microSD +3.955.
@@ -263,7 +269,7 @@ export const BOARD_PRESETS: BoardPreset[] = [
     label: 'Raspberry Pi CM4 IO Board',
     notes:
       'Fits the official 160x90mm CM4 IO Board carrier with its 7-hole mounting pattern (3 primary + 4 HAT-compatible) and edge IO: 2x full-size HDMI, Ethernet, a USB-A dual stack, microSD (CM4 Lite only), the DC barrel power jack, and the micro-USB rpiboot port. Does NOT model the vertical PCIe x1 socket -- that connector mounts perpendicular to the board (like a desktop PCIe slot) and needs its own internal height clearance, not a wall cutout; add manually if you need it. Board thickness and connector heights are unverified approximations -- verify before printing.',
-    body: { outer: { length: 180, width: 105, height: 40 }, wallThickness: 2, splitHeight: 26 },
+    body: { outer: { length: 190, width: 105, height: 40 }, wallThickness: 2, splitHeight: 26 },
     boardMount: CM4_IO_MOUNT,
     // Bottom-edge centerlines (from the board's left edge, per the official drawing's own
     // dimension chain): HDMI0 23.0, HDMI1 48.0, Ethernet 74.0, USB dual-stack 93.0,

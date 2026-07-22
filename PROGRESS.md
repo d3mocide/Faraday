@@ -718,5 +718,41 @@ never-verified Docker build.
   44 tests passing (up from 43). Playwright-verified the USB-C cutout renders on the expected face
   with the expected shape, zero console errors; `tsc -b`, `oxlint`, `npm run build` all clean.
 
+- **2026-07-21 (follow-up 2)**: Fixed a real design bug the repo owner spotted from a screenshot:
+  **every board-mount preset's lid screw bosses overlapped the board itself**, not just the outer
+  walls. `bossPositions()` places corner bosses inset from the *interior cavity* corners, which
+  keeps them clear of the outer wall -- but says nothing about a board-mount sitting in the middle
+  of that same cavity. Since a board-mount's standoffs and the lid's screw bosses are two
+  independent solids that both `.add()` onto the base and both rise from the floor, an overlapping
+  boss still produces a perfectly valid (watertight) mesh -- it's a real-world assembly conflict,
+  not a geometry error, so nothing in the existing test suite could have caught it.
+  - Added a new `presetFeatures.test.ts` check (`bossPositions`/`bossRadiusFor` exported from
+    `csg/primitives.ts` for reuse) that computes, in plain 2D, whether the *default* lid's 4
+    corner bosses (screw-boss, M3, heat-set -- `state/defaultProject.ts`'s actual default, and the
+    worst case of the three screw sizes) clear each boardMount preset's board rectangle by a
+    minimum margin. Ran first to find the damage: **all 11 existing boardMount presets failed**,
+    including Pi 4B/Zero from earlier sessions that this PR never touched -- confirming it wasn't
+    specific to the boards added this session.
+  - Fixed by growing each preset's `body.outer` on whichever axis (length or width) needed the
+    smaller absolute increase to clear the board via that axis alone -- corner bosses are
+    symmetric, so one axis clearing fully is sufficient regardless of the other axis (see the new
+    doc comment on `BoardPreset.boardMount` in `presets/boards.ts`). Typical growth was
+    +10 to +20mm on one dimension; the other dimension was untouched. All 11 presets now pass with
+    a comfortable margin above the bare minimum, not a knife's-edge pass.
+  - Added the second half of the ask -- **adjustable screw spacing**: `ScrewSpec` gained an
+    optional `edgeInset` (mm from the interior wall to each boss center; undefined = the same
+    `bossRadius + 1` default as before, so no behavior changes unless a user touches it).
+    Threaded through `bossPositions()`/`bossPositionsCircular()` and both `applyScrewBossLid*`
+    functions. New "Screw edge inset" field in the Lid & Fasteners card (`InspectorPanel.tsx`)
+    shows the computed default and lets a user pull bosses toward the case's outer edge (or push
+    them further in) by hand -- useful for hand-tuning clearance on a custom board-mount the app
+    has no way to reason about automatically.
+  - Verified with Playwright: "Hidden" lid view + ghost board on the tightest presets (Pi Zero,
+    Pico) now visibly shows all 4 boss cylinders sitting outside the green board outline with real
+    air gaps, versus overlapping before the fix; the new inspector field renders with the correct
+    computed default (5.4mm for the default M3 heat-set screw) and no console errors.
+    `presetFeatures.test.ts` now 55 passing (up from 44, +11 boss-clearance checks); `tsc -b`,
+    `oxlint`, `npm run build` all clean.
+
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->

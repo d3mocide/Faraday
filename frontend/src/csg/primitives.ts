@@ -79,13 +79,19 @@ interface ScrewBossLidParams {
   screw: ScrewSpec;
 }
 
-function bossPositions(
+/** `insetOverride`, if given, replaces the default `bossRadius + 1` gap between the boss center
+ * and the interior cavity wall -- see ScrewSpec.edgeInset. A smaller inset pulls bosses toward
+ * the case's outer edge (and away from a board-mount sitting in the middle of the cavity);
+ * clamped to >= 0 same as the default, since a negative value would push the boss position past
+ * the cavity edge math below expects. */
+export function bossPositions(
   count: ScrewCount,
   halfLength: number,
   halfWidth: number,
   bossRadius: number,
+  insetOverride?: number,
 ): Array<[number, number]> {
-  const inset = bossRadius + 1;
+  const inset = Math.max(insetOverride ?? bossRadius + 1, 0);
   const x = Math.max(halfLength - inset, 0);
   const y = Math.max(halfWidth - inset, 0);
   const corners: Array<[number, number]> = [
@@ -104,8 +110,10 @@ function bossPositionsCircular(
   count: ScrewCount,
   cavityRadius: number,
   bossRadius: number,
+  insetOverride?: number,
 ): Array<[number, number]> {
-  const radius = Math.max(cavityRadius - (bossRadius + 1), 0);
+  const inset = Math.max(insetOverride ?? bossRadius + 1, 0);
+  const radius = Math.max(cavityRadius - inset, 0);
   const positions: Array<[number, number]> = [];
   for (let i = 0; i < count; i++) {
     const theta = (2 * Math.PI * i) / count;
@@ -160,7 +168,7 @@ export function applyScrewBossLidAt(
   return { base: nextBase, lid: nextLid };
 }
 
-function bossRadiusFor(screw: ScrewSpec): number {
+export function bossRadiusFor(screw: ScrewSpec): number {
   const spec = SCREW_HOLE_SPECS[screw.size];
   const pilotDiameter = screw.insertType === 'heat-set' ? spec.heatSetHoleDiameter : spec.selfTapPilotDiameter;
   return bossOuterDiameter(pilotDiameter) / 2;
@@ -174,7 +182,13 @@ export function applyScrewBossLid(
   params: ScrewBossLidParams,
 ): { base: Manifold; lid: Manifold } {
   const { innerLength, innerWidth, splitHeight, outerHeight, screw } = params;
-  const positions = bossPositions(screw.count, innerLength / 2, innerWidth / 2, bossRadiusFor(screw));
+  const positions = bossPositions(
+    screw.count,
+    innerLength / 2,
+    innerWidth / 2,
+    bossRadiusFor(screw),
+    screw.edgeInset,
+  );
   return applyScrewBossLidAt(wasm, base, lid, splitHeight, outerHeight, screw, positions);
 }
 
@@ -193,7 +207,12 @@ export function applyScrewBossLidCylinder(
   params: ScrewBossLidCylinderParams,
 ): { base: Manifold; lid: Manifold } {
   const { innerDiameter, splitHeight, outerHeight, screw } = params;
-  const positions = bossPositionsCircular(screw.count, innerDiameter / 2, bossRadiusFor(screw));
+  const positions = bossPositionsCircular(
+    screw.count,
+    innerDiameter / 2,
+    bossRadiusFor(screw),
+    screw.edgeInset,
+  );
   return applyScrewBossLidAt(wasm, base, lid, splitHeight, outerHeight, screw, positions);
 }
 

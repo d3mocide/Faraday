@@ -747,6 +747,13 @@
   color: var(--text, #e1e4e8);
 }
 
+.field-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin: 2px 0 4px;
+  line-height: 1.4;
+}
+
 .inspector-subgroup {
   margin-top: 6px;
   padding-top: 8px;
