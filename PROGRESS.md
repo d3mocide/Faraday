@@ -722,6 +722,80 @@ way to tell a pad is doing nothing.
   `defaultOpen={findings.length > 0}`, and `SectionCard` reads `defaultOpen` exactly once — so the
   card stayed collapsed when the first finding appeared. It's always open now.
 
+## Panel retention + mount blending (2026-08-11 session, fifth round)
+
+Two "it looks right but wouldn't work" reports from the repo owner, both about the multi-part work
+that landed in PR #13.
+
+### Slide-in plates had nothing holding them in (`PanelSpec.retainLip`)
+
+The report: *"I don't think that these will actually attach to the case at all, there is nothing
+holding the yellow sides into the case."* It was correct, and a sweep test confirmed it — translate
+the plate straight out along its own normal and it never meets the base. The first cut of
+`panels.ts` cut the channel all the way to the **outer** surface of the neighbouring walls and made
+the plate flush with them, so there was no material outboard of the plate at all. The groove only
+constrained the plate sideways; nothing stopped it sliding back out the way it went in.
+
+- **`PanelSpec.retainLip`** (mm, default 1) is how much of each adjacent wall is left standing
+  proud of the plate at the plate's two ends. `panelChannelCut()` now cuts a **window** (full depth
+  across the cavity, so the opening is real) plus **lipped end slots** that stop short of the outer
+  face by the lip; `panelPlate()` rebates the plate's own ends by `retainLip + clearance/2` so the
+  thin tongue slides behind the lip and the thick middle fills the window. The plate now captures
+  in both directions and only comes out by lifting the lid.
+- `panelBounds()` was rewritten to return a per-end `PanelEnd { sign, bound, cavityEdge, hasWall }`
+  instead of a single span, because the two ends are not symmetric: an end that abuts another
+  *panel* has no wall to lip against, so it stays flush there.
+- Everything is clamped in `panelMetrics()`: `retainLip ≤ thickness - 0.8`, so a plate can never be
+  rebated down to nothing. A plate too thin to hold a lip *and* still hold together (< ~1.8mm)
+  gets a design-check finding rather than silently losing its retention — unless the user set
+  `retainLip: 0` themselves, which is an opt-out, not a mistake.
+- The lid's capture pocket calls `panelChannelCut(..., withLip = false)`. The lid needs the plain
+  full-depth window; lipping it there would trap the plate under the lid and make assembly
+  impossible.
+
+### External mounts now blend into the wall (`ExternalMountSpec.gusset`)
+
+The report: mounts *"look weird and don't smoothly connect to the body of the case at all"*, plus a
+sketch (in green) of a sloped connector under a hanging screw column. `decompose()` confirmed the
+mounts were genuinely welded to the wall — one connected component per part — so this was joint
+*quality*, not connectivity: a slab meeting a wall at a hard 90° is both ugly and the weakest
+possible joint in a printed part, since the layer lines run straight across it.
+
+- **`ExternalMountSpec.gusset`** (mm, defaults to `min(protrusion * 0.45, 4)`, clamped to
+  `protrusion - 0.5`) adds a triangular brace where the mount meets the wall. Flanges get
+  **two webs, one at each end of the ear**, with the middle left clear so a screwdriver and washer
+  still reach the slot; bosses get a **conical collar** instead, which is the round-section
+  equivalent and stays symmetric under any rotation.
+- The brace goes on whichever side has room: `roomBelow = mountZ - wallThickness/2`, so a low ear
+  braces *upward* rather than through the floor. The sign is negated on the face path only — the
+  two build paths differ in whether natural +Z survives as world +Z (the face path applies
+  `rotate(90,0,0)` twice, the corner path doesn't), and getting this backwards is exactly the bug
+  the brace-side test caught.
+- Polygon winding is normalised through a small `polygonCcw()` helper before extruding. Manifold
+  will happily extrude a clockwise cross-section into an inside-out solid, and a union with one is
+  silently wrong rather than an error.
+
+### Hanging screw columns get a sloped foot
+
+Matching the owner's green sketch: a column with `ScrewSpec.columnHeight` set hangs from the lid
+seam and used to stop dead in mid-air with a flat, unsupported face. `columnFoot()` in
+`primitives.ts` now caps it with a 45° taper — a cone for round columns, an extruded-with-scale
+frustum for square ones — sized `min(size/2 - 0.8, distanceToFloor, 5)` and skipped entirely below
+0.6mm, where it would be smaller than a couple of layers and not worth the facets. It reads as a
+deliberate detail rather than a truncation, and gives the overhang somewhere to start.
+
+### Verification
+
+- 121 vitest tests passing (was 112). The retention tests are the interesting ones: a **sweep test**
+  (translate the plate along its normal, intersect with the base, assert it hits material) is what
+  pins the actual complaint — watertightness can't see it, and neither could a bounding-box check.
+  Plus: the lip appearing/disappearing with the setting, a panel abutting another panel staying
+  flush at that end, brace webs present above *and* below depending on room, and a column foot
+  narrowing toward the floor.
+- Playwright: a demo case with a low flange ear and a mid-wall boss, rendered with the gusset off
+  and on, shows the webs and the collar; hanging round and square columns render with visible
+  tapered feet. No console errors, and the CM4 preset still passes its own design checks.
+
 ## Next steps (suggested order)
 
 All phases in DESIGN.md §13 (0 through 5) are implemented and verified, plus the 2026-07-12
@@ -733,9 +807,11 @@ board mounts). Remaining ideas, roughly by value for radio projects:
 - Case-mounting features: pole/mast clamp bosses (still nothing anywhere in the app); zip-tie
   anchors. Keyhole wall hangers, external flange tabs and corner ears landed 2026-08-11 as the
   `external-mount` feature; cable glands (PG7/PG9/PG11) landed as library entries 2026-07-20.
-- Panels: no per-panel thickness/groove override yet (one `PanelSpec` covers every selected face),
-  and a panel can't yet be split by the lid seam — a face is either a plate up to the split or it
-  isn't. Neither blocked anything so far.
+- Panels: no per-panel thickness/groove/lip override yet (one `PanelSpec` covers every selected
+  face), and a panel can't yet be split by the lid seam — a face is either a plate up to the split
+  or it isn't. Retention is a plain rebated lip (2026-08-11); a detented or latching plate that
+  clicks home, rather than one held by the lid, is the obvious next step if plates ever need to
+  come out without opening the case.
 - Fans: no finger-guard-only mode (grille without screw holes) and no rectangular blower support.
   The fan's body *is* now drawn as a ghost (2026-08-11), so clearance under it can be judged by eye.
 - Design checks cover support pads only so far (see the 2026-08-11 section). The obvious next rules,
@@ -1095,3 +1171,15 @@ editing old entries, so this stays a readable history. -->
   conservative support-pad rules and an assertion that every shipped preset stays check-clean.
   112 tests passing (was 93); browser-verified, including one UI bug found there (the Checks card
   stayed collapsed when its first finding appeared, because SectionCard reads defaultOpen once).
+
+- **2026-08-11**: Two fixes from the repo owner's review of the merged PR #13 — see the "Panel
+  retention + mount blending" section above. (1) Slide-in plates genuinely had nothing holding
+  them in: the channel was cut to the walls' outer surface and the plate sat flush, so it could be
+  pulled straight back out. New `PanelSpec.retainLip` (default 1mm) leaves each adjacent wall
+  standing proud at the plate's ends and rebates the plate to slide behind it, with a design-check
+  rule for plates too thin to hold a lip. Caught and pinned by a sweep test — watertightness
+  cannot see this class of defect. (2) External mounts met the wall at a hard 90°; new
+  `ExternalMountSpec.gusset` adds triangular webs at a flange's two ends (middle left clear for a
+  driver) or a conical collar on a boss, on whichever side has room. Plus `columnFoot()`, giving a
+  hanging screw column the 45° sloped foot the owner sketched in green instead of a flat face in
+  mid-air. 121 tests passing (was 112); browser-verified with the gusset off and on.

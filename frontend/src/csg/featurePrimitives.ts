@@ -420,13 +420,65 @@ function flangeHoleCrossSection(
   return head.add(slot);
 }
 
+/** A polygon, wound counter-clockwise whichever order the points arrive in -- a clockwise
+ * SimplePolygon extrudes into an inside-out solid. */
+function polygonCcw(wasm: ManifoldToplevel, points: Array<[number, number]>): CrossSection {
+  let area = 0;
+  for (let i = 0; i < points.length; i++) {
+    const [x1, y1] = points[i];
+    const [x2, y2] = points[(i + 1) % points.length];
+    area += x1 * y2 - x2 * y1;
+  }
+  return new wasm.CrossSection(area < 0 ? [...points].reverse() : points);
+}
+
+/**
+ * Triangular webs bracing a flange back into the wall: one at each end of the ear, leaving the
+ * middle clear so a screwdriver can still reach the hole. Built in the flange's natural frame
+ * (X across the ear, Y outward, Z through its thickness) -- the triangle lives in the (Y, Z) plane
+ * and is swept along X, hence the axis-cycling rotation at the end.
+ */
+function flangeWebs(
+  wasm: ManifoldToplevel,
+  spec: ExternalMountSpec,
+  embed: number,
+  size: number,
+  side: 1 | -1,
+): Manifold | null {
+  const width = Math.max(spec.width, 1);
+  const halfThickness = Math.max(spec.thickness, 0.8) / 2;
+  const webWidth = Math.min(Math.max(width * 0.22, 1.6), 4);
+  if (size < 0.5 || webWidth * 2 >= width) return null;
+
+  // Right angle against the wall, hypotenuse running from the plate's face back to the wall at 45
+  // degrees. Extends `embed` into the wall so it welds rather than just touching.
+  const triangle = polygonCcw(wasm, [
+    [-embed, side * halfThickness],
+    [size, side * halfThickness],
+    [-embed, side * (halfThickness + size)],
+  ])
+    .extrude(webWidth)
+    .translate(0, 0, -webWidth / 2)
+    // Solid (x, y, z) -> natural (z, x, y): the sweep lands on X, the triangle on (Y, Z).
+    .rotate(90, 0, 0)
+    .rotate(0, 0, 90);
+
+  const offset = width / 2 - webWidth / 2;
+  return triangle.translate(-offset, 0, 0).add(triangle.translate(offset, 0, 0));
+}
+
 /** Flat ear standing out from a face (wall-mount tab), built in its own natural frame: X across the
  * ear, Y outward, Z through the plate's thickness. `embed` sinks its root into the wall so the
- * union always welds instead of just touching. */
+ * union always welds instead of just touching. `webSide` is which way along *natural Z* the braces
+ * go -- which is not always world-up: the face path rotates the natural frame twice on its way out,
+ * landing natural +Z on world -Z, while the corner path leaves it alone. Both call sites resolve
+ * that themselves, since only they know which way is up. */
 function flangeSolid(
   wasm: ManifoldToplevel,
   spec: ExternalMountSpec,
   wallThickness: number,
+  gusset: number,
+  webSide: 1 | -1,
 ): Manifold {
   const width = Math.max(spec.width, 1);
   const protrusion = Math.max(spec.protrusion, 1);
@@ -439,8 +491,13 @@ function flangeSolid(
     0,
   );
   const hole = flangeHoleCrossSection(wasm, spec, protrusion / 2);
-  if (!hole) return plate;
-  return plate.subtract(hole.extrude(thickness + 2, undefined, undefined, undefined, true));
+  // Webs are added after the hole is bored, so the bore (which runs a little past both faces)
+  // can't take a bite out of them.
+  const drilled = hole
+    ? plate.subtract(hole.extrude(thickness + 2, undefined, undefined, undefined, true))
+    : plate;
+  const webs = flangeWebs(wasm, spec, embed, gusset, webSide);
+  return webs ? drilled.add(webs) : drilled;
 }
 
 /** Cylindrical post along the face's outward normal -- an external standoff: a foot under the base,
@@ -449,11 +506,26 @@ function bossSolid(
   wasm: ManifoldToplevel,
   spec: ExternalMountSpec,
   wallThickness: number,
+  gusset: number,
 ): Manifold {
   const diameter = Math.max(spec.width, 1);
   const protrusion = Math.max(spec.protrusion, 1);
   const embed = Math.max(wallThickness, 0.4);
-  const post = cylinderZ(wasm, diameter, protrusion + embed, -embed);
+  let post = cylinderZ(wasm, diameter, protrusion + embed, -embed);
+
+  // Conical collar at the root: a 45-degree flare from the wall up to the post's own diameter, so
+  // the joint has some meat in it instead of being a sharp step.
+  if (gusset >= 0.5) {
+    post = post.add(
+      wasm.Manifold.cylinder(
+        gusset + embed,
+        diameter / 2 + gusset + embed,
+        diameter / 2,
+        0,
+        false,
+      ).translate(0, 0, -embed),
+    );
+  }
   if (spec.hole === 'none') return post;
 
   const holeDiameter = Math.min(Math.max(spec.holeDiameter, 0.5), diameter - 0.8);
@@ -462,6 +534,14 @@ function bossSolid(
   const depth = spec.holeDepth !== undefined ? Math.max(spec.holeDepth, 0.5) : protrusion + embed + 1;
   const bore = cylinderZ(wasm, holeDiameter, depth + 0.5, protrusion - depth);
   return post.subtract(bore);
+}
+
+/** How big the blend where a mount meets the wall should be. Defaults to something proportionate
+ * to the mount and always stops short of its tip, so the brace never swallows the whole thing. */
+function gussetSize(spec: ExternalMountSpec): number {
+  const protrusion = Math.max(spec.protrusion, 1);
+  const requested = spec.gusset ?? Math.min(protrusion * 0.45, 4);
+  return Math.min(Math.max(requested, 0), protrusion - 0.5);
 }
 
 /** Builds an external mount (flange ear or boss), positioned and oriented on its face. Unlike every
@@ -477,6 +557,14 @@ export function buildExternalMount(
   const spec = feature.mount;
   if (!spec) throw new Error('external-mount feature is missing its mount spec');
 
+  const gusset = gussetSize(spec);
+  const [mountX, mountY, mountZ] = faceFrame(feature.face, geom).toWorld(feature.u, feature.v);
+  // Brace below the mount where the case has room, above where it doesn't -- a tab down at the
+  // floor line (the common wall-mount position) has nothing underneath to brace against. This is
+  // in world terms; each path below maps it onto whichever way its own frame points.
+  const roomBelow = mountZ - Math.max(spec.thickness, 0.8) / 2;
+  const webSide: 1 | -1 = roomBelow >= gusset + 0.5 ? -1 : 1;
+
   const corner = cornerAnchor(feature, geom);
   if (corner) {
     // A corner ear is already in the orientation it needs: the natural frame's +Y is "outward" and
@@ -484,19 +572,22 @@ export function buildExternalMount(
     // reaches past the nominal corner point by the amount a rounded/chamfered corner cuts away
     // (r*(sqrt2 - 1) along the diagonal), so it still welds into solid material.
     const embed = wallThickness + cornerRadius * (Math.SQRT2 - 1) + 0.2;
+    // Corner ears keep the natural frame's Z as world Z, so "above" means what it says.
     const solid =
-      spec.style === 'boss' ? bossSolid(wasm, spec, embed).rotate(-90, 0, 0) : flangeSolid(wasm, spec, embed);
+      spec.style === 'boss'
+        ? bossSolid(wasm, spec, embed, gusset).rotate(-90, 0, 0)
+        : flangeSolid(wasm, spec, embed, gusset, webSide);
     const yaw = corner.angleDeg - 90 + (feature.rotationDeg ?? 0);
     return solid.rotate(0, 0, yaw).translate(corner.x, corner.y, corner.z);
   }
 
   const local =
     spec.style === 'boss'
-      ? bossSolid(wasm, spec, wallThickness)
-      : flangeSolid(wasm, spec, wallThickness).rotate(90, 0, 0);
+      ? bossSolid(wasm, spec, wallThickness, gusset)
+      // The natural->local rotation below puts natural +Z on -v, so the brace side inverts here.
+      : flangeSolid(wasm, spec, wallThickness, gusset, (-webSide) as 1 | -1).rotate(90, 0, 0);
   const spun = feature.rotationDeg ? local.rotate(0, 0, feature.rotationDeg) : local;
-  const [x, y, z] = faceFrame(feature.face, geom).toWorld(feature.u, feature.v);
-  return orientOutward(spun, feature.face, feature.u).translate(x, y, z);
+  return orientOutward(spun, feature.face, feature.u).translate(mountX, mountY, mountZ);
 }
 
 

@@ -73,6 +73,7 @@ interface ProjectStore {
   setPanelFitClearance: (value: number) => void;
   setPanelGrooveDepth: (value: number) => void;
   setPanelCaptureInLid: (value: boolean) => void;
+  setPanelRetainLip: (value: number) => void;
   addFeature: (feature: Feature) => void;
   updateFeature: (id: string, patch: Partial<Feature>) => void;
   removeFeature: (id: string) => void;
@@ -265,6 +266,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
 
     setPanelCaptureInLid: (value) =>
       mutate(patchPanels((panels) => ({ ...panels, captureInLid: value }))),
+
+    setPanelRetainLip: (value) => mutate(patchPanels((panels) => ({ ...panels, retainLip: value }))),
 
     addFeature: (feature) => mutate((p) => ({ ...p, features: [...p.features, feature] })),
 

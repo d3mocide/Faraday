@@ -27,16 +27,24 @@ function neighbourFaces(face: PanelFace): [PanelFace, PanelFace] {
   return face === 'left' || face === 'right' ? ['front', 'back'] : ['left', 'right'];
 }
 
+/** One end of a panel: where its channel stops, and whether there's a wall there to grip it. */
+interface PanelEnd {
+  sign: 1 | -1;
+  /** Across-axis coordinate the channel reaches (signed). */
+  bound: number;
+  /** Across-axis coordinate of the adjacent wall's inner face -- where its grip starts (signed). */
+  cavityEdge: number;
+  /** False when the neighbouring face is itself a panel: no wall there, so nothing to grip with. */
+  hasWall: boolean;
+}
+
 interface PanelBounds {
   /** Through-wall axis: 'x' for left/right panels, 'y' for front/back. */
   axis: 'x' | 'y';
   /** Outer surface coordinate on that axis, and the sign pointing outward. */
   outer: number;
   sign: 1 | -1;
-  /** Half extent of the in-plane (across) axis. */
-  halfAcross: number;
-  /** Across-axis bounds of the channel, negative end first. */
-  channelAcross: [number, number];
+  ends: [PanelEnd, PanelEnd];
 }
 
 /**
@@ -54,17 +62,24 @@ function panelBounds(dims: PanelBoxDims, metrics: PanelMetrics, face: PanelFace)
   // wall to bite into, so it stops short of the neighbouring channel instead -- and far enough
   // short that the corner post left between the two plates is solid material rather than a sliver
   // of the body's rounded/chamfered corner.
-  const endBound = (neighbour: PanelFace): number =>
-    metrics.faces.includes(neighbour)
-      ? acrossHalf - Math.max(metrics.thickness + metrics.clearance, metrics.cornerInset + 0.6)
-      : acrossHalf - metrics.wallThickness + metrics.grooveDepth;
+  const end = (neighbour: PanelFace, endSign: 1 | -1): PanelEnd => {
+    const hasWall = !metrics.faces.includes(neighbour);
+    const bound = hasWall
+      ? acrossHalf - metrics.wallThickness + metrics.grooveDepth
+      : acrossHalf - Math.max(metrics.thickness + metrics.clearance, metrics.cornerInset + 0.6);
+    return {
+      sign: endSign,
+      bound: endSign * bound,
+      cavityEdge: endSign * (acrossHalf - metrics.wallThickness),
+      hasWall,
+    };
+  };
 
   return {
     axis: face === 'left' || face === 'right' ? 'x' : 'y',
     outer: sign * outerHalf,
     sign,
-    halfAcross: acrossHalf,
-    channelAcross: [-endBound(negFace), endBound(posFace)],
+    ends: [end(negFace, -1), end(posFace, 1)],
   };
 }
 
@@ -75,6 +90,12 @@ const OVERCUT = 1; // mm the channel cut runs past the outer surface, into air
  * with lid capture on, from the lid's underside as a shallow pocket. Cutting this *after* the lid
  * mating geometry is what guarantees the plate always has a clear slot to slide down, even where a
  * screw boss or friction lip would otherwise intrude.
+ *
+ * It's two shapes, not one. Across the cavity the wall is removed outright, so the plate shows and
+ * its port cutouts open to the outside. At the ends, where the adjacent walls are, the cut stops
+ * `retainLip` short of the outer surface -- that leftover sliver of wall is what the plate's
+ * rebated ends slide down behind, and the only thing stopping the plate falling straight back out.
+ * `withLip` is false for the lid's capture pocket, which has no business growing a fragile tab.
  */
 export function panelChannelCut(
   wasm: ManifoldToplevel,
@@ -83,22 +104,39 @@ export function panelChannelCut(
   face: PanelFace,
   z0: number,
   z1: number,
+  withLip = true,
 ): Manifold {
   const b = panelBounds(dims, metrics, face);
-  const through = sorted(
-    b.outer + b.sign * OVERCUT,
-    b.outer - b.sign * (metrics.thickness + metrics.clearance),
+  const inner = b.outer - b.sign * (metrics.thickness + metrics.clearance);
+  const fullDepth = sorted(b.outer + b.sign * OVERCUT, inner);
+  const lip = withLip ? metrics.retainLip : 0;
+  const slotDepth = sorted(b.outer - b.sign * lip, inner);
+
+  const box = (through: [number, number], across: [number, number]) =>
+    b.axis === 'x'
+      ? boxBetween(wasm, through, across, [z0, z1])
+      : boxBetween(wasm, across, through, [z0, z1]);
+
+  // The window spans wall to wall; each lipped end then reaches on into its wall's groove.
+  const windowAcross = sorted(
+    b.ends[0].hasWall && lip > 0 ? b.ends[0].cavityEdge : b.ends[0].bound,
+    b.ends[1].hasWall && lip > 0 ? b.ends[1].cavityEdge : b.ends[1].bound,
   );
-  const across: [number, number] = b.channelAcross;
-  return b.axis === 'x'
-    ? boxBetween(wasm, through, across, [z0, z1])
-    : boxBetween(wasm, across, through, [z0, z1]);
+  let cut = box(fullDepth, windowAcross);
+  if (lip <= 0) return cut;
+
+  for (const end of b.ends) {
+    if (!end.hasWall) continue;
+    cut = cut.add(box(slotDepth, sorted(end.cavityEdge, end.bound)));
+  }
+  return cut;
 }
 
 /**
  * The plate itself: flush with the case's outer surface, sized to the channel minus the fit
- * clearance. Trimmed against the outer shell so its ends follow the body's corner style instead of
- * poking out past a rounded or chamfered corner.
+ * clearance, with its ends rebated by `retainLip` so they tuck in behind the wall lips the channel
+ * cut left standing. Trimmed against the outer shell so its ends follow the body's corner style
+ * instead of poking out past a rounded or chamfered corner.
  */
 export function panelPlate(
   wasm: ManifoldToplevel,
@@ -108,14 +146,35 @@ export function panelPlate(
   outerShell: Manifold,
 ): Manifold {
   const b = panelBounds(dims, metrics, face);
-  const through = sorted(b.outer, b.outer - b.sign * metrics.thickness);
   const half = metrics.clearance / 2;
-  const across: [number, number] = [b.channelAcross[0] + half, b.channelAcross[1] - half];
   const z: [number, number] = [metrics.plateBottomZ, metrics.plateTopZ];
-  const plate =
+
+  const box = (through: [number, number], across: [number, number]) =>
     b.axis === 'x'
       ? boxBetween(wasm, through, across, z)
       : boxBetween(wasm, across, through, z);
+
+  const across: [number, number] = sorted(b.ends[0].bound + half, b.ends[1].bound - half);
+  let plate = box(sorted(b.outer, b.outer - b.sign * metrics.thickness), across);
+
+  // Rebate each gripped end: shave `retainLip` (plus half the fit clearance, so it still slides)
+  // off the outer face over the band the wall's lip covers. The step starts a whisker inboard of
+  // the wall so the full-thickness part of the plate can never foul the lip.
+  if (metrics.retainLip > 0) {
+    const rebateDepth = sorted(
+      b.outer + b.sign * OVERCUT,
+      b.outer - b.sign * (metrics.retainLip + half),
+    );
+    for (const end of b.ends) {
+      if (!end.hasWall) continue;
+      const rebateAcross = sorted(
+        end.cavityEdge - end.sign * 0.2,
+        end.bound + end.sign * OVERCUT,
+      );
+      plate = plate.subtract(box(rebateDepth, rebateAcross));
+    }
+  }
+
   return plate.intersect(outerShell);
 }
 

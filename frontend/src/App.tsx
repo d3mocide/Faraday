@@ -41,7 +41,7 @@ function App() {
   // inspector's Checks card and the viewport's flagged markers, so the two can't disagree.
   const findings = useMemo(() => runDesignChecks(project), [project]);
   const flaggedFeatureIds = useMemo(
-    () => new Set(findings.map((f) => f.featureId)),
+    () => new Set(findings.flatMap((f) => (f.featureId ? [f.featureId] : []))),
     [findings],
   );
 

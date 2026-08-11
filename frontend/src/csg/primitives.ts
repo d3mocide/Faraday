@@ -172,6 +172,33 @@ function columnSolid(
     : cylinderZ(wasm, size, height, zBottom);
 }
 
+/**
+ * The sloped foot under a column that doesn't reach the floor: a 45-degree taper off its lower end,
+ * blending it back into the wall it's welded to instead of leaving it stopping dead in mid-air. It
+ * is what makes a shortened column look deliberate, and the slope prints without support. Returns
+ * null for a full-height column, which stands on the floor and needs nothing.
+ */
+function columnFoot(
+  wasm: ManifoldToplevel,
+  shape: ScrewColumnShape,
+  size: number,
+  zBottom: number,
+): Manifold | null {
+  const run = Math.min(size / 2 - 0.8, zBottom, 5);
+  if (run < 0.6) return null;
+  if (shape === 'square') {
+    const small = size - 2 * run;
+    return wasm.CrossSection.square([small, small], true)
+      .extrude(run, 0, 0, [size / small, size / small])
+      .translate(0, 0, zBottom - run);
+  }
+  return wasm.Manifold.cylinder(run, size / 2 - run, size / 2, 0, false).translate(
+    0,
+    0,
+    zBottom - run,
+  );
+}
+
 /** How much of the base's height a column occupies: the full floor-to-seam span by default, or a
  * shorter post hanging down from the seam when ScrewSpec.columnHeight asks for one. */
 export function columnSpan(
@@ -223,10 +250,12 @@ export function applyScrewBossLidAt(
 
   let nextBase = base;
   let nextLid = lid;
+  const foot = columnFoot(wasm, shape, outerDiameter, zBottom);
   for (const [x, y] of positions) {
     nextBase = nextBase.add(
       columnSolid(wasm, shape, outerDiameter, height, zBottom).translate(x, y, 0),
     );
+    if (foot) nextBase = nextBase.add(foot.translate(x, y, 0));
 
     const pilotHole = cylinderZ(wasm, pilotDiameter, holeDepth, splitHeight - holeDepth).translate(
       x,
@@ -295,9 +324,11 @@ function applyExteriorScrewBossLidAt(
 
   let nextBase = base;
   let nextLid = lid;
+  const foot = columnFoot(wasm, shape, outerDiameter, zBottom);
   for (const [x, y] of positions) {
+    const column = columnSolid(wasm, shape, outerDiameter, height, zBottom).translate(x, y, 0);
     nextBase = nextBase
-      .add(columnSolid(wasm, shape, outerDiameter, height, zBottom).translate(x, y, 0))
+      .add(foot ? column.add(foot.translate(x, y, 0)) : column)
       .subtract(
         cylinderZ(wasm, pilotDiameter, holeDepth, splitHeight - holeDepth).translate(x, y, 0),
       );
