@@ -94,6 +94,26 @@ export function generateBomCsv(project: EnclosureProject): string {
     });
   }
 
+  // External mounts imply hardware the case itself doesn't provide: a screw (and usually an anchor)
+  // per hole, into whatever the case is being fixed to. Grouped by hole size, like the standoffs.
+  const mountGroups = new Map<string, { quantity: number; diameter: number; hole: string }>();
+  for (const feature of features) {
+    if (feature.type !== 'external-mount' || !feature.mount || feature.mount.hole === 'none') continue;
+    const { holeDiameter, hole } = feature.mount;
+    const key = `${holeDiameter}/${hole}`;
+    const existing = mountGroups.get(key);
+    if (existing) existing.quantity += 1;
+    else mountGroups.set(key, { quantity: 1, diameter: holeDiameter, hole });
+  }
+  for (const { quantity, diameter, hole } of mountGroups.values()) {
+    rows.push({
+      item: 'Mounting screw (case to wall/panel)',
+      quantity,
+      category: 'Hardware',
+      notes: `Through a Ø${diameter}mm ${hole} in an external mount -- add wall anchors to suit the surface`,
+    });
+  }
+
   const header = ['Item', 'Quantity', 'Category', 'Notes'];
   const lines = [header, ...rows.map((r) => [r.item, String(r.quantity), r.category, r.notes])];
   return lines.map((cols) => cols.map(csvEscape).join(',')).join('\n');

@@ -105,6 +105,8 @@ export function generateEnclosure(
       ({ base, lid } = applyScrewBossLid(wasm, base, lid, {
         innerLength,
         innerWidth,
+        outerLength: body.outer.length,
+        outerWidth: body.outer.width,
         splitHeight,
         outerHeight: height,
         screw: body.lid.screw,
@@ -187,9 +189,9 @@ export function generateEnclosure(
       base = base.subtract(
         panelChannelCut(wasm, dims, metrics, face, metrics.channelBottomZ, splitHeight + 1),
       );
-      if (metrics.captureInLid) {
+      if (metrics.lidCaptureDepth > 0) {
         lid = lid.subtract(
-          panelChannelCut(wasm, dims, metrics, face, splitHeight, splitHeight + metrics.grooveDepth),
+          panelChannelCut(wasm, dims, metrics, face, splitHeight, splitHeight + metrics.lidCaptureDepth),
         );
       }
       panels.set(face, panelPlate(wasm, dims, metrics, face, outerShape));

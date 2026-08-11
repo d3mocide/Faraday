@@ -1,7 +1,7 @@
 import type { ArmedFeatureTemplate } from '../components/FeaturePalette';
 import { findBoardMountPreset } from '../presets/boardMounts';
-import type { BoardPreset } from '../presets/boards';
-import type { EnclosureProject, Face, Feature } from '../types/project';
+import type { BoardIoCutout, BoardPreset } from '../presets/boards';
+import type { EnclosureProject, Face, Feature, FeatureType } from '../types/project';
 
 /** The classic 4-corner mounting pattern: holes inset from each board corner by `inset` mm. */
 export function cornerHolePattern(
@@ -52,19 +52,34 @@ export function buildPresetFeatures(preset: BoardPreset): Feature[] {
     ? preset.body.wallThickness + preset.boardMount.standoff.height + preset.boardMount.boardThickness
     : preset.body.wallThickness;
   for (const port of preset.io ?? []) {
-    const uExtent = port.face === 'left' || port.face === 'right' ? width : length;
+    // Horizontal faces have two in-plane axes and no "height above the board" to speak of, so they
+    // read alongMm/acrossMm as X/Y from the board center instead.
+    const horizontal = port.face === 'top' || port.face === 'bottom';
+    const uExtent = horizontal || port.face === 'front' || port.face === 'back' ? length : width;
     features.push({
       id: crypto.randomUUID(),
-      type: port.connectorId ? 'connector-cutout' : 'custom-hole',
+      type: presetFeatureType(port),
       face: port.face,
       u: 0.5 + port.alongMm / uExtent,
-      v: (boardTopZ + port.aboveBoardMm) / height,
-      rotationDeg: 0,
+      v: horizontal
+        ? 0.5 + (port.acrossMm ?? 0) / width
+        : (boardTopZ + port.aboveBoardMm) / height,
+      rotationDeg: port.rotationDeg ?? 0,
       connectorId: port.connectorId,
+      connectorOverride: port.override ? structuredClone(port.override) : undefined,
       custom: port.custom ? structuredClone(port.custom) : undefined,
+      vent: port.vent ? structuredClone(port.vent) : undefined,
+      mount: port.mount ? structuredClone(port.mount) : undefined,
     });
   }
   return features;
+}
+
+function presetFeatureType(port: BoardIoCutout): FeatureType {
+  if (port.mount) return 'external-mount';
+  if (port.vent) return 'vent';
+  if (port.connectorId) return 'connector-cutout';
+  return 'custom-hole';
 }
 
 /** Turns an armed palette template plus a viewport click into a placeable Feature. */

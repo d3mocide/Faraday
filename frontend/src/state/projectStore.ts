@@ -11,6 +11,7 @@ import type {
   PanelSpec,
   ScrewCount,
   ScrewInsertType,
+  ScrewPlacement,
   ScrewSize,
   Units,
 } from '../types/project';
@@ -30,6 +31,12 @@ export interface BoardPresetBody {
    * pieces the case prints as and which piece each port cutout lands on, so carrying a previous
    * preset's panels into a new one would silently reshape the new case. */
   panels?: PanelSpec;
+  /** Presets that model a whole case (rather than just sizing a box around a board) can pin the
+   * lid style. Omitted everywhere else, which leaves whatever the user already had. */
+  lidType?: LidType;
+  /** Forced to 'exterior' by presets whose board fills the interior, leaving no floor for corner
+   * bosses -- see ScrewPlacement. */
+  screwPlacement?: ScrewPlacement;
 }
 
 interface ProjectStore {
@@ -50,6 +57,7 @@ interface ProjectStore {
   setScrewInsertType: (insertType: ScrewInsertType) => void;
   setScrewCount: (count: ScrewCount) => void;
   setScrewEdgeInset: (edgeInset: number | undefined) => void;
+  setScrewPlacement: (placement: ScrewPlacement) => void;
   setGasketEnabled: (enabled: boolean) => void;
   setGasketWidth: (value: number) => void;
   setGasketDepth: (value: number) => void;
@@ -189,6 +197,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, edgeInset } } } };
       }),
 
+    setScrewPlacement: (placement) =>
+      mutate((p) => {
+        const screw = p.body.lid.screw ?? defaultScrewSpec();
+        return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, placement } } } };
+      }),
+
     setGasketEnabled: (enabled) =>
       mutate((p) => ({
         ...p,
@@ -275,6 +289,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
             ...p.body.lid,
             splitHeight: preset.splitHeight,
             ...(preset.gasket ? { gasket: preset.gasket } : {}),
+            ...(preset.lidType ? { type: preset.lidType } : {}),
+            ...(preset.screwPlacement
+              ? { screw: { ...(p.body.lid.screw ?? defaultScrewSpec()), placement: preset.screwPlacement } }
+              : {}),
           },
           panels: preset.panels,
         },

@@ -35,7 +35,11 @@ export interface PanelMetrics {
   /** Total slop between plate and channel; half of it lands on each side. */
   clearance: number;
   grooveDepth: number;
-  captureInLid: boolean;
+  /** How deep the lid's own capture pocket actually is. Usually `grooveDepth`, but reduced (or
+   * dropped to 0, meaning "no capture, the plate stops flush with the base rim") when the lid is
+   * too shallow to take the full groove -- cutting past the lid's interior ceiling leaves a
+   * razor-thin ledge there, which is a non-manifold pinch waiting to happen rather than a feature. */
+  lidCaptureDepth: number;
   wallThickness: number;
   /** How far in from a corner the body's own corner treatment reaches (0 for sharp corners) --
    * where two panels meet, their ends have to stop clear of this or the corner post left between
@@ -63,12 +67,18 @@ export function panelMetrics(body: EnclosureBody): PanelMetrics | null {
     Math.max(wallThickness - MIN_PANEL_SKIN, 0.2),
   );
   const channelBottomZ = wallThickness - grooveDepth;
+  // The lid's cavity ceiling: how far the capture pocket can bite up from the seam before it runs
+  // out of skirt to cut.
+  const ceilingZ = body.outer.height - wallThickness;
+  const roomForCapture = ceilingZ - splitHeight - 0.4;
+  const lidCaptureDepth = spec.captureInLid ? Math.min(grooveDepth, Math.max(roomForCapture, 0)) : 0;
+  const captured = lidCaptureDepth >= 0.4;
   return {
     faces: PANEL_FACE_ORDER.filter((f) => spec.faces.includes(f)),
     thickness,
     clearance,
     grooveDepth,
-    captureInLid: spec.captureInLid,
+    lidCaptureDepth: captured ? lidCaptureDepth : 0,
     wallThickness,
     cornerInset: body.cornerStyle.type === 'sharp' ? 0 : Math.max(body.cornerStyle.radius, 0),
     splitHeight,
@@ -76,7 +86,7 @@ export function panelMetrics(body: EnclosureBody): PanelMetrics | null {
     plateBottomZ: channelBottomZ + clearance / 2,
     // With lid capture the plate runs on past the base's rim into a matching groove in the lid's
     // underside; without it the plate stops flush with the rim and the flat lid holds it down.
-    plateTopZ: spec.captureInLid ? splitHeight + grooveDepth - clearance / 2 : splitHeight,
+    plateTopZ: captured ? splitHeight + lidCaptureDepth - clearance / 2 : splitHeight,
   };
 }
 

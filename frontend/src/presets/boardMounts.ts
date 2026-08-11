@@ -147,6 +147,31 @@ export const CM4_IO_MOUNT: BoardMountSpec = {
   standoff: { outerDiameter: 6, screwHoleDiameter: 2.7, height: 4 },
 };
 
+/**
+ * Waveshare CM4-DUAL-ETH-WIFI6-BASE carrier: 91.53x109.03mm board with six Ø3.0 mounting holes in
+ * two columns of three. Unlike every other pattern in this file the source is not a published
+ * mechanical drawing -- Waveshare doesn't dimension one -- but measurements taken off the vendor's
+ * own STEP model (CM4-DUAL-ETH-WIFI6-BASE.stp), contributed with the enclosure design this
+ * preset is based on. Treat it as the usual "verify with calipers" tier, or better: the holes are
+ * the one thing worth checking against the real board before you print.
+ */
+export const WAVESHARE_CM4_DUAL_ETH_MOUNT: BoardMountSpec = {
+  boardWidth: 91.53,
+  boardDepth: 109.03,
+  boardThickness: 1.6,
+  holes: [
+    { x: -42.255, y: -51.005 },
+    { x: -42.255, y: 0.495 },
+    { x: -42.255, y: 49.495 },
+    { x: 15.745, y: -51.005 },
+    { x: 15.745, y: 0.495 },
+    { x: 15.745, y: 49.495 },
+  ],
+  // M2.5 self-tapping into a printed pilot, 4mm tall -- clears the 2.7mm of through-hole tails
+  // sticking out under the board.
+  standoff: { outerDiameter: 6, screwHoleDiameter: 2.1, height: 4 },
+};
+
 export const BOARD_MOUNT_PRESETS: BoardMountPreset[] = [
   {
     id: 'pi-full-size',
@@ -205,6 +230,14 @@ export const BOARD_MOUNT_PRESETS: BoardMountPreset[] = [
     notes:
       '7-hole pattern from the official mechanical drawing: 3 primary mounting holes plus the 4-hole 58×49mm HAT-compatible pattern (M2.5).',
     mount: CM4_IO_MOUNT,
+  },
+  {
+    id: 'waveshare-cm4-dual-eth',
+    label: 'Waveshare CM4 Dual ETH WiFi6 Base',
+    badge: '91.5×109mm',
+    notes:
+      'Six M2.5 holes in two columns of three, measured from the vendor STEP model (Waveshare publishes no dimensioned drawing) — verify against the real board.',
+    mount: WAVESHARE_CM4_DUAL_ETH_MOUNT,
   },
 ];
 

@@ -74,6 +74,8 @@ export function cylinderZ(
 interface ScrewBossLidParams {
   innerLength: number; // footprint of the base cavity (length - 2*wallThickness)
   innerWidth: number;
+  outerLength: number; // outer footprint -- what exterior columns stand against
+  outerWidth: number;
   splitHeight: number;
   outerHeight: number;
   screw: ScrewSpec;
@@ -103,6 +105,34 @@ export function bossPositions(
   if (count === 4) return corners;
   if (count === 6) return [...corners, [0, y], [0, -y]];
   return [...corners, [0, y], [0, -y], [x, 0], [-x, 0]];
+}
+
+/**
+ * Screw columns standing on the *outside* of the front and back walls, overlapping them just
+ * enough to weld. This is what a case whose board fills the whole interior has to use -- there is
+ * no floor left for interior corner bosses -- and it's how commercial carrier-board enclosures
+ * (and the Waveshare CM4 preset) do it. Left/right walls are deliberately left alone until count 8:
+ * those are the faces most likely to be slide-in connector panels.
+ */
+export function exteriorBossPositions(
+  count: ScrewCount,
+  halfLength: number,
+  halfWidth: number,
+  bossRadius: number,
+): Array<[number, number]> {
+  const overlap = Math.min(2, bossRadius);
+  const y = halfWidth + bossRadius - overlap;
+  const x = Math.max(halfLength - bossRadius - 1, 0);
+  const corners: Array<[number, number]> = [
+    [x, y],
+    [x, -y],
+    [-x, y],
+    [-x, -y],
+  ];
+  if (count === 4) return corners;
+  if (count === 6) return [...corners, [0, y], [0, -y]];
+  const sideX = halfLength + bossRadius - overlap;
+  return [...corners, [0, y], [0, -y], [sideX, 0], [-sideX, 0]];
 }
 
 /** Evenly-spaced bosses around a circle -- the cylinder-body counterpart to bossPositions(). */
@@ -174,6 +204,50 @@ export function bossRadiusFor(screw: ScrewSpec): number {
   return bossOuterDiameter(pilotDiameter) / 2;
 }
 
+/**
+ * Exterior counterpart to applyScrewBossLidAt: the column has to exist on *both* pieces (an
+ * interior boss lives entirely in the base, under a flat lid, but an exterior one is a continuous
+ * post that the split cuts in half), so the lid gets matching material plus its clearance hole
+ * rather than a hole alone.
+ */
+function applyExteriorScrewBossLidAt(
+  wasm: ManifoldToplevel,
+  base: Manifold,
+  lid: Manifold,
+  splitHeight: number,
+  outerHeight: number,
+  screw: ScrewSpec,
+  positions: Array<[number, number]>,
+): { base: Manifold; lid: Manifold } {
+  const spec = SCREW_HOLE_SPECS[screw.size];
+  const pilotDiameter =
+    screw.insertType === 'heat-set' ? spec.heatSetHoleDiameter : spec.selfTapPilotDiameter;
+  const outerDiameter = bossOuterDiameter(pilotDiameter);
+  const holeDepth =
+    screw.insertType === 'heat-set'
+      ? Math.min(spec.heatSetDepth, splitHeight - 1)
+      : Math.max(splitHeight - 1.5, 1);
+  const lidHeight = Math.max(outerHeight - splitHeight, 0.5);
+
+  let nextBase = base;
+  let nextLid = lid;
+  for (const [x, y] of positions) {
+    nextBase = nextBase
+      .add(cylinderZ(wasm, outerDiameter, splitHeight, 0).translate(x, y, 0))
+      .subtract(
+        cylinderZ(wasm, pilotDiameter, holeDepth, splitHeight - holeDepth).translate(x, y, 0),
+      );
+
+    nextLid = nextLid
+      .add(cylinderZ(wasm, outerDiameter, lidHeight, splitHeight).translate(x, y, 0))
+      .subtract(
+        cylinderZ(wasm, spec.clearanceDiameter, lidHeight + 1, splitHeight - 0.5).translate(x, y, 0),
+      );
+  }
+
+  return { base: nextBase, lid: nextLid };
+}
+
 /** Adds corner bosses (with pilot/insert holes) to a box base and matching clearance holes to the lid. */
 export function applyScrewBossLid(
   wasm: ManifoldToplevel,
@@ -181,7 +255,18 @@ export function applyScrewBossLid(
   lid: Manifold,
   params: ScrewBossLidParams,
 ): { base: Manifold; lid: Manifold } {
-  const { innerLength, innerWidth, splitHeight, outerHeight, screw } = params;
+  const { innerLength, innerWidth, outerLength, outerWidth, splitHeight, outerHeight, screw } = params;
+  if (screw.placement === 'exterior') {
+    return applyExteriorScrewBossLidAt(
+      wasm,
+      base,
+      lid,
+      splitHeight,
+      outerHeight,
+      screw,
+      exteriorBossPositions(screw.count, outerLength / 2, outerWidth / 2, bossRadiusFor(screw)),
+    );
+  }
   const positions = bossPositions(
     screw.count,
     innerLength / 2,

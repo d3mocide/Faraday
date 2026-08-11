@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import type { ManifoldToplevel } from 'manifold-3d';
+import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { generateEnclosure } from '../src/csg/generateEnclosure';
 import { extractMeshData } from '../src/csg/manifoldToGeometry';
 import { findConnector } from '../src/connectors/library';
 import { bossPositions, bossRadiusFor } from '../src/csg/primitives';
+import { featurePart } from '../src/csg/parts';
 import { BOARD_PRESETS, type BoardPreset } from '../src/presets/boards';
 import { buildPresetFeatures } from '../src/state/featureFactory';
 import type { EnclosureProject, ScrewSpec } from '../src/types/project';
@@ -36,12 +37,18 @@ function projectFromPreset(preset: BoardPreset): EnclosureProject {
       wallThickness: preset.body.wallThickness,
       cornerStyle: { type: 'rounded', radius: 3 },
       lid: {
-        type: 'screw-boss',
+        type: preset.body.lidType ?? 'screw-boss',
         splitHeight: preset.body.splitHeight,
         wallGap: 0.2,
-        screw: { size: 'M2.5', insertType: 'heat-set', count: 4 },
+        screw: {
+          size: 'M2.5',
+          insertType: 'heat-set',
+          count: 4,
+          placement: preset.body.screwPlacement,
+        },
         gasket: preset.body.gasket,
       },
+      panels: preset.body.panels,
     },
     features: buildPresetFeatures(preset),
   };
@@ -54,7 +61,10 @@ describe('board preset IO layouts', () => {
         if (port.connectorId) {
           expect(findConnector(port.connectorId), `${preset.id}: ${port.connectorId}`).toBeDefined();
         }
-        expect(port.connectorId || port.custom, `${preset.id}: port needs a shape`).toBeTruthy();
+        expect(
+          port.connectorId || port.custom || port.vent || port.mount,
+          `${preset.id}: wall feature needs a shape`,
+        ).toBeTruthy();
       }
     }
   });
@@ -82,11 +92,16 @@ describe('board preset IO layouts', () => {
         expect(feature.u, `${preset.id}/${feature.type} u`).toBeLessThan(1);
         expect(feature.v, `${preset.id}/${feature.type} v`).toBeGreaterThan(0);
         expect(feature.v, `${preset.id}/${feature.type} v`).toBeLessThan(1);
+        // Horizontal faces (a fan grille in the lid, feet under the floor) put an in-plane
+        // coordinate in v, not a height, so the floor/split check below doesn't apply to them.
+        if (feature.face === 'top' || feature.face === 'bottom') continue;
         if (feature.type === 'connector-cutout' && feature.connectorId) {
           // The whole opening (not just its centerline) must clear the seam, or the lid would
           // need a matching notch the preset doesn't cut.
           const entry = findConnector(feature.connectorId)!;
-          const halfH = (entry.height ?? entry.diameter ?? 0) / 2;
+          const override = feature.connectorOverride;
+          const halfH =
+            (override?.height ?? override?.diameter ?? entry.height ?? entry.diameter ?? 0) / 2;
           const centerZ = feature.v * preset.body.outer.height;
           expect(centerZ + halfH, `${preset.id}/${feature.connectorId} top vs split`).toBeLessThan(
             preset.body.splitHeight,
@@ -97,7 +112,10 @@ describe('board preset IO layouts', () => {
     }
   });
 
-  for (const preset of BOARD_PRESETS.filter((p) => p.boardMount)) {
+  // Presets that put their screw columns outside the walls are exempt: the check below is about
+  // interior bosses landing on the board, and an exterior column never can. That placement exists
+  // precisely for boards that leave no interior clearance (see the Waveshare CM4 preset).
+  for (const preset of BOARD_PRESETS.filter((p) => p.boardMount && p.body.screwPlacement !== 'exterior')) {
     it(`${preset.id}: lid screw bosses (default M3 heat-set) clear the board footprint`, () => {
       // Lid screw bosses and board-mount standoffs are two independent solids, both rising from
       // the floor -- a boss union'd right on top of where the board itself sits is still a valid
@@ -135,4 +153,98 @@ describe('board preset IO layouts', () => {
       }
     });
   }
+});
+
+describe('waveshare CM4 dual-ETH preset: the multi-part case', () => {
+  const preset = BOARD_PRESETS.find((p) => p.id === 'waveshare-cm4-dual-eth-wifi6')!;
+
+  it('prints as four pieces: tray, lid and two end plates', () => {
+    const result = generateEnclosure(wasm, projectFromPreset(preset), 'export');
+    const ids = result.parts.map((p) => p.id).sort();
+    for (const part of result.parts) part.manifold.delete();
+    expect(ids).toEqual(['base', 'lid', 'panel-left', 'panel-right']);
+  });
+
+  it('routes every port on an end wall to that end plate', () => {
+    const project = projectFromPreset(preset);
+    const endPorts = project.features.filter((f) => f.face === 'left' || f.face === 'right');
+    expect(endPorts.length).toBeGreaterThan(15);
+    for (const feature of endPorts) {
+      expect(featurePart(feature, project.body), `${feature.connectorId ?? feature.type}`).toBe(
+        feature.face === 'left' ? 'panel-left' : 'panel-right',
+      );
+    }
+  });
+
+  it('keeps the fan grille on the lid and the wall tabs on the tray', () => {
+    const project = projectFromPreset(preset);
+    const lidFeatures = project.features.filter((f) => f.face === 'top');
+    expect(lidFeatures).toHaveLength(5); // honeycomb grille + 4 fan screws
+    for (const feature of lidFeatures) {
+      expect(featurePart(feature, project.body)).toBe('lid');
+    }
+
+    const tabs = project.features.filter((f) => f.type === 'external-mount');
+    expect(tabs).toHaveLength(4);
+    for (const tab of tabs) {
+      expect(tab.mount?.hole).toBe('slot');
+      expect(featurePart(tab, project.body)).toBe('base');
+    }
+  });
+
+  it('every board-relative port sits where the source model measured it', () => {
+    // Spot-check the round trip from board-relative mm to normalized (u,v): the USB-C on the left
+    // plate is 41.47mm past the board center along +Y and 1.7mm above the board's top surface,
+    // which sits 8mm off the interior floor (2.4 floor + 4 standoff + 1.6 PCB).
+    const project = projectFromPreset(preset);
+    const usbc = project.features.find((f) => f.connectorId === 'usb-c-panel')!;
+    expect(usbc.face).toBe('left');
+    expect(usbc.u * preset.body.outer.width - preset.body.outer.width / 2).toBeCloseTo(41.47, 3);
+    expect(usbc.v * preset.body.outer.height).toBeCloseTo(9.7, 3);
+  });
+});
+
+describe('waveshare CM4 dual-ETH preset: openings land where the source model measured them', () => {
+  const preset = BOARD_PRESETS.find((p) => p.id === 'waveshare-cm4-dual-eth-wifi6')!;
+
+  /** Is there material at this world point? Probes the part with a 0.8mm cube. */
+  function solidAt(part: Manifold, [x, y, z]: [number, number, number]): boolean {
+    const probe = wasm.Manifold.cube([0.8, 0.8, 0.8], true).translate(x, y, z);
+    const hit = part.intersect(probe);
+    const empty = hit.isEmpty();
+    hit.delete();
+    probe.delete();
+    return !empty;
+  }
+
+  it('drills each end-plate port through the plate at its measured height', () => {
+    const result = generateEnclosure(wasm, projectFromPreset(preset), 'export');
+    const plates = new Map(result.parts.filter((p) => p.kind === 'panel').map((p) => [p.face!, p.manifold]));
+    // Mid-thickness of each plate: the plate's outer face is flush with the case wall.
+    const midX = preset.body.outer.length / 2 - preset.body.panels!.thickness / 2;
+    const boardTopZ = 2.4 + 4 + 1.6;
+
+    // [face, alongMm, aboveBoardMm, a clear-of-everything offset to probe for material]
+    const checks: Array<[('left' | 'right'), number, number, number]> = [
+      ['left', 41.47, 1.7, 4], // USB-C
+      ['left', 14.725, 26, -6], // one of the four SMA bulkheads
+      ['left', -12.975, 1, 5], // microSD slot
+      ['right', 35.83, 7.1, 10], // dual RJ45
+      ['right', -43.745, 3.5, 8], // HDMI 0
+      ['right', -6.035, 6.75, 12], // first vertical USB-A
+    ];
+
+    for (const [face, alongMm, aboveBoardMm, solidOffset] of checks) {
+      const plate = plates.get(face)!;
+      const x = face === 'right' ? midX : -midX;
+      const z = boardTopZ + aboveBoardMm;
+      expect(solidAt(plate, [x, alongMm, z]), `${face} @${alongMm} should be open`).toBe(false);
+      expect(
+        solidAt(plate, [x, alongMm, z + solidOffset]),
+        `${face} @${alongMm} should be plate material ${solidOffset}mm above the port`,
+      ).toBe(true);
+    }
+
+    for (const part of result.parts) part.manifold.delete();
+  });
 });

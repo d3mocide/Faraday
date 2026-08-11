@@ -13,10 +13,16 @@ export type ScrewSize = 'M2' | 'M2.5' | 'M3';
 export type ScrewInsertType = 'heat-set' | 'self-tap';
 export type ScrewCount = 4 | 6 | 8;
 
+/** Where the lid's screw columns stand. 'interior' bosses rise inside the cavity (the default, and
+ * the right call whenever there's floor space to spare); 'exterior' columns straddle the outside of
+ * the front and back walls instead, which is the only option once the board fills the interior. */
+export type ScrewPlacement = 'interior' | 'exterior';
+
 export interface ScrewSpec {
   size: ScrewSize;
   insertType: ScrewInsertType;
   count: ScrewCount;
+  placement?: ScrewPlacement; // undefined = 'interior'
   /** mm from the interior cavity wall to each boss center. Undefined = the CSG default
    * (bossRadius + 1mm, just enough to keep the boss inside the wall) -- see bossPositions in
    * csg/primitives.ts. Lower values pull bosses toward the case's outer edge, which is also the

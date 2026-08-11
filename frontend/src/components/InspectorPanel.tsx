@@ -19,6 +19,7 @@ import type {
   PanelFace,
   ScrewCount,
   ScrewInsertType,
+  ScrewPlacement,
   ScrewSize,
   Units,
   VentSpec,
@@ -726,6 +727,7 @@ export function InspectorPanel({
   const setScrewInsertType = useProjectStore((s) => s.setScrewInsertType);
   const setScrewCount = useProjectStore((s) => s.setScrewCount);
   const setScrewEdgeInset = useProjectStore((s) => s.setScrewEdgeInset);
+  const setScrewPlacement = useProjectStore((s) => s.setScrewPlacement);
   const setGasketEnabled = useProjectStore((s) => s.setGasketEnabled);
   const setGasketWidth = useProjectStore((s) => s.setGasketWidth);
   const setGasketDepth = useProjectStore((s) => s.setGasketDepth);
@@ -887,15 +889,29 @@ export function InspectorPanel({
                 <option value={8}>8</option>
               </select>
             </label>
-            <UnitNumberField
-              label="Screw edge inset"
-              valueMm={lid.screw.edgeInset ?? bossRadiusFor(lid.screw) + 1}
-              units={units}
-              minMm={0.5}
-              maxMm={Math.max(minPlanDimension / 2 - 2, 0.5)}
-              stepMm={0.1}
-              onChangeMm={setScrewEdgeInset}
-            />
+            {body.shape === 'box' && (
+              <label className="field">
+                <span>Column placement</span>
+                <select
+                  value={lid.screw.placement ?? 'interior'}
+                  onChange={(e) => setScrewPlacement(e.target.value as ScrewPlacement)}
+                >
+                  <option value="interior">Inside the cavity</option>
+                  <option value="exterior">Outside the walls</option>
+                </select>
+              </label>
+            )}
+            {(lid.screw.placement ?? 'interior') === 'interior' && (
+              <UnitNumberField
+                label="Screw edge inset"
+                valueMm={lid.screw.edgeInset ?? bossRadiusFor(lid.screw) + 1}
+                units={units}
+                minMm={0.5}
+                maxMm={Math.max(minPlanDimension / 2 - 2, 0.5)}
+                stepMm={0.1}
+                onChangeMm={setScrewEdgeInset}
+              />
+            )}
           </FieldsGrid2Col>
         )}
         {lid.type === 'screw-boss' && lid.screw && (
