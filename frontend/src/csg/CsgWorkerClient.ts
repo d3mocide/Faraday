@@ -1,10 +1,16 @@
 import type { EnclosureProject } from '../types/project';
 import type { CsgQuality } from './generateEnclosure';
-import type { CsgRequest, CsgResponse, MeshData } from './workerProtocol';
+import type { CsgRequest, CsgResponse, PartMesh } from './workerProtocol';
+import type { PartId } from './parts';
 
+/** Every printed piece of one generated enclosure, in a stable order: base, lid, then any
+ * slide-in panels (front, back, left, right). */
 export interface EnclosureMeshes {
-  base: MeshData;
-  lid: MeshData;
+  parts: PartMesh[];
+}
+
+export function findPart(meshes: EnclosureMeshes | null, id: PartId): PartMesh | undefined {
+  return meshes?.parts.find((p) => p.id === id);
 }
 
 interface PendingEntry {
@@ -38,7 +44,7 @@ export class CsgWorkerClient {
       if (!entry) return;
       this.settle(msg.id);
       if (msg.type === 'result') {
-        entry.resolve({ base: msg.base, lid: msg.lid });
+        entry.resolve({ parts: msg.parts });
       } else {
         entry.reject(new Error(msg.message));
       }

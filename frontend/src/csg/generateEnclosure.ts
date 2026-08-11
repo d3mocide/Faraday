@@ -1,15 +1,20 @@
 import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { findConnector } from '../connectors/library';
-import type { EnclosureProject } from '../types/project';
+import type { EnclosureProject, PanelFace } from '../types/project';
 import { bodyGeometry } from './faceFrame';
 import {
   buildBoardMount,
   buildConnectorCutout,
   buildCustomHole,
+  buildExternalMount,
+  buildFanMount,
   buildStandoff,
+  buildSupportPad,
   buildVentCutout,
 } from './featurePrimitives';
-import { effectiveSplitHeight, featureOnLid } from './lidSplit';
+import { effectiveSplitHeight } from './lidSplit';
+import { orientPanelForPrint, panelChannelCut, panelPlate } from './panels';
+import { featurePart, panelMetrics, panelPartId, partLabel, type PartId } from './parts';
 import {
   applyFrictionLipLid,
   applyFrictionLipLidCylinder,
@@ -26,9 +31,20 @@ import {
 
 export type CsgQuality = 'live' | 'export';
 
+export type PartKind = 'base' | 'lid' | 'panel';
+
+/** One printed piece. A plain enclosure yields two (base + lid); each slide-in panel adds one. */
+export interface EnclosurePart {
+  id: PartId;
+  label: string;
+  kind: PartKind;
+  /** Which wall this piece replaces -- panels only. */
+  face?: PanelFace;
+  manifold: Manifold;
+}
+
 export interface EnclosureResult {
-  base: Manifold;
-  lid: Manifold;
+  parts: EnclosurePart[];
   splitHeight: number;
   outerHeight: number;
 }
@@ -36,7 +52,8 @@ export interface EnclosureResult {
 /**
  * Runs the full CSG pipeline described in the design doc: build the outer
  * shell, hollow it out, split it into base + lid, then apply lid mating
- * geometry. Caller owns the returned Manifolds and must .delete() them
+ * geometry, then (if the body has slide-in panels) cut their channels and
+ * build each plate. Caller owns the returned Manifolds and must .delete() them
  * (or rely on garbageCollectManifold + cleanup()) once meshes are extracted.
  */
 export function generateEnclosure(
@@ -90,6 +107,9 @@ export function generateEnclosure(
       ({ base, lid } = applyScrewBossLid(wasm, base, lid, {
         innerLength,
         innerWidth,
+        outerLength: body.outer.length,
+        outerWidth: body.outer.width,
+        wallThickness,
         splitHeight,
         outerHeight: height,
         screw: body.lid.screw,
@@ -97,6 +117,7 @@ export function generateEnclosure(
     } else {
       ({ base, lid } = applyScrewBossLidCylinder(wasm, base, lid, {
         innerDiameter,
+        wallThickness,
         splitHeight,
         outerHeight: height,
         screw: body.lid.screw,
@@ -161,10 +182,82 @@ export function generateEnclosure(
     }
   }
 
+  // Slide-in panels: cut each plate's channel *after* the lid mating geometry, so a screw boss or
+  // friction lip can never end up blocking the slot the plate has to slide down. The plate itself
+  // is trimmed against the (pre-hollowing) outer shell so its ends follow the body's corner style.
+  const metrics = panelMetrics(body);
+  const panels = new Map<PanelFace, Manifold>();
+  if (metrics && body.shape === 'box') {
+    const dims = { length: body.outer.length, width: body.outer.width };
+    for (const face of metrics.faces) {
+      base = base.subtract(
+        panelChannelCut(wasm, dims, metrics, face, metrics.channelBottomZ, splitHeight + 1),
+      );
+      if (metrics.lidCaptureDepth > 0) {
+        lid = lid.subtract(
+          panelChannelCut(wasm, dims, metrics, face, splitHeight, splitHeight + metrics.lidCaptureDepth),
+        );
+      }
+      panels.set(face, panelPlate(wasm, dims, metrics, face, outerShape));
+    }
+  }
+
   // Apply per-face features (Section 7 step 5). Subtractive features (cutouts, vents, custom
-  // holes) target whichever piece the split assigns them to; standoffs always union to the base.
+  // holes) and additive external mounts target whichever piece owns that patch of the face --
+  // base, lid, or a slide-in panel (see featurePart). Standoffs and board mounts always union to
+  // the base floor.
+  const subtractFrom = (part: PartId, solid: Manifold) => {
+    if (part === 'lid') lid = lid.subtract(solid);
+    else if (part === 'base') base = base.subtract(solid);
+    else {
+      const face = part.slice('panel-'.length) as PanelFace;
+      const plate = panels.get(face);
+      if (plate) panels.set(face, plate.subtract(solid));
+    }
+  };
+  const addTo = (part: PartId, solid: Manifold) => {
+    if (part === 'lid') lid = lid.add(solid);
+    else if (part === 'base') base = base.add(solid);
+    else {
+      const face = part.slice('panel-'.length) as PanelFace;
+      const plate = panels.get(face);
+      if (plate) panels.set(face, plate.add(solid));
+    }
+  };
+
   for (const feature of project.features) {
     if (feature.hidden) continue;
+    if (feature.type === 'standoff' && feature.standoff) {
+      base = base.add(buildStandoff(wasm, feature, geom, wallThickness));
+      continue;
+    }
+    if (feature.type === 'board-mount' && feature.board) {
+      base = base.add(buildBoardMount(wasm, feature, geom, wallThickness));
+      continue;
+    }
+    if (feature.type === 'support-pad' && feature.pad) {
+      base = base.add(buildSupportPad(wasm, feature, geom, wallThickness));
+      continue;
+    }
+    if (feature.type === 'external-mount' && feature.mount) {
+      const cornerRadius =
+        body.shape === 'box' && body.cornerStyle.type !== 'sharp' ? body.cornerStyle.radius : 0;
+      addTo(
+        featurePart(feature, body),
+        buildExternalMount(wasm, feature, geom, wallThickness, cornerRadius),
+      );
+      continue;
+    }
+
+    // A fan opening is both: bosses union in, then the same cut bores its screw holes through them.
+    if (feature.type === 'fan-mount' && feature.fan) {
+      const part = featurePart(feature, body);
+      const { add, cut } = buildFanMount(wasm, feature, geom, wallThickness);
+      if (add) addTo(part, add);
+      subtractFrom(part, cut);
+      continue;
+    }
+
     let cutout: Manifold | null = null;
     if (feature.type === 'connector-cutout' && feature.connectorId) {
       const entry = findConnector(feature.connectorId);
@@ -173,22 +266,20 @@ export function generateEnclosure(
       cutout = buildVentCutout(wasm, feature, geom, wallThickness);
     } else if (feature.type === 'custom-hole' && feature.custom) {
       cutout = buildCustomHole(wasm, feature, geom, wallThickness);
-    } else if (feature.type === 'standoff' && feature.standoff) {
-      base = base.add(buildStandoff(wasm, feature, geom, wallThickness));
-    } else if (feature.type === 'board-mount' && feature.board) {
-      base = base.add(buildBoardMount(wasm, feature, geom, wallThickness));
     }
-
-    if (cutout) {
-      if (featureOnLid(feature, body)) {
-        lid = lid.subtract(cutout);
-      } else {
-        base = base.subtract(cutout);
-      }
-    }
+    if (cutout) subtractFrom(featurePart(feature, body), cutout);
   }
 
-  return { base, lid, splitHeight, outerHeight: height };
+  const parts: EnclosurePart[] = [
+    { id: 'base', label: partLabel('base'), kind: 'base', manifold: base },
+    { id: 'lid', label: partLabel('lid'), kind: 'lid', manifold: lid },
+  ];
+  for (const [face, manifold] of panels) {
+    const id = panelPartId(face);
+    parts.push({ id, label: partLabel(id), kind: 'panel', face, manifold });
+  }
+
+  return { parts, splitHeight, outerHeight: height };
 }
 
 /**
@@ -198,4 +289,12 @@ export function generateEnclosure(
 export function orientLidForPrint(lid: Manifold, splitHeight: number, outerHeight: number): Manifold {
   const lidHeight = outerHeight - splitHeight;
   return lid.translate(0, 0, -splitHeight).rotate(180, 0, 0).translate(0, 0, lidHeight);
+}
+
+/** Print-bed orientation for any part: the base stays as modelled, the lid flips, a panel lays
+ * flat. Export only -- the live preview always shows parts in their assembled positions. */
+export function orientPartForPrint(part: EnclosurePart, result: EnclosureResult): Manifold {
+  if (part.kind === 'lid') return orientLidForPrint(part.manifold, result.splitHeight, result.outerHeight);
+  if (part.kind === 'panel' && part.face) return orientPanelForPrint(part.manifold, part.face);
+  return part.manifold;
 }

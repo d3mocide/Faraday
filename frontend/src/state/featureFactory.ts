@@ -1,7 +1,8 @@
 import type { ArmedFeatureTemplate } from '../components/FeaturePalette';
 import { findBoardMountPreset } from '../presets/boardMounts';
-import type { BoardPreset } from '../presets/boards';
-import type { EnclosureProject, Face, Feature } from '../types/project';
+import { fanSpecFor } from '../csg/fanLibrary';
+import type { BoardIoCutout, BoardPreset } from '../presets/boards';
+import type { EnclosureProject, Face, Feature, FeatureType } from '../types/project';
 
 /** The classic 4-corner mounting pattern: holes inset from each board corner by `inset` mm. */
 export function cornerHolePattern(
@@ -52,19 +53,38 @@ export function buildPresetFeatures(preset: BoardPreset): Feature[] {
     ? preset.body.wallThickness + preset.boardMount.standoff.height + preset.boardMount.boardThickness
     : preset.body.wallThickness;
   for (const port of preset.io ?? []) {
-    const uExtent = port.face === 'left' || port.face === 'right' ? width : length;
+    // Horizontal faces have two in-plane axes and no "height above the board" to speak of, so they
+    // read alongMm/acrossMm as X/Y from the board center instead.
+    const horizontal = port.face === 'top' || port.face === 'bottom';
+    const uExtent = horizontal || port.face === 'front' || port.face === 'back' ? length : width;
     features.push({
       id: crypto.randomUUID(),
-      type: port.connectorId ? 'connector-cutout' : 'custom-hole',
+      type: presetFeatureType(port),
       face: port.face,
       u: 0.5 + port.alongMm / uExtent,
-      v: (boardTopZ + port.aboveBoardMm) / height,
-      rotationDeg: 0,
+      v: horizontal
+        ? 0.5 + (port.acrossMm ?? 0) / width
+        : (boardTopZ + port.aboveBoardMm) / height,
+      rotationDeg: port.rotationDeg ?? 0,
       connectorId: port.connectorId,
+      connectorOverride: port.override ? structuredClone(port.override) : undefined,
       custom: port.custom ? structuredClone(port.custom) : undefined,
+      vent: port.vent ? structuredClone(port.vent) : undefined,
+      fan: port.fan ? structuredClone(port.fan) : undefined,
+      pad: port.pad ? structuredClone(port.pad) : undefined,
+      mount: port.mount ? structuredClone(port.mount) : undefined,
     });
   }
   return features;
+}
+
+function presetFeatureType(port: BoardIoCutout): FeatureType {
+  if (port.pad) return 'support-pad';
+  if (port.fan) return 'fan-mount';
+  if (port.mount) return 'external-mount';
+  if (port.vent) return 'vent';
+  if (port.connectorId) return 'connector-cutout';
+  return 'custom-hole';
 }
 
 /** Turns an armed palette template plus a viewport click into a placeable Feature. */
@@ -124,6 +144,66 @@ export function buildFeatureFromTemplate(
           height: Math.min(defaultStandoffHeight(project), 4),
         },
       },
+    };
+  }
+
+  if (template.type === 'external-mount') {
+    // Flange defaults are a wall-mount ear sized for an M4 screw with a little slot travel; the
+    // boss defaults to an M3 heat-set post. Both are starting points, editable in the inspector.
+    return {
+      id,
+      type: 'external-mount',
+      face,
+      u,
+      v,
+      rotationDeg: 0,
+      mount:
+        template.mountStyle === 'boss'
+          ? {
+              style: 'boss',
+              width: 8,
+              protrusion: 6,
+              thickness: 3,
+              hole: 'round',
+              holeDiameter: 4.2,
+              slotLength: 0,
+              holeDepth: 5,
+            }
+          : {
+              style: 'flange',
+              width: 16,
+              protrusion: 10,
+              thickness: 3,
+              hole: 'slot',
+              holeDiameter: 4.5,
+              slotLength: 9,
+            },
+    };
+  }
+
+  if (template.type === 'support-pad') {
+    // Sized to match the default board-mount standoff height, so a pad dropped next to a board
+    // meets its underside instead of holding it up or falling short.
+    return {
+      id,
+      type: 'support-pad',
+      face: 'bottom',
+      u,
+      v,
+      rotationDeg: 0,
+      pad: { shape: 'rect', width: 8, depth: 5, height: Math.min(defaultStandoffHeight(project), 4) },
+    };
+  }
+
+  if (template.type === 'fan-mount') {
+    return {
+      id,
+      type: 'fan-mount',
+      face,
+      u,
+      v,
+      rotationDeg: 0,
+      fan: fanSpecFor(template.fanSize),
     };
   }
 

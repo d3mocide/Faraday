@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import './App.css';
 import { AppShell } from './components/AppShell';
 import { ExportModal } from './components/ExportModal';
@@ -7,6 +7,7 @@ import { InspectorPanel } from './components/InspectorPanel';
 import { Viewport3D, type BodyResizePatch, type LidView, type PreviewTarget } from './components/Viewport3D';
 import { useLiveGeometry } from './csg/useLiveGeometry';
 import { buildFeatureFromTemplate } from './state/featureFactory';
+import { runDesignChecks } from './state/designChecks';
 import { useAutosave } from './state/useAutosave';
 import { useProjectStore } from './state/projectStore';
 import type { Face } from './types/project';
@@ -30,11 +31,19 @@ function App() {
   const [lidView, setLidView] = useState<LidView>('assembled');
   const [showHandles, setShowHandles] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
-  const [showGhostBoards, setShowGhostBoards] = useState(true);
+  const [showGhosts, setShowGhosts] = useState(true);
   const [showMarkers, setShowMarkers] = useState(true);
   // Align/mirror hover-preview target (see AlignMirrorAxisRow in InspectorPanel.tsx) -- also
   // view-only, same non-persisted precedent as lidView.
   const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
+
+  // Advisory design checks (state/designChecks.ts) -- computed once here and shared by the
+  // inspector's Checks card and the viewport's flagged markers, so the two can't disagree.
+  const findings = useMemo(() => runDesignChecks(project), [project]);
+  const flaggedFeatureIds = useMemo(
+    () => new Set(findings.map((f) => f.featureId)),
+    [findings],
+  );
 
   useAutosave(project);
 
@@ -65,7 +74,12 @@ function App() {
     if (!armed) return;
     // Standoffs and board mounts always sit on the base floor -- ignore clicks elsewhere rather
     // than reinterpret (u,v) from the wrong face, which would misplace them.
-    if ((armed.type === 'standoff' || armed.type === 'board-mount') && face !== 'bottom') return;
+    if (
+      (armed.type === 'standoff' || armed.type === 'board-mount' || armed.type === 'support-pad') &&
+      face !== 'bottom'
+    ) {
+      return;
+    }
     addFeature(buildFeatureFromTemplate(armed, face, u, v, project));
     setArmed(null);
   };
@@ -94,7 +108,7 @@ function App() {
           lidView={lidView}
           showHandles={showHandles}
           showGrid={showGrid}
-          showGhostBoards={showGhostBoards}
+          showGhosts={showGhosts}
           showMarkers={showMarkers}
           placementArmed={armed !== null}
           onPlaceFeature={handlePlaceFeature}
@@ -103,6 +117,7 @@ function App() {
           onUpdateFeature={updateFeature}
           onResizeBody={handleResizeBody}
           previewTarget={previewTarget}
+          flaggedFeatureIds={flaggedFeatureIds}
         />
         {error && (
           <div className="viewport-error" role="alert">
@@ -125,8 +140,9 @@ function App() {
         onToggleShowHandles={setShowHandles}
         showGrid={showGrid}
         onToggleShowGrid={setShowGrid}
-        showGhostBoards={showGhostBoards}
-        onToggleShowGhostBoards={setShowGhostBoards}
+        showGhosts={showGhosts}
+        onToggleShowGhosts={setShowGhosts}
+        findings={findings}
         showMarkers={showMarkers}
         onToggleShowMarkers={setShowMarkers}
         onSelectFeature={setSelectedFeatureId}

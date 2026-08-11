@@ -440,6 +440,288 @@ errors in any run.
   matched the expected reflection; confirmed Export still opens and packages STLs normally with the
   mirrored duplicate present. No console errors in any step.
 
+## Multi-part enclosures: slide-in panels + external mounts (2026-08-11 session)
+
+Prompted by a user-contributed CadQuery design for the Waveshare CM4-DUAL-ETH-WIFI6-BASE — a
+four-piece case (tray, lid, two slide-in end plates) with wall-mount ears and exterior screw
+columns, none of which the app could express. Three capabilities plus the preset:
+
+### Parts, not "base and lid"
+
+- **`generateEnclosure` now returns `parts: EnclosurePart[]`** (id/label/kind/face/manifold)
+  instead of a fixed `{ base, lid }` pair. That shape flows through `workerProtocol`
+  (`PartMesh[]`), `CsgWorkerClient` (`EnclosureMeshes.parts`), `Viewport3D` (one `THREE.Mesh` per
+  part, created and disposed as the set changes — the set is dynamic now, so meshes can't be
+  allocated once at mount like the old base/lid pair) and `stlExport` (one STL per piece:
+  `case_base.stl`, `case_lid.stl`, `panel_left.stl`, …).
+- **New `csg/parts.ts` owns the routing rule** (`featurePart`), replacing `lidSplit.ts`'s
+  `featureOnLid`, which had only two possible answers. Same one-source-of-truth pattern as
+  `faceFrame.ts`/`lidSplit.ts`: the worker uses it to pick a boolean target, the viewport uses it
+  to know which piece a marker rides on.
+- **Exploded view moved from "lift the lid" to a per-part offset** (`partDisplayOffset`): the lid
+  lifts, each panel slides out along its own face normal. Raycast hits are mapped back to model
+  space by subtracting the hit mesh's own position, which generalizes the old lid-only offset.
+
+### Slide-in panels (`BoxBody.panels`)
+
+- Any of the four walls can be printed as a separate flat plate that drops into a channel grooved
+  into the two adjacent walls, the floor, and (optionally) the lid's underside. Cutouts placed on
+  that face are cut into the **plate**, not the base — which is the point: a connector panel can be
+  reprinted on its own when the port layout changes.
+- **Channels are cut after the lid mating geometry**, so a screw boss or friction lip can never end
+  up blocking the slot the plate has to slide down.
+- **Plates are trimmed against the outer shell** so their ends follow the body's corner style
+  instead of poking out past a rounded corner.
+- **Where two panels meet, their ends stop clear of the corner radius** (`cornerInset + 0.6`, not
+  just the neighbouring channel). Found by the "all four walls are panels" test: with the default
+  3mm rounded corners, stopping at the neighbouring channel leaves a corner post made of nothing
+  but a sliver of the corner arc, which comes out non-manifold.
+- **Lid capture depth is clamped to the skirt actually available** and drops to zero (plate flush
+  with the base rim, held by the flat lid) when there isn't enough. Without this, a shallow lid
+  gets its groove cut past its own interior ceiling, leaving a razor-thin ledge — a real
+  non-manifold pinch, 16 edges shared by 4 triangles, found via the CM4 preset.
+
+### External mounts (`external-mount` feature)
+
+- The outward-growing counterpart to the interior-only `standoff`: `flange` is a flat wall-mount
+  ear (optional round/slot/keyhole hole, the slot and keyhole both running along the outward
+  direction so the screw position is adjustable / the case can be dropped over a screw head and
+  slid to trap it); `boss` is an external post — a foot, a spacer, a bolt pillar — with an optional
+  blind hole. Both union into whichever part owns that patch of the face, so a boss placed above
+  the lid seam attaches to the lid.
+- **`orientOutward` is a second orientation helper alongside `orientAlongFace`**, because a
+  one-sided solid needs the sign of "outward" right on every face, where a symmetric cutout
+  extrusion never did. On the faces whose (u, v, n) frame is left-handed (back, left, bottom) no
+  pure rotation matches all three axes; those flip v, which is invisible here since the mount
+  geometry's only asymmetric axis is the normal.
+- Flange ears are built in their own natural frame (X across, Y outward, Z through the plate) and
+  rotated into the local frame, so the hole cross-sections are drawn in the plane you'd draw them
+  on paper.
+
+### Exterior lid screw columns (`ScrewSpec.placement`)
+
+- `'exterior'` puts the columns outside the front and back walls instead of inside the cavity. This
+  is what a case whose board fills the interior has to use — there is no floor left for corner
+  bosses — and it's the one case the existing `edgeInset` lever can't reach. Left/right walls are
+  left alone until count 8, since those are the faces most likely to be slide-in panels.
+- Unlike an interior boss (which lives entirely in the base, under a flat lid), an exterior column
+  is a continuous post that the split cuts in half, so the lid gets **matching material** plus its
+  clearance hole rather than a hole alone.
+
+### Waveshare CM4 Dual ETH WiFi6 preset
+
+- Full four-piece case: 6-hole board mount, 12 port cutouts across the two end plates (including
+  four SMA bulkheads above the HAT stack), intake louvres on the left plate and the front wall, a
+  40mm fan grille + screw holes in the lid, and four slotted wall-mount tabs.
+- **Provenance is different from every other preset here and is flagged as such**: the board
+  outline, hole pattern and port silhouettes were measured off Waveshare's vendor STEP model (they
+  publish no dimensioned drawing), by way of the contributed CadQuery design. Same "verify before
+  printing" tier, but the mounting holes are the thing worth checking first.
+- **Measured openings ride library entries plus a `connectorOverride`** rather than becoming
+  anonymous custom holes, so the inspector still names the connector and offers "reset to library
+  size". The board's USB-A ports are mounted vertically, so their opening is tall and narrow — a
+  good example of why the override exists.
+- Preset plumbing grew to match: `BoardIoCutout` can now carry a vent, an external mount or a size
+  override, and can sit on the horizontal top/bottom faces (`acrossMm`); `BoardPresetBody` can pin
+  the lid type, screw placement and panel spec. Applying a preset **replaces** panels (unlike the
+  gasket, which is preserved) — panels change how many pieces the case prints as and which piece
+  each cutout lands on, so inheriting them silently would reshape the new case.
+- The preset's `splitHeight` (41mm) is deliberately below the source design's lid plane: it keeps a
+  real lid skirt for the end plates to be captured in, and still clears the tallest opening (the
+  SMA row tops out at 37.2mm).
+
+### Verification
+
+- `tsc -b`, `oxlint`, `npm run build` clean; **73 vitest tests passing** (was 43). New CSG coverage:
+  panel part counts and plate dimensions, cutout routing to the plate, all four walls as panels,
+  panels across every lid type, each external mount style watertight, and — for the CM4 preset —
+  part list, feature routing, board-relative position round-trip, and a **geometric probe check**
+  that each measured port is a real hole through the end plate at its measured height (a 0.8mm
+  cube intersected against the plate must be empty at the port center and solid just beside it).
+- Playwright against the dev server: panels toggled on from the Body card produce visibly separate
+  plates in exploded view; the CM4 preset applies (27 features: 1 board-mount, 12 connector
+  cutouts, 7 custom holes, 3 vents, 4 external mounts) and survives a full page reload through
+  autosave; toggling a panel face off drops that part and undo restores it; a flange and a boss
+  placed by hand land on the clicked wall (the boss above the seam correctly attaching to the lid);
+  the inspector's mount editor round-trips a hole-style change; and Export produces a zip with four
+  STLs plus `bom.csv`. Zero console errors across every run.
+
+## Fans, corner mounts, screw column variations (2026-08-11 session, follow-up)
+
+Second round on the same request, filling the gaps the CM4 port exposed.
+
+### Fan mounts (`fan-mount` feature, `csg/fanLibrary.ts`)
+
+- **Ten standard sizes** (20 → 120mm) with their square bolt-circle pitches, in the same
+  "starter values, verify against your actual part" tier as the connector and screw libraries. The
+  20mm entry is flagged as the least standardized (some use 15.5mm rather than 16mm).
+- **The concentric ring grille is ported from the contributed CadQuery design**, generalized to any
+  fan size: open annuli from the hub outward, cut back by N radial spokes so the middle stays tied
+  to the rim. Every span is a short bridge between two rings, which is what makes it print without
+  support. `honeycomb` (reusing the vent hex generator, clipped to the fan circle) and `open` (a
+  plain round hole for a fan with its own guard) are the alternatives.
+- **The hub hole is restored after the spokes are cut**, not before — cutting spokes across a
+  grille that already contains the hub fills the middle back in. Caught by a probe test; it's also
+  what the source design does (its central hole is the last operation).
+- **Mounting bosses run from the outer surface inward through the wall**, so `bossHeight` is what
+  actually stands proud on the inside. The first version measured from the outer face, which on a
+  2mm wall turned a 3mm boss into 1mm of usable pad. Also caught by a probe test.
+- A fan mount is the only feature that is **both additive and subtractive** — bosses union in, then
+  the same cut bores the screw holes through them — so `buildFanMount` returns `{ add, cut }` and
+  `generateEnclosure` applies both to the same part.
+- The CM4 preset now uses a real 40mm fan mount instead of a honeycomb vent plus four hand-placed
+  circles.
+
+### Corner-anchored external mounts (`ExternalMountSpec.anchor`)
+
+- `'corner'` snaps a mount to whichever vertical corner of a box its `u` is nearest and aims it out
+  along the diagonal, welding into **both** walls — the four-ears-at-the-corners pattern most
+  wall-mounted project boxes use. `u` picks the end of the face, `v` still sets the height.
+- **Corner ears sink deeper into the case than face-mounted ones**: a rounded or chamfered corner
+  cuts the corner point away by `r*(sqrt2 - 1)` along the diagonal, so the embed depth adds that
+  back. Without it the ear would float next to a radiused corner instead of welding to it.
+- **A corner mount always belongs to the base/lid, never a panel**, even when its face is a panel
+  face — panels stop short of the corners, so the ear physically hangs off the corner post
+  (`featurePart` has an explicit carve-out for this).
+- `cornerAnchor()` lives in `csg/faceFrame.ts` with the rest of the shape-aware placement math, so
+  the CSG and the viewport's marker placement can't drift.
+- Inspector adds a **"Put one on each corner"** action: the four vertical corners are exactly
+  front/back × u∈{0,1}, so it clones the mount onto the three it isn't on.
+
+### Screw column variations (`ScrewSpec`)
+
+- **`shape`**: round or square columns. **`size`**: M4 joins M2/M2.5/M3 (the library grew a
+  `headDiameter` per size for counterbores).
+- **`columnHeight`**: a column shorter than the base hangs from the lid seam instead of standing on
+  the floor, leaving the space underneath clear for a board or cable run. A hanging column has no
+  floor holding it up, so its edge inset is **capped at just inside the boss radius** — it has to
+  reach into the wall far enough to weld, overriding a user `edgeInset` that would leave it
+  floating.
+- **`headStyle: 'counterbore'`** conceals the screw head in a pocket in the lid. Depth is clamped
+  against the material actually over the screw — for an interior boss that's the lid's top slab
+  (the wall thickness), *not* the lid piece's height, since the piece is a tray with air under it.
+  The first version used the piece height and cut straight through into the cavity: another probe
+  test catch. Exterior columns are solid to the top, so they're clamped against the piece instead.
+- BOM now names the screw **`M3x12mm`** rather than just `M3`, deriving the length from what it has
+  to pass through (lid, less any counterbore) plus its engagement in the column, rounded up to the
+  next even millimetre.
+
+### Verification
+
+- 89 vitest tests passing (was 73). The new ones lean on a **geometric probe helper** (intersect a
+  0.8mm cube with a part and ask whether it's empty), which is what caught all three of the bugs
+  above — every one of them produced perfectly watertight geometry that was simply the wrong shape,
+  so watertightness checks alone would have passed them.
+- Playwright: all ten fan sizes render in a new palette group and a placed 40mm fan shows its ring
+  grille and four screw holes in the lid; a flange switched to corner anchoring plus "put one on
+  each corner" yields four diagonal ears (verified in the store as four distinct corners); square +
+  concealed + 12mm columns apply live and the shortened columns are visibly hanging from the seam
+  with the floor clear beneath them; the CM4 preset re-applies (23 features now the fan is one
+  feature instead of five) and survives a reload. No console errors.
+
+## Support pads + ghost fan bodies (2026-08-11 session, third round)
+
+The two items the CM4 port had left on the table.
+
+### Support pads (`support-pad` feature)
+
+- A blind pillar on the interior floor with **no screw hole** — something for an unsupported board
+  edge to rest on. Carrier boards whose mounting holes are all down one side cantilever the
+  opposite edge over open air, and pushing a cable into a connector on that edge flexes the PCB.
+  Rectangular or round, sized in plan, height set to match the board's standoffs so it meets the
+  underside without lifting it.
+- Floor-only, exactly like a standoff and a board mount: `featurePart` routes it to the base and
+  `App`'s placement guard ignores clicks on any other face (verified — a click on an interior wall
+  leaves the palette armed rather than placing something in the wrong plane).
+- **The CM4 preset ships the source design's four bands** (6mm across, 5.1/4.1/2/2mm deep, 4mm
+  tall) under the right edge that carries the HDMI/USB/Ethernet stack. They ride the same
+  board-relative `io` list as everything else, on the `bottom` face via `alongMm`/`acrossMm`.
+
+### Ghost fan bodies
+
+- `FanMountSpec.bodyDepth` records the fan's own thickness (40x40x**10**), defaulted per size from
+  `FAN_PRESETS`. Nothing is cut or printed from it — the viewport draws the fan's envelope as a
+  translucent volume hanging off the inside of its face, at the end of the same wall + boss stack
+  the CSG builds through, so you can see whether it fouls a HAT or a heatsink under it.
+- Orientation is by quaternion from local +Z onto the face's outward normal, then a spin about that
+  axis for `rotationDeg` — a square fan's envelope really does change when it's turned. Works on
+  any face, including a cylinder's curved side.
+- **The "Show Ghost Boards" toggle became "Show Ghost Parts"** and now covers both ghosts (prop
+  `showGhostBoards` → `showGhosts`, `ghostBoardGroupRef` → `ghostGroupRef`). One concept, one
+  switch: display-only hardware you're designing around. Hidden features are excluded from both
+  ghosts now, which the board ghost wasn't doing before.
+
+### Verification
+
+- 93 vitest tests passing (was 89). Pad coverage is probe-based: it stands on the floor, stops at
+  its stated height, has **no** bore through the middle (the thing that distinguishes it from a
+  standoff), is the size it claims in both axes, and meets the underside of a board sitting on
+  standoffs of the same height. The CM4 preset test asserts all four pads route to the base, sit
+  under the board's right edge, and match the board-mount's standoff height.
+- Playwright: the CM4 preset places four pads with the source design's dimensions; a hand-placed
+  pad lands on the interior floor and a click on a wall is correctly ignored; the ghost fan body
+  renders inside the case for both a lid-mounted fan (CM4) and a wall-mounted one, and disappears
+  with the Show Ghost Parts toggle. No console errors.
+
+## Pad rows + design checks (2026-08-11 session, fourth round)
+
+Closing the two gaps the support-pad work left: placing a run of pads one at a time, and having no
+way to tell a pad is doing nothing.
+
+### Pad rows and the overhang planner
+
+- **`SupportPadSpec` gained `count` / `pitch` / `axis`**: one feature emits a row of evenly spaced
+  pillars, the same one-feature-many-solids arrangement a board-mount uses for its standoffs, so a
+  run moves and edits as a unit. The row direction is the pad's axis turned by the feature's own
+  rotation, so rotating a row rotates the whole arrangement instead of skewing it.
+- **`csg/faceFrame.ts`'s `supportPadPositions()` is the single source of where the pillars are** —
+  the CSG builds them there, the checks test them there, and they can't drift apart.
+- **New `state/boardSupport.ts`: `planOverhangSupport()`**, behind a "Prop up the *right* edge"
+  button on the board-mount inspector. It measures each board edge's distance to its nearest
+  mounting hole, takes the worst, and returns a ready-made pad row just inside that edge at the
+  board's own standoff height. Returns null (and the inspector says so) when every edge is within
+  15mm of a hole — a four-corner board doesn't need propping.
+- Sanity check on the heuristic: fed the Waveshare CM4's real hole pattern, it puts the pads at
+  x = 41.765mm — the same inset the contributed design chose by hand. There's a test pinning that.
+- **Rows don't replace individual pads.** The CM4's own four bands are irregular (5.1 / 4.1 / 2 /
+  2mm deep at uneven spacings) because they dodge components on the board's underside, so that
+  preset keeps its four hand-placed pads. The inspector hint says as much.
+
+### Design checks (`state/designChecks.ts`)
+
+- A pure `runDesignChecks(project)` returning advisory findings, surfaced in a new **Checks card**
+  (badge = count, each row selects its feature) and as a **magenta wireframe halo** around the
+  flagged feature's marker in the viewport. Nothing blocks an export — every rule is a heuristic
+  about intent, and the user knows more about their hardware than we do.
+- Three rules to start, all about support pads because that's where the ambiguity is: not under any
+  board, height ≠ the host board's standoff height (it either won't touch or will lift the board),
+  and overlapping a standoff.
+- **Deliberately quiet**: a rule only fires when the project holds enough information to be sure.
+  A pad in a project with no board at all is *not* flagged — there's nothing to check it against,
+  and the user may be propping something the app knows nothing about. Hidden features are excluded
+  on both sides. Rotated boards are handled by testing points in the board's own frame.
+- The real value is the seam: `designChecks.ts` is where feature-collision, thin-wall and
+  seam-straddling rules go next, all of which DESIGN.md's own next-steps list already wants.
+- **Every shipped preset is asserted check-clean** in `presetFeatures.test.ts`. A preset that trips
+  a rule is either a broken preset or a broken rule, and we want to hear it there rather than from
+  someone applying it.
+
+### Verification
+
+- 112 vitest tests passing (was 93). The checks and the planner are pure functions, so most of the
+  new tests need no WASM: row geometry (including rotation and a zero pitch collapsing to one
+  pillar), each rule firing on the mistake it's for, each rule staying silent when it can't know,
+  a rotated board changing what counts as "underneath", the planner declining a four-corner board,
+  and the planner's own output passing the checks it would be judged by.
+- Playwright: applying the CM4 preset and selecting its board-mount offers "Prop up the right
+  edge", which adds a 3-pad row at 46.5mm pitch and 4mm height; the Checks card stays empty for
+  that (and for every preset), then fires "3.0mm taller than the board's standoffs" when the row's
+  height is raised and "not under a board" when it's dragged off, with the halo appearing on the
+  flagged marker and a click on a finding selecting its feature. No console errors.
+- One UI bug found and fixed while verifying: the Checks card was created with
+  `defaultOpen={findings.length > 0}`, and `SectionCard` reads `defaultOpen` exactly once — so the
+  card stayed collapsed when the first finding appeared. It's always open now.
+
 ## Next steps (suggested order)
 
 All phases in DESIGN.md §13 (0 through 5) are implemented and verified, plus the 2026-07-12
@@ -448,8 +730,17 @@ board mounts). Remaining ideas, roughly by value for radio projects:
 
 - Text embossing/engraving (project name, port labels next to cutouts) — needs a font→polygon
   path (e.g. opentype.js) feeding a Manifold extrude.
-- Case-mounting features: pole/mast clamp bosses, keyhole wall hangers, external flange tabs;
-  zip-tie anchors (PG7/PG9/PG11 cable glands landed as library entries 2026-07-20).
+- Case-mounting features: pole/mast clamp bosses (still nothing anywhere in the app); zip-tie
+  anchors. Keyhole wall hangers, external flange tabs and corner ears landed 2026-08-11 as the
+  `external-mount` feature; cable glands (PG7/PG9/PG11) landed as library entries 2026-07-20.
+- Panels: no per-panel thickness/groove override yet (one `PanelSpec` covers every selected face),
+  and a panel can't yet be split by the lid seam — a face is either a plate up to the split or it
+  isn't. Neither blocked anything so far.
+- Fans: no finger-guard-only mode (grille without screw holes) and no rectangular blower support.
+  The fan's body *is* now drawn as a ghost (2026-08-11), so clearance under it can be judged by eye.
+- Design checks cover support pads only so far (see the 2026-08-11 section). The obvious next rules,
+  all wanted by DESIGN.md's own list: two features overlapping on the same face, a cutout straddling
+  the lid seam, a wall thinner than two perimeters, a connector taller than the interior.
 - Battery features: 18650 holder pocket, LiPo tray with strap slots.
 - Printability: chamfered hole edges, thin-wall/feature-collision warnings, snap-fit wedge
   profile upgrade (see Phase 5 notes), 3MF export alongside STL.
@@ -756,3 +1047,51 @@ never-verified Docker build.
 
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->
+
+- **2026-08-11**: Multi-part enclosures, per user request (a contributed CadQuery design for the
+  Waveshare CM4-DUAL-ETH-WIFI6-BASE, plus "add features to support designing cases like this") —
+  see the "Multi-part enclosures" section above for the full rationale. (1) The CSG pipeline now
+  returns a list of parts instead of a base/lid pair, with `csg/parts.ts` owning which piece each
+  feature belongs to. (2) New `BoxBody.panels`: any wall can be printed as a slide-in plate, with
+  cutouts on that face routed into the plate. (3) New `external-mount` feature (wall-mount flange
+  ears with round/slot/keyhole holes, and external bosses). (4) New `ScrewSpec.placement:
+  'exterior'` for cases whose board leaves no floor for interior corner bosses. (5) The Waveshare
+  CM4 preset itself, with the preset plumbing (vents/mounts/overrides/top-face placement/panels)
+  it needed. Two real geometry bugs caught during verification: a non-manifold corner post where
+  two panels meet on a rounded corner, and a non-manifold pinch when a shallow lid's capture groove
+  cuts past its own ceiling. 73 tests passing (was 43); browser-verified end to end.
+
+- **2026-08-11**: Follow-up round per user request (fan support "40mm, 30mm and 20mm are pretty
+  standard", the script's circular grille, corner-mountable flanges, and screw column variations
+  "shape, screw size length and the option to also conceal them" plus internal columns that don't
+  run floor-to-lid) — see the "Fans, corner mounts, screw column variations" section above.
+  (1) New `fan-mount` feature with a ten-size library and the source design's concentric ring
+  grille, honeycomb and open alternatives, plus optional inner mounting bosses; the CM4 preset now
+  uses it. (2) `ExternalMountSpec.anchor: 'corner'` for diagonal corner ears that weld into both
+  walls, with a one-click "put one on each corner". (3) `ScrewSpec` gained column shape, M4,
+  explicit column height (hanging columns that leave the floor clear) and counterbored/concealed
+  heads; the BOM now derives the screw length. Three geometry bugs caught by the new probe-based
+  tests, each of which produced watertight-but-wrong geometry: a spoke-filled fan hub, bosses
+  measured from the wrong face, and a counterbore cutting through the lid into the cavity.
+  89 tests passing (was 73); browser-verified end to end.
+
+- **2026-08-11**: Closed the two follow-ups flagged at the end of the previous round, per user
+  request — see the "Support pads + ghost fan bodies" section above. (1) New `support-pad` feature:
+  a blind floor pillar (no screw hole) for propping an unsupported/cantilevered board edge, with
+  the CM4 source design's four bands added to that preset. (2) `FanMountSpec.bodyDepth` plus a
+  translucent ghost of the fan's body inside the case, so clearance to a HAT or heatsink under it
+  is visible; the "Show Ghost Boards" toggle became "Show Ghost Parts" and now covers both ghosts.
+  93 tests passing (was 89); browser-verified, including that a pad click on a wall is ignored the
+  same way a standoff's is.
+
+- **2026-08-11**: Follow-up on the two gaps the support-pad round left, per user request ("what can
+  we do about the no pad every nmm or checker?") — see the "Pad rows + design checks" section
+  above. (1) `SupportPadSpec` gained count/pitch/axis so one feature emits a row, with
+  `supportPadPositions()` in `faceFrame.ts` as the shared source of truth for where the pillars
+  are; plus `state/boardSupport.ts`'s `planOverhangSupport()` behind a "Prop up the <edge> edge"
+  button on the board-mount inspector, which finds the cantilevered edge from the hole pattern and
+  builds the row (it independently lands on the same 41.765mm inset the CM4 design chose by hand).
+  (2) New `state/designChecks.ts` + a Checks card + magenta halos in the viewport, with three
+  conservative support-pad rules and an assertion that every shipped preset stays check-clean.
+  112 tests passing (was 93); browser-verified, including one UI bug found there (the Checks card
+  stayed collapsed when its first finding appeared, because SectionCard reads defaultOpen once).

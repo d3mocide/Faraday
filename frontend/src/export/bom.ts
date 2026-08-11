@@ -1,5 +1,8 @@
 import { findConnector } from '../connectors/library';
-import type { EnclosureProject } from '../types/project';
+import { effectiveSplitHeight } from '../csg/lidSplit';
+import { counterboreDepth } from '../csg/primitives';
+import { SCREW_HOLE_SPECS } from '../csg/screwLibrary';
+import type { EnclosureProject, ScrewSpec } from '../types/project';
 
 interface BomRow {
   item: string;
@@ -10,6 +13,28 @@ interface BomRow {
 
 function csvEscape(value: string): string {
   return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+/**
+ * Length of lid screw to buy: what it has to pass through (the lid, less any counterbore the head
+ * drops into) plus how far it engages the column below, rounded up to the next even millimetre --
+ * screws come in 2mm steps and a slightly long screw bottoming out is the failure this rounding
+ * direction risks, so engagement is deliberately kept a hair short of the column.
+ */
+function screwLengthMm(project: EnclosureProject, screw: ScrewSpec): number {
+  const { body } = project;
+  const splitHeight = effectiveSplitHeight(body);
+  const lidThickness = Math.max(body.outer.height - splitHeight, 0.5);
+  // Interior columns sit under the lid's top slab; exterior ones are solid to the top.
+  const solidTop =
+    screw.placement === 'exterior' ? lidThickness : Math.min(lidThickness, body.wallThickness);
+  const through = lidThickness - counterboreDepth(screw, solidTop);
+  const columnHeight = Math.min(screw.columnHeight ?? splitHeight, splitHeight);
+  const engagement =
+    screw.insertType === 'heat-set'
+      ? SCREW_HOLE_SPECS[screw.size].heatSetDepth
+      : Math.max(Math.min(columnHeight - 1.5, 8), 2);
+  return Math.ceil((through + engagement) / 2) * 2;
 }
 
 function perimeterMm(project: EnclosureProject): number {
@@ -29,12 +54,15 @@ export function generateBomCsv(project: EnclosureProject): string {
   const rows: BomRow[] = [];
 
   if (body.lid.type === 'screw-boss' && body.lid.screw) {
-    const { size, insertType, count } = body.lid.screw;
+    const screw = body.lid.screw;
+    const { size, insertType, count } = screw;
     rows.push({
-      item: `${size} machine screw`,
+      item: `${size}x${screwLengthMm(project, screw)}mm machine screw`,
       quantity: count,
       category: 'Hardware',
-      notes: insertType === 'heat-set' ? 'Threads into a heat-set insert in the base boss' : 'Self-taps into the base boss',
+      notes:
+        (insertType === 'heat-set' ? 'Threads into a heat-set insert in the base boss' : 'Self-taps into the base boss') +
+        (screw.headStyle === 'counterbore' ? '; head sits in a counterbore in the lid' : ''),
     });
     if (insertType === 'heat-set') {
       rows.push({
@@ -91,6 +119,26 @@ export function generateBomCsv(project: EnclosureProject): string {
       quantity,
       category: 'Printed',
       notes: `Ø${outerDiameter}mm boss, Ø${screwHoleDiameter}mm screw hole -- pick a screw that matches`,
+    });
+  }
+
+  // External mounts imply hardware the case itself doesn't provide: a screw (and usually an anchor)
+  // per hole, into whatever the case is being fixed to. Grouped by hole size, like the standoffs.
+  const mountGroups = new Map<string, { quantity: number; diameter: number; hole: string }>();
+  for (const feature of features) {
+    if (feature.type !== 'external-mount' || !feature.mount || feature.mount.hole === 'none') continue;
+    const { holeDiameter, hole } = feature.mount;
+    const key = `${holeDiameter}/${hole}`;
+    const existing = mountGroups.get(key);
+    if (existing) existing.quantity += 1;
+    else mountGroups.set(key, { quantity: 1, diameter: holeDiameter, hole });
+  }
+  for (const { quantity, diameter, hole } of mountGroups.values()) {
+    rows.push({
+      item: 'Mounting screw (case to wall/panel)',
+      quantity,
+      category: 'Hardware',
+      notes: `Through a Ø${diameter}mm ${hole} in an external mount -- add wall anchors to suit the surface`,
     });
   }
 

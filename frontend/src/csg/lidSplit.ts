@@ -1,5 +1,4 @@
-import type { EnclosureBody, Feature } from '../types/project';
-import { bodyGeometry, faceFrame } from './faceFrame';
+import type { EnclosureBody } from '../types/project';
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max));
@@ -13,16 +12,5 @@ export function effectiveSplitHeight(body: EnclosureBody): number {
   return clamp(body.lid.splitHeight, wallThickness + 1, body.outer.height - wallThickness - 1);
 }
 
-/** Which half of the split a feature lands on — the rule generateEnclosure uses to pick its
- * boolean target: 'top' is always the lid, 'bottom' (and standoffs, which always mount to the
- * base floor) always the base, and side-wall features by their world-space height. */
-export function featureOnLid(
-  feature: Pick<Feature, 'type' | 'face' | 'u' | 'v'>,
-  body: EnclosureBody,
-): boolean {
-  if (feature.type === 'standoff' || feature.type === 'board-mount') return false;
-  if (feature.face === 'top') return true;
-  if (feature.face === 'bottom') return false;
-  const z = faceFrame(feature.face, bodyGeometry(body)).toWorld(feature.u, feature.v)[2];
-  return z > effectiveSplitHeight(body);
-}
+// Which piece a given feature lands on used to live here as featureOnLid(); it moved to
+// csg/parts.ts as featurePart() when slide-in panels made "base or lid" too few answers.

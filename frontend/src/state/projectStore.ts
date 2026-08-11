@@ -7,8 +7,14 @@ import type {
   Feature,
   GasketSpec,
   LidType,
+  PanelFace,
+  PanelSpec,
   ScrewCount,
   ScrewInsertType,
+  ScrewColumnShape,
+  ScrewHeadStyle,
+  ScrewPlacement,
+  ScrewSpec,
   ScrewSize,
   Units,
 } from '../types/project';
@@ -23,6 +29,17 @@ export interface BoardPresetBody {
    * channel on by default -- omitted everywhere else so applying a board preset never clobbers a
    * gasket the user already had enabled (see applyBoardPreset below). */
   gasket?: GasketSpec;
+  /** Slide-in end panels, for presets whose case is genuinely multi-part (e.g. the Waveshare CM4
+   * base). Unlike `gasket` this one is *replaced* rather than merged: panels change how many
+   * pieces the case prints as and which piece each port cutout lands on, so carrying a previous
+   * preset's panels into a new one would silently reshape the new case. */
+  panels?: PanelSpec;
+  /** Presets that model a whole case (rather than just sizing a box around a board) can pin the
+   * lid style. Omitted everywhere else, which leaves whatever the user already had. */
+  lidType?: LidType;
+  /** Forced to 'exterior' by presets whose board fills the interior, leaving no floor for corner
+   * bosses -- see ScrewPlacement. */
+  screwPlacement?: ScrewPlacement;
 }
 
 interface ProjectStore {
@@ -43,9 +60,19 @@ interface ProjectStore {
   setScrewInsertType: (insertType: ScrewInsertType) => void;
   setScrewCount: (count: ScrewCount) => void;
   setScrewEdgeInset: (edgeInset: number | undefined) => void;
+  setScrewPlacement: (placement: ScrewPlacement) => void;
+  setScrewColumnShape: (shape: ScrewColumnShape) => void;
+  setScrewHeadStyle: (headStyle: ScrewHeadStyle) => void;
+  setScrewColumnHeight: (height: number | undefined) => void;
   setGasketEnabled: (enabled: boolean) => void;
   setGasketWidth: (value: number) => void;
   setGasketDepth: (value: number) => void;
+  setPanelsEnabled: (enabled: boolean) => void;
+  togglePanelFace: (face: PanelFace) => void;
+  setPanelThickness: (value: number) => void;
+  setPanelFitClearance: (value: number) => void;
+  setPanelGrooveDepth: (value: number) => void;
+  setPanelCaptureInLid: (value: boolean) => void;
   addFeature: (feature: Feature) => void;
   updateFeature: (id: string, patch: Partial<Feature>) => void;
   removeFeature: (id: string) => void;
@@ -170,11 +197,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, count } } } };
       }),
 
-    setScrewEdgeInset: (edgeInset) =>
-      mutate((p) => {
-        const screw = p.body.lid.screw ?? defaultScrewSpec();
-        return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, edgeInset } } } };
-      }),
+    setScrewEdgeInset: (edgeInset) => mutate(patchScrew((screw) => ({ ...screw, edgeInset }))),
+
+    setScrewPlacement: (placement) => mutate(patchScrew((screw) => ({ ...screw, placement }))),
+
+    setScrewColumnShape: (shape) => mutate(patchScrew((screw) => ({ ...screw, shape }))),
+
+    setScrewHeadStyle: (headStyle) => mutate(patchScrew((screw) => ({ ...screw, headStyle }))),
+
+    // undefined restores the default full-height column (floor to seam).
+    setScrewColumnHeight: (height) =>
+      mutate(patchScrew((screw) => ({ ...screw, columnHeight: height }))),
 
     setGasketEnabled: (enabled) =>
       mutate((p) => ({
@@ -196,6 +229,42 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         const gasket = p.body.lid.gasket ?? defaultGasketSpec();
         return { ...p, body: { ...p.body, lid: { ...p.body.lid, gasket: { ...gasket, depth: value } } } };
       }),
+
+    // Slide-in panels are a box-body property (a cylinder has no flat wall to replace), so all six
+    // actions below no-op on a cylinder -- the inspector only shows the controls for a box.
+    setPanelsEnabled: (enabled) =>
+      mutate((p) =>
+        p.body.shape !== 'box'
+          ? p
+          : {
+              ...p,
+              body: {
+                ...p.body,
+                panels: enabled ? (p.body.panels ?? defaultPanelSpec(p.body.wallThickness)) : undefined,
+              },
+            },
+      ),
+
+    togglePanelFace: (face) =>
+      mutate((p) => {
+        if (p.body.shape !== 'box') return p;
+        const panels = p.body.panels ?? defaultPanelSpec(p.body.wallThickness);
+        const faces = panels.faces.includes(face)
+          ? panels.faces.filter((f) => f !== face)
+          : [...panels.faces, face];
+        return { ...p, body: { ...p.body, panels: { ...panels, faces } } };
+      }),
+
+    setPanelThickness: (value) => mutate(patchPanels((panels) => ({ ...panels, thickness: value }))),
+
+    setPanelFitClearance: (value) =>
+      mutate(patchPanels((panels) => ({ ...panels, fitClearance: value }))),
+
+    setPanelGrooveDepth: (value) =>
+      mutate(patchPanels((panels) => ({ ...panels, grooveDepth: value }))),
+
+    setPanelCaptureInLid: (value) =>
+      mutate(patchPanels((panels) => ({ ...panels, captureInLid: value }))),
 
     addFeature: (feature) => mutate((p) => ({ ...p, features: [...p.features, feature] })),
 
@@ -226,7 +295,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
             ...p.body.lid,
             splitHeight: preset.splitHeight,
             ...(preset.gasket ? { gasket: preset.gasket } : {}),
+            ...(preset.lidType ? { type: preset.lidType } : {}),
+            ...(preset.screwPlacement
+              ? { screw: { ...(p.body.lid.screw ?? defaultScrewSpec()), placement: preset.screwPlacement } }
+              : {}),
           },
+          panels: preset.panels,
         },
         features: features ?? [],
       })),
@@ -255,10 +329,43 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
   };
 });
 
-function defaultScrewSpec(): { size: ScrewSize; insertType: ScrewInsertType; count: ScrewCount } {
+function defaultScrewSpec(): ScrewSpec {
   return { size: 'M3', insertType: 'heat-set', count: 4 };
 }
 
 function defaultGasketSpec(): { width: number; depth: number } {
   return { width: 1.5, depth: 1 };
+}
+
+/** Left + right end plates: the common case (a connector panel at each end of a board). */
+function defaultPanelSpec(wallThickness: number): PanelSpec {
+  return {
+    faces: ['left', 'right'],
+    thickness: Math.max(wallThickness, 1.2),
+    fitClearance: 0.3,
+    grooveDepth: 1.2,
+    captureInLid: true,
+  };
+}
+
+/** Shared shape of the "edit one field of the screw spec" actions above. Fills in the default spec
+ * first, so the controls work even on a project whose lid type never carried one. */
+function patchScrew(
+  update: (screw: ScrewSpec) => ScrewSpec,
+): (project: EnclosureProject) => EnclosureProject {
+  return (p) => ({
+    ...p,
+    body: { ...p.body, lid: { ...p.body.lid, screw: update(p.body.lid.screw ?? defaultScrewSpec()) } },
+  });
+}
+
+/** Shared shape of the "edit one field of the panel spec" actions above. */
+function patchPanels(
+  update: (panels: PanelSpec) => PanelSpec,
+): (project: EnclosureProject) => EnclosureProject {
+  return (p) => {
+    if (p.body.shape !== 'box') return p;
+    const panels = p.body.panels ?? defaultPanelSpec(p.body.wallThickness);
+    return { ...p, body: { ...p.body, panels: update(panels) } };
+  };
 }

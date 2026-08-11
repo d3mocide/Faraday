@@ -1,4 +1,4 @@
-import type { EnclosureBody, Face } from '../types/project';
+import type { EnclosureBody, Face, Feature } from '../types/project';
 
 export interface FaceFrame {
   /** Maps normalized (u,v) in [0,1] on this face to a world-space [x,y,z] point on the outer surface. */
@@ -190,4 +190,58 @@ export function closestFace(normal: [number, number, number], shape: 'box' | 'cy
 
 export function clamp01(value: number): number {
   return Math.min(Math.max(value, 0), 1);
+}
+
+/** Which box corner a corner-anchored mount belongs to, and which way "out" points there. Returns
+ * null whenever corner anchoring doesn't apply, which is the signal to fall back to face
+ * placement: a cylinder has no vertical corners, and top/bottom aren't vertical faces. */
+export function cornerAnchor(
+  feature: Pick<Feature, 'face' | 'u' | 'v' | 'mount'>,
+  geom: BodyGeometry,
+): { x: number; y: number; z: number; angleDeg: number } | null {
+  if (feature.mount?.anchor !== 'corner' || geom.shape !== 'box') return null;
+  const { face, u, v } = feature;
+  if (face === 'top' || face === 'bottom' || face === 'side') return null;
+
+  // u picks which end of its own face the mount is nearest; the face itself fixes the other axis.
+  const near = u < 0.5 ? -1 : 1;
+  const sx = face === 'left' ? -1 : face === 'right' ? 1 : near;
+  const sy = face === 'front' ? -1 : face === 'back' ? 1 : near;
+  return {
+    x: (sx * geom.length) / 2,
+    y: (sy * geom.width) / 2,
+    z: v * geom.height,
+    angleDeg: (Math.atan2(sy, sx) * 180) / Math.PI,
+  };
+}
+
+/**
+ * World (x, y) of every pillar a support-pad feature produces: just its own position, or a row of
+ * `count` pillars spaced `pitch` apart, centred on it. The row direction follows the pad's axis
+ * turned by the feature's own rotation, so rotating a row rotates the whole arrangement rather
+ * than skewing it. Shared by the CSG, the design checks and the viewport so all three agree on
+ * where the pillars actually are.
+ */
+export function supportPadPositions(
+  feature: Pick<Feature, 'u' | 'v' | 'rotationDeg' | 'pad'>,
+  geom: BodyGeometry,
+): Array<[number, number]> {
+  const [cx, cy] = faceFrame('bottom', geom).toWorld(feature.u, feature.v);
+  const spec = feature.pad;
+  const count = Math.min(Math.max(Math.round(spec?.count ?? 1), 1), 64);
+  const pitch = Math.max(spec?.pitch ?? 0, 0);
+  if (count === 1 || pitch === 0) return [[cx, cy]];
+
+  const theta = ((feature.rotationDeg ?? 0) * Math.PI) / 180;
+  const [dx, dy] =
+    spec?.axis === 'v'
+      ? [-Math.sin(theta), Math.cos(theta)]
+      : [Math.cos(theta), Math.sin(theta)];
+  const first = -((count - 1) * pitch) / 2;
+  const positions: Array<[number, number]> = [];
+  for (let i = 0; i < count; i++) {
+    const along = first + i * pitch;
+    positions.push([cx + dx * along, cy + dy * along]);
+  }
+  return positions;
 }

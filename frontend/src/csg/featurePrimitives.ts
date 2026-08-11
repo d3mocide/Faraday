@@ -1,6 +1,14 @@
 import type { CrossSection, Manifold, ManifoldToplevel } from 'manifold-3d';
-import type { ConnectorLibraryEntry, ConnectorSizeOverride, Face, Feature, VentSpec } from '../types/project';
-import { faceFrame, type BodyGeometry } from './faceFrame';
+import type {
+  ConnectorLibraryEntry,
+  ConnectorSizeOverride,
+  ExternalMountSpec,
+  Face,
+  FanMountSpec,
+  Feature,
+  VentSpec,
+} from '../types/project';
+import { cornerAnchor, faceFrame, supportPadPositions, type BodyGeometry } from './faceFrame';
 import { cylinderZ } from './primitives';
 
 interface HoleDims {
@@ -82,8 +90,11 @@ function extrudeThroughWall(
   feature: Feature,
   geom: BodyGeometry,
   wallThickness: number,
+  extraDepth = 0,
 ): Manifold {
-  const depth = wallThickness + 4; // margin so it fully punches through any wall thickness
+  // Margin so it fully punches through any wall thickness; extraDepth covers anything standing
+  // proud of the wall that the same cut has to clear (a fan's mounting bosses, say).
+  const depth = wallThickness + 4 + 2 * extraDepth;
   const solid = orientAlongFace(
     cross.extrude(depth, undefined, undefined, undefined, true),
     feature.face,
@@ -180,6 +191,143 @@ export function buildVentCutout(
   return extrudeThroughWall(cross, feature, geom, wallThickness);
 }
 
+/**
+ * Concentric ring grille: open annular slots from the hub outward, held together by radial spokes
+ * so the middle doesn't fall out. This is the grille profile from the CadQuery design the CM4
+ * preset came from, generalized to any fan size — it prints cleanly on an FDM machine (every span
+ * is a short bridge between two rings) and flows better than a honeycomb of the same open area.
+ */
+function fanGrilleCrossSection(wasm: ManifoldToplevel, spec: FanMountSpec): CrossSection {
+  const { CrossSection } = wasm;
+  const outerRadius = Math.max(spec.size / 2 - 1, 1);
+
+  if (spec.grille === 'open') return CrossSection.circle(outerRadius);
+
+  if (spec.grille === 'honeycomb') {
+    const area = outerRadius * 2;
+    const cell = Math.max(Math.min(spec.ringWidth * 1.6, area / 3), 1);
+    return ventCrossSection(wasm, {
+      pattern: 'honeycomb',
+      areaWidth: area,
+      areaHeight: area,
+      slotWidth: cell,
+      slotSpacing: cell + Math.max(spec.ringGap, 0.8),
+    }).intersect(CrossSection.circle(outerRadius));
+  }
+
+  const hubRadius = Math.max(spec.hubDiameter, 0) / 2;
+  const ringWidth = Math.max(spec.ringWidth, 0.5);
+  const gap = Math.max(spec.ringGap, 0.5);
+  const rings: CrossSection[] = [];
+
+  let inner = hubRadius > 0 ? hubRadius + gap : gap;
+  while (inner + ringWidth <= outerRadius) {
+    rings.push(CrossSection.circle(inner + ringWidth).subtract(CrossSection.circle(inner)));
+    inner += ringWidth + gap;
+  }
+  if (rings.length === 0) return CrossSection.circle(outerRadius);
+
+  let grille = CrossSection.union(rings);
+  // Spokes are cut back out of the open area, so each ring stays tied to its neighbours. Two
+  // crossing bars make four spokes, three make six, and so on.
+  const spokeCount = Math.max(Math.round(spec.spokeCount), 0);
+  const bars = Math.floor(spokeCount / 2);
+  const spokeWidth = Math.max(spec.spokeWidth, 0.4);
+  for (let i = 0; i < bars; i++) {
+    const bar = CrossSection.square([spokeWidth, outerRadius * 2 + 2], true).rotate((180 / bars) * i);
+    grille = grille.subtract(bar);
+  }
+  // The hub goes back in *after* the spokes, or the spokes crossing the middle would fill it. Each
+  // spoke arm is still tied to the rim through every ring bridge it crosses, so opening the centre
+  // costs nothing structurally -- and it's how the design this grille came from does it.
+  return hubRadius > 0 ? grille.add(CrossSection.circle(hubRadius)) : grille;
+}
+
+/** The four screw hole centers of a fan, on its own square bolt circle. */
+function fanHolePositions(spec: FanMountSpec): Array<[number, number]> {
+  const half = Math.max(spec.holePitch, 1) / 2;
+  return [
+    [-half, -half],
+    [half, -half],
+    [-half, half],
+    [half, half],
+  ];
+}
+
+/**
+ * Builds a fan opening: the grille plus its screw holes as one cut, and (optionally) raised bosses
+ * on the *inside* face for the fan to screw against. Returns both halves because unlike every other
+ * feature this one is neither purely additive nor purely subtractive -- the caller adds the bosses
+ * to its target part, then subtracts the cut so the screw holes are bored through them too.
+ */
+export function buildFanMount(
+  wasm: ManifoldToplevel,
+  feature: Feature,
+  geom: BodyGeometry,
+  wallThickness: number,
+): { add: Manifold | null; cut: Manifold } {
+  const spec = feature.fan;
+  if (!spec) throw new Error('fan-mount feature is missing its fan spec');
+
+  const holeRadius = Math.max(spec.screwHoleDiameter, 0.5) / 2;
+  const holes = fanHolePositions(spec).map(([hx, hy]) =>
+    wasm.CrossSection.circle(holeRadius).translate(hx, hy),
+  );
+  const cross = wasm.CrossSection.union([fanGrilleCrossSection(wasm, spec), ...holes]).rotate(
+    feature.rotationDeg,
+  );
+
+  const bossHeight = Math.max(spec.bossHeight, 0);
+  // The cut has to clear the wall *and* whatever the bosses add behind it, so the screw holes come
+  // out bored right through.
+  const cut = extrudeThroughWall(cross, feature, geom, wallThickness, bossHeight + wallThickness / 2);
+  if (bossHeight <= 0) return { add: null, cut };
+
+  // Bosses grow along -Z in the local frame, i.e. inward from the face -- orientOutward puts local
+  // +Z on the outward normal, so a solid spanning [-height, 0] lands inside the case. They start at
+  // the *outer* surface and run through the wall, so `bossHeight` is what actually stands proud on
+  // the inside (the part inside the wall just merges with it).
+  const bossDiameter = Math.max(spec.screwHoleDiameter + 4, 4);
+  const bossReach = bossHeight + wallThickness;
+  let bosses: Manifold | null = null;
+  for (const [hx, hy] of fanHolePositions(spec)) {
+    const post = cylinderZ(wasm, bossDiameter, bossReach, -bossReach).translate(hx, hy, 0);
+    bosses = bosses ? bosses.add(post) : post;
+  }
+  const [x, y, z] = faceFrame(feature.face, geom).toWorld(feature.u, feature.v);
+  const spun = feature.rotationDeg ? bosses!.rotate(0, 0, feature.rotationDeg) : bosses!;
+  return { add: orientOutward(spun, feature.face, feature.u).translate(x, y, z), cut };
+}
+
+/**
+ * Builds a support pad: a blind pillar standing on the interior floor, with no bore through it.
+ * Always mounts to the floor regardless of which face the feature nominally carries, same rule as
+ * a standoff.
+ */
+export function buildSupportPad(
+  wasm: ManifoldToplevel,
+  feature: Feature,
+  geom: BodyGeometry,
+  wallThickness: number,
+): Manifold {
+  const spec = feature.pad;
+  if (!spec) throw new Error('support-pad feature is missing its pad spec');
+  const height = Math.max(spec.height, 0.5);
+
+  let solid: Manifold | null = null;
+  for (const [x, y] of supportPadPositions(feature, geom)) {
+    const pillar =
+      spec.shape === 'round'
+        ? cylinderZ(wasm, Math.max(spec.width, 1), height, wallThickness).translate(x, y, 0)
+        : wasm.CrossSection.square([Math.max(spec.width, 1), Math.max(spec.depth, 1)], true)
+            .rotate(feature.rotationDeg)
+            .extrude(height)
+            .translate(x, y, wallThickness);
+    solid = solid ? solid.add(pillar) : pillar;
+  }
+  return solid!;
+}
+
 /** One floor-standing standoff solid (boss + screw pilot bore) centered at world (x, y). */
 function standoffAt(
   wasm: ManifoldToplevel,
@@ -212,6 +360,145 @@ export function buildStandoff(
   const [x, y] = faceFrame('bottom', geom).toWorld(feature.u, feature.v);
   return standoffAt(wasm, spec, x, y, wallThickness);
 }
+
+/**
+ * Rotation taking a solid built in the local frame (X = the face's u axis, Y = its v axis, Z = its
+ * outward normal) into world orientation. orientAlongFace above only has to get the extrusion
+ * *axis* right -- cutout solids are symmetric about their own origin, so the sign never matters --
+ * but an external mount is one-sided, so "outward" has to come out with the correct sign on every
+ * face. On the faces whose (u, v, n) frame is left-handed (back, left, bottom) no pure rotation can
+ * match all three axes at once; those flip v instead, which is invisible here because the mount
+ * geometry is symmetric in v -- its only asymmetric axis is the outward normal.
+ */
+function orientOutward(solid: Manifold, face: Face, u: number): Manifold {
+  switch (face) {
+    case 'top':
+      return solid;
+    case 'bottom':
+      return solid.rotate(180, 0, 0);
+    case 'front':
+      return solid.rotate(90, 0, 0);
+    case 'back':
+      return solid.rotate(-90, 0, 0);
+    case 'right':
+      return solid.rotate(90, 0, 0).rotate(0, 0, 90);
+    case 'left':
+      return solid.rotate(-90, 0, 0).rotate(0, 0, 90);
+    case 'side':
+      return solid.rotate(90, 0, 0).rotate(0, 0, 90 + u * 360);
+  }
+}
+
+/** Hole through a flange, drawn in the plate's own plane: X across the ear, Y outward from the
+ * wall. A slot runs along Y so the screw position is adjustable in and out; a keyhole puts its
+ * clearance circle at the ear's tip with the neck running back toward the case, so the case drops
+ * over the screw heads and slides inward to trap them. */
+function flangeHoleCrossSection(
+  wasm: ManifoldToplevel,
+  spec: ExternalMountSpec,
+  holeCenterY: number,
+): CrossSection | null {
+  const { CrossSection } = wasm;
+  const d = Math.max(spec.holeDiameter, 0.5);
+  if (spec.hole === 'none') return null;
+  if (spec.hole === 'round') return CrossSection.circle(d / 2).translate(0, holeCenterY);
+
+  // slotLength is the opening's overall length, so the swept centerline is that minus one hole
+  // diameter (half a round end at each tip).
+  const travel = Math.max(spec.slotLength - d, 0.1);
+  if (spec.hole === 'slot') {
+    return CrossSection.square([0.01, travel], true)
+      .offset(d / 2, 'Round')
+      .translate(0, holeCenterY);
+  }
+
+  const neck = Math.max(d * 0.55, 0.5);
+  const head = CrossSection.circle(d / 2).translate(0, holeCenterY + travel / 2);
+  const slot = CrossSection.square([0.01, travel], true)
+    .offset(neck / 2, 'Round')
+    .translate(0, holeCenterY);
+  return head.add(slot);
+}
+
+/** Flat ear standing out from a face (wall-mount tab), built in its own natural frame: X across the
+ * ear, Y outward, Z through the plate's thickness. `embed` sinks its root into the wall so the
+ * union always welds instead of just touching. */
+function flangeSolid(
+  wasm: ManifoldToplevel,
+  spec: ExternalMountSpec,
+  wallThickness: number,
+): Manifold {
+  const width = Math.max(spec.width, 1);
+  const protrusion = Math.max(spec.protrusion, 1);
+  const thickness = Math.max(spec.thickness, 0.8);
+  const embed = Math.max(wallThickness, 0.4);
+
+  const plate = wasm.Manifold.cube([width, protrusion + embed, thickness], true).translate(
+    0,
+    (protrusion - embed) / 2,
+    0,
+  );
+  const hole = flangeHoleCrossSection(wasm, spec, protrusion / 2);
+  if (!hole) return plate;
+  return plate.subtract(hole.extrude(thickness + 2, undefined, undefined, undefined, true));
+}
+
+/** Cylindrical post along the face's outward normal -- an external standoff: a foot under the base,
+ * a spacer column on the lid, a bolt-down pillar on a wall. */
+function bossSolid(
+  wasm: ManifoldToplevel,
+  spec: ExternalMountSpec,
+  wallThickness: number,
+): Manifold {
+  const diameter = Math.max(spec.width, 1);
+  const protrusion = Math.max(spec.protrusion, 1);
+  const embed = Math.max(wallThickness, 0.4);
+  const post = cylinderZ(wasm, diameter, protrusion + embed, -embed);
+  if (spec.hole === 'none') return post;
+
+  const holeDiameter = Math.min(Math.max(spec.holeDiameter, 0.5), diameter - 0.8);
+  // A blind hole is measured down from the outer end; without one it is drilled all the way
+  // through the post and the wall behind it.
+  const depth = spec.holeDepth !== undefined ? Math.max(spec.holeDepth, 0.5) : protrusion + embed + 1;
+  const bore = cylinderZ(wasm, holeDiameter, depth + 0.5, protrusion - depth);
+  return post.subtract(bore);
+}
+
+/** Builds an external mount (flange ear or boss), positioned and oriented on its face. Unlike every
+ * other feature primitive this one is additive -- the caller unions it into the part that owns that
+ * patch of the face. */
+export function buildExternalMount(
+  wasm: ManifoldToplevel,
+  feature: Feature,
+  geom: BodyGeometry,
+  wallThickness: number,
+  cornerRadius = 0,
+): Manifold {
+  const spec = feature.mount;
+  if (!spec) throw new Error('external-mount feature is missing its mount spec');
+
+  const corner = cornerAnchor(feature, geom);
+  if (corner) {
+    // A corner ear is already in the orientation it needs: the natural frame's +Y is "outward" and
+    // +Z is the plate's thickness, so it only has to be yawed to face along the diagonal. Its root
+    // reaches past the nominal corner point by the amount a rounded/chamfered corner cuts away
+    // (r*(sqrt2 - 1) along the diagonal), so it still welds into solid material.
+    const embed = wallThickness + cornerRadius * (Math.SQRT2 - 1) + 0.2;
+    const solid =
+      spec.style === 'boss' ? bossSolid(wasm, spec, embed).rotate(-90, 0, 0) : flangeSolid(wasm, spec, embed);
+    const yaw = corner.angleDeg - 90 + (feature.rotationDeg ?? 0);
+    return solid.rotate(0, 0, yaw).translate(corner.x, corner.y, corner.z);
+  }
+
+  const local =
+    spec.style === 'boss'
+      ? bossSolid(wasm, spec, wallThickness)
+      : flangeSolid(wasm, spec, wallThickness).rotate(90, 0, 0);
+  const spun = feature.rotationDeg ? local.rotate(0, 0, feature.rotationDeg) : local;
+  const [x, y, z] = faceFrame(feature.face, geom).toWorld(feature.u, feature.v);
+  return orientOutward(spun, feature.face, feature.u).translate(x, y, z);
+}
+
 
 /** Builds a board-mount feature: one standoff per mounting hole, the whole pattern positioned at
  * the feature's floor location and spun about it by rotationDeg. The board outline itself is a

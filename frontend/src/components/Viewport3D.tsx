@@ -2,11 +2,21 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { EnclosureMeshes } from '../csg/CsgWorkerClient';
-import { bodyGeometry, clamp01, closestFace, faceFrame, faceFromWorld, faceSize } from '../csg/faceFrame';
-import { effectiveSplitHeight, featureOnLid } from '../csg/lidSplit';
+import {
+  bodyGeometry,
+  clamp01,
+  closestFace,
+  cornerAnchor,
+  faceFrame,
+  faceFromWorld,
+  faceSize,
+} from '../csg/faceFrame';
+import type { PartKind } from '../csg/generateEnclosure';
+import { effectiveSplitHeight } from '../csg/lidSplit';
 import { meshDataToBufferGeometry } from '../csg/meshToBufferGeometry';
+import { featurePart, type PartId } from '../csg/parts';
 import { snapValue } from '../csg/snapping';
-import type { EnclosureBody, Face, Feature } from '../types/project';
+import type { EnclosureBody, Face, Feature, PanelFace } from '../types/project';
 
 export type BodyResizePatch = Partial<{ length: number; width: number; height: number; diameter: number; splitHeight: number }>;
 
@@ -17,6 +27,30 @@ export type LidView = 'assembled' | 'ghost' | 'hidden' | 'exploded';
 function explodeOffset(lidView: LidView, bodyHeight: number): number {
   return lidView === 'exploded' ? Math.max(15, bodyHeight * 0.4) : 0;
 }
+
+/** Where each printed piece is drawn relative to its modelled position. Only 'exploded' moves
+ * anything: the lid lifts straight up, and every slide-in panel slides out along its own face
+ * normal so the parts read as an assembly instead of overlapping in place. */
+function partDisplayOffset(
+  id: PartId,
+  face: PanelFace | undefined,
+  lidView: LidView,
+  body: EnclosureBody,
+): [number, number, number] {
+  if (lidView !== 'exploded') return [0, 0, 0];
+  if (id === 'lid') return [0, 0, explodeOffset(lidView, body.outer.height)];
+  if (!face) return [0, 0, 0];
+  const geom = bodyGeometry(body);
+  const [nx, ny, nz] = faceFrame(face, geom).normalAt(0.5, 0.5);
+  const distance = Math.max(12, (geom.shape === 'box' ? Math.max(geom.length, geom.width) : geom.diameter) * 0.25);
+  return [nx * distance, ny * distance, nz * distance];
+}
+
+const PART_COLORS: Record<PartKind, number> = {
+  base: 0x9aa5b1,
+  lid: 0x4fb3a9,
+  panel: 0xc08a3e,
+};
 
 /** A candidate (face, u, v) an align/mirror inspector control is hovering over, previewed in the
  * viewport before the user commits by clicking -- see AlignMirrorControls in InspectorPanel.tsx. */
@@ -33,7 +67,7 @@ interface Viewport3DProps {
   lidView: LidView;
   showHandles?: boolean;
   showGrid?: boolean;
-  showGhostBoards?: boolean;
+  showGhosts?: boolean;
   showMarkers?: boolean;
   placementArmed: boolean;
   onPlaceFeature: (face: Face, u: number, v: number) => void;
@@ -42,10 +76,13 @@ interface Viewport3DProps {
   onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
   onResizeBody: (patch: BodyResizePatch) => void;
   previewTarget: PreviewTarget | null;
+  /** Features the design checks flagged -- drawn with a warning halo round their marker. */
+  flaggedFeatureIds?: ReadonlySet<string>;
 }
 
 const FEATURE_MARKER_COLOR = 0xffb454;
 const FEATURE_MARKER_SELECTED_COLOR = 0xff5a5a;
+const FEATURE_MARKER_WARNING_COLOR = 0xff2d78;
 const PREVIEW_MARKER_COLOR = 0x6fd3ff;
 const HANDLE_COLOR = 0x6fd3ff;
 const MIN_DIMENSION = 5; // mm, matches the numeric field mins in InspectorPanel
@@ -66,7 +103,7 @@ export function Viewport3D({
   lidView,
   showHandles = true,
   showGrid = true,
-  showGhostBoards = true,
+  showGhosts = true,
   showMarkers = true,
   placementArmed,
   onPlaceFeature,
@@ -75,15 +112,20 @@ export function Viewport3D({
   onUpdateFeature,
   onResizeBody,
   previewTarget,
+  flaggedFeatureIds,
 }: Viewport3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const baseMeshRef = useRef<THREE.Mesh | null>(null);
-  const lidMeshRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial> | null>(null);
+  const partGroupRef = useRef<THREE.Group | null>(null);
+  // One mesh per printed piece (base, lid, and a plate per slide-in panel), keyed by part id so
+  // presentation, raycasting and marker placement can all address a specific piece.
+  const partMeshesRef = useRef(
+    new Map<PartId, THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>>(),
+  );
   const markerGroupRef = useRef<THREE.Group | null>(null);
-  const ghostBoardGroupRef = useRef<THREE.Group | null>(null);
+  const ghostGroupRef = useRef<THREE.Group | null>(null);
   const handleGroupRef = useRef<THREE.Group | null>(null);
   const highlightMeshRef = useRef<THREE.Mesh | null>(null);
   const previewMarkerRef = useRef<THREE.Mesh | null>(null);
@@ -229,22 +271,12 @@ export function Viewport3D({
     const GIZMO_MARGIN_BOTTOM = 46;
     const rendererSize = new THREE.Vector2();
 
-    const baseMaterial = new THREE.MeshStandardMaterial({
-      color: 0x9aa5b1,
-      roughness: 0.6,
-      metalness: 0.05,
-    });
-    const lidMaterial = new THREE.MeshStandardMaterial({
-      color: 0x4fb3a9,
-      roughness: 0.6,
-      metalness: 0.05,
-    });
-
-    const baseMesh = new THREE.Mesh(new THREE.BufferGeometry(), baseMaterial);
-    const lidMesh = new THREE.Mesh(new THREE.BufferGeometry(), lidMaterial);
-    scene.add(baseMesh, lidMesh);
-    baseMeshRef.current = baseMesh;
-    lidMeshRef.current = lidMesh;
+    const partGroup = new THREE.Group();
+    scene.add(partGroup);
+    partGroupRef.current = partGroup;
+    // Same Map instance for the life of the component (useRef initializer), captured here so the
+    // cleanup below doesn't reach through the ref after unmount.
+    const partMeshes = partMeshesRef.current;
 
     const markerGroup = new THREE.Group();
     scene.add(markerGroup);
@@ -252,7 +284,7 @@ export function Viewport3D({
 
     const ghostBoardGroup = new THREE.Group();
     scene.add(ghostBoardGroup);
-    ghostBoardGroupRef.current = ghostBoardGroup;
+    ghostGroupRef.current = ghostBoardGroup;
 
     const handleGroup = new THREE.Group();
     scene.add(handleGroup);
@@ -350,22 +382,27 @@ export function Viewport3D({
     // Which meshes pointer rays may hit: a hidden lid must be excluded explicitly (three's
     // raycaster does not skip invisible meshes), and a ghost lid is see-through for interaction
     // too — clicks land on the interior so features can be placed inside while it's shown as
-    // context. Only assembled/exploded lids take hits.
+    // context. Only assembled/exploded lids take hits; the base and any panels always do.
     const raycastTargets = (): THREE.Mesh[] => {
       const view = lidViewRef.current;
-      const targets: THREE.Mesh[] = [baseMesh];
-      if (view === 'assembled' || view === 'exploded') targets.push(lidMesh);
+      const targets: THREE.Mesh[] = [];
+      for (const [id, mesh] of partMeshes) {
+        if (id === 'lid' && view !== 'assembled' && view !== 'exploded') continue;
+        targets.push(mesh);
+      }
       return targets;
     };
 
-    /** Raycast hit point in model space: hits on an exploded lid shift back down by its offset. */
+    /** Raycast hit point in model space: a piece drawn away from its modelled position in exploded
+     * view (lifted lid, slid-out panel) carries that offset on its own mesh, so undoing it is just
+     * subtracting the mesh's position. */
     const modelPoint = (hit: THREE.Intersection): [number, number, number] => {
-      const offset =
-        hit.object === lidMesh
-          ? explodeOffset(lidViewRef.current, bodyRef.current.outer.height)
-          : 0;
-      return [hit.point.x, hit.point.y, hit.point.z - offset];
+      const { x, y, z } = hit.object.position;
+      return [hit.point.x - x, hit.point.y - y, hit.point.z - z];
     };
+
+    const hitPartId = (hit: THREE.Intersection): PartId | undefined =>
+      hit.object.userData.partId as PartId | undefined;
 
     // Hiding/ghosting the lid exposes *interior* surfaces to clicks, and an interior surface's
     // normal points away from the wall it belongs to: the inside of the back wall faces front,
@@ -619,7 +656,7 @@ export function Viewport3D({
         bodyRef.current.shape,
       );
       // Highlight the face placement would actually target (interior floor -> 'bottom', etc.).
-      updateHighlight(resolveInteriorFace(face, modelPoint(hit)), hit.object === lidMeshRef.current);
+      updateHighlight(resolveInteriorFace(face, modelPoint(hit)), hitPartId(hit) === 'lid');
     };
 
     const handlePointerUp = (event: PointerEvent) => {
@@ -670,10 +707,11 @@ export function Viewport3D({
       dom.removeEventListener('pointerleave', handlePointerLeave);
       controls.dispose();
       renderer.dispose();
-      baseMesh.geometry.dispose();
-      lidMesh.geometry.dispose();
-      baseMaterial.dispose();
-      lidMaterial.dispose();
+      for (const mesh of partMeshes.values()) {
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      }
+      partMeshes.clear();
       highlightMesh.geometry.dispose();
       highlightMaterial.dispose();
       previewMarker.geometry.dispose();
@@ -693,7 +731,7 @@ export function Viewport3D({
       cameraRef.current = null;
       rendererRef.current = null;
       markerGroupRef.current = null;
-      ghostBoardGroupRef.current = null;
+      ghostGroupRef.current = null;
       handleGroupRef.current = null;
       highlightMeshRef.current = null;
       previewMarkerRef.current = null;
@@ -707,39 +745,68 @@ export function Viewport3D({
     if (gridGroupRef.current) gridGroupRef.current.visible = showGrid;
   }, [showGrid]);
   useEffect(() => {
-    if (ghostBoardGroupRef.current) ghostBoardGroupRef.current.visible = showGhostBoards;
-  }, [showGhostBoards]);
+    if (ghostGroupRef.current) ghostGroupRef.current.visible = showGhosts;
+  }, [showGhosts]);
   useEffect(() => {
     if (markerGroupRef.current) markerGroupRef.current.visible = showMarkers;
     showMarkersRef.current = showMarkers;
   }, [showMarkers]);
 
+  // Sync the scene's meshes with whatever parts the last generation produced: the set is dynamic
+  // now (turning a wall into a slide-in panel adds a piece, turning it back removes one), so
+  // meshes are created and disposed here rather than allocated once at mount.
   useEffect(() => {
-    if (!meshes) return;
-    const base = baseMeshRef.current;
-    const lid = lidMeshRef.current;
-    if (!base || !lid) return;
+    const group = partGroupRef.current;
+    if (!meshes || !group) return;
+    const byId = partMeshesRef.current;
 
-    const baseGeometry = meshDataToBufferGeometry(meshes.base);
-    base.geometry.dispose();
-    base.geometry = baseGeometry;
+    const live = new Set<PartId>();
+    for (const part of meshes.parts) {
+      live.add(part.id);
+      let mesh = byId.get(part.id);
+      if (!mesh) {
+        mesh = new THREE.Mesh(
+          new THREE.BufferGeometry(),
+          new THREE.MeshStandardMaterial({
+            color: PART_COLORS[part.kind],
+            roughness: 0.6,
+            metalness: 0.05,
+          }),
+        );
+        mesh.userData.partId = part.id;
+        mesh.userData.panelFace = part.face;
+        byId.set(part.id, mesh);
+        group.add(mesh);
+      }
+      mesh.geometry.dispose();
+      mesh.geometry = meshDataToBufferGeometry(part.mesh);
+    }
 
-    const lidGeometry = meshDataToBufferGeometry(meshes.lid);
-    lid.geometry.dispose();
-    lid.geometry = lidGeometry;
+    for (const [id, mesh] of [...byId]) {
+      if (live.has(id)) continue;
+      group.remove(mesh);
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+      byId.delete(id);
+    }
   }, [meshes]);
 
-  // Lid presentation (view-only): visibility, ghost transparency, exploded lift.
+  // Part presentation (view-only): lid visibility/ghost transparency, and the exploded offsets
+  // that pull the lid up and the panels out. Re-runs on `meshes` too, so a newly-created panel
+  // mesh gets positioned on the same pass that created it.
   useEffect(() => {
-    const lid = lidMeshRef.current;
-    if (!lid) return;
-    lid.visible = lidView !== 'hidden';
-    lid.material.transparent = lidView === 'ghost';
-    lid.material.opacity = lidView === 'ghost' ? 0.3 : 1;
-    lid.material.depthWrite = lidView !== 'ghost';
-    lid.material.needsUpdate = true;
-    lid.position.z = explodeOffset(lidView, body.outer.height);
-  }, [lidView, body]);
+    for (const [id, mesh] of partMeshesRef.current) {
+      const face = mesh.userData.panelFace as PanelFace | undefined;
+      const [dx, dy, dz] = partDisplayOffset(id, face, lidView, body);
+      mesh.position.set(dx, dy, dz);
+      if (id !== 'lid') continue;
+      mesh.visible = lidView !== 'hidden';
+      mesh.material.transparent = lidView === 'ghost';
+      mesh.material.opacity = lidView === 'ghost' ? 0.3 : 1;
+      mesh.material.depthWrite = lidView !== 'ghost';
+      mesh.material.needsUpdate = true;
+    }
+  }, [lidView, body, meshes]);
 
   // Markers showing where features are already placed; the selected one is highlighted.
   useEffect(() => {
@@ -752,42 +819,82 @@ export function Viewport3D({
     const geometry = new THREE.SphereGeometry(1.2, 12, 12);
     const normalMaterial = new THREE.MeshStandardMaterial({ color: FEATURE_MARKER_COLOR });
     const selectedMaterial = new THREE.MeshStandardMaterial({ color: FEATURE_MARKER_SELECTED_COLOR });
-    const lidOffset = explodeOffset(lidView, body.outer.height);
+    const warningGeometry = new THREE.SphereGeometry(2.6, 10, 8);
+    const warningMaterial = new THREE.MeshBasicMaterial({
+      color: FEATURE_MARKER_WARNING_COLOR,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.9,
+    });
     for (const feature of features) {
       if (feature.hidden) continue;
-      const onLid = featureOnLid(feature, body);
-      // Markers ride their piece: lifted with an exploded lid, gone with a hidden one.
-      if (onLid && lidView === 'hidden') continue;
+      const part = featurePart(feature, body);
+      // Markers ride their piece: lifted with an exploded lid, slid out with an exploded panel,
+      // gone with a hidden lid.
+      if (part === 'lid' && lidView === 'hidden') continue;
+      const panelFace = part.startsWith('panel-') ? (part.slice('panel-'.length) as PanelFace) : undefined;
+      const [ox, oy, oz] = partDisplayOffset(part, panelFace, lidView, body);
       const frame = faceFrame(feature.face, geom);
       const [x, y, z] = frame.toWorld(feature.u, feature.v);
       const [nx, ny, nz] = frame.normalAt(feature.u, feature.v);
       const marker = new THREE.Mesh(geometry, feature.id === selectedFeatureId ? selectedMaterial : normalMaterial);
-      let markerX = x + nx * 1.5;
-      let markerY = y + ny * 1.5;
-      let markerZ = z + nz * 1.5 + (onLid ? lidOffset : 0);
+      let markerX = x + nx * 1.5 + ox;
+      let markerY = y + ny * 1.5 + oy;
+      let markerZ = z + nz * 1.5 + oz;
 
       if (feature.type === 'standoff' && feature.standoff) {
         markerZ = body.wallThickness + feature.standoff.height + 1.2;
+      } else if (feature.type === 'support-pad' && feature.pad) {
+        markerZ = body.wallThickness + feature.pad.height + 1.2;
       } else if (feature.type === 'board-mount' && feature.board) {
         markerZ = body.wallThickness + feature.board.standoff.height + 1.2;
+      } else if (feature.type === 'external-mount' && feature.mount) {
+        // Sits at the mount's outer end rather than just proud of the wall, so the marker doesn't
+        // end up buried inside the ear or post it belongs to. A corner-anchored mount isn't at its
+        // face's (u,v) at all -- it's out on the diagonal, and its marker follows it there.
+        const stand = Math.max(feature.mount.protrusion, 1) + 1.5;
+        const corner = cornerAnchor(feature, geom);
+        if (corner) {
+          const rad = (corner.angleDeg * Math.PI) / 180;
+          markerX = corner.x + Math.cos(rad) * stand + ox;
+          markerY = corner.y + Math.sin(rad) * stand + oy;
+          markerZ = corner.z + oz;
+        } else {
+          markerX = x + nx * stand + ox;
+          markerY = y + ny * stand + oy;
+          markerZ = z + nz * stand + oz;
+        }
       }
 
       marker.position.set(markerX, markerY, markerZ);
       marker.userData.featureId = feature.id;
       marker.userData.face = feature.face;
       group.add(marker);
+
+      // A flagged feature gets an open wireframe shell around its marker: readable whatever colour
+      // the marker itself is (selection already owns red), and still a pick target for the same
+      // feature, so clicking the halo selects/drags exactly like clicking the marker.
+      if (flaggedFeatureIds?.has(feature.id)) {
+        const halo = new THREE.Mesh(warningGeometry, warningMaterial);
+        halo.position.copy(marker.position);
+        halo.userData.featureId = feature.id;
+        halo.userData.face = feature.face;
+        group.add(halo);
+      }
     }
 
     return () => {
       geometry.dispose();
       normalMaterial.dispose();
       selectedMaterial.dispose();
+      warningGeometry.dispose();
+      warningMaterial.dispose();
     };
-  }, [features, body, selectedFeatureId, lidView]);
+  }, [features, body, selectedFeatureId, lidView, flaggedFeatureIds]);
 
   // Align/mirror hover preview -- see PreviewTarget. Positioned the same way a feature marker is
   // (toWorld + a small offset along the face normal), but it isn't tied to any real Feature, so it
-  // doesn't participate in featureOnLid/lid-offset bookkeeping: it's only ever shown while hovering
+  // doesn't participate in the featurePart/explode-offset bookkeeping: it's only ever shown while hovering
   // an inspector control for the currently selected feature, and callers only ever preview a
   // target on that feature's own face.
   useEffect(() => {
@@ -805,40 +912,73 @@ export function Viewport3D({
     marker.visible = true;
   }, [previewTarget, body]);
 
-  // Ghost boards: a translucent PCB volume floating on its standoffs for every board-mount
-  // feature. Display-only -- never part of the raycast targets or the exported geometry -- so
-  // clearance to walls, lid, and connectors can be judged by eye before printing.
+  // Ghost parts: the hardware the case is built around, drawn as translucent volumes -- a PCB
+  // floating on its standoffs for every board-mount, and the body of every fan hanging off the
+  // inside of its face. Display-only (never raycast, never exported), so clearance between the
+  // board, the fan, the walls and the lid can be judged by eye before printing.
   useEffect(() => {
-    const group = ghostBoardGroupRef.current;
+    const group = ghostGroupRef.current;
     if (!group) return;
 
     for (const child of [...group.children]) group.remove(child);
 
-    const boards = features.filter((f) => f.type === 'board-mount' && f.board);
-    if (boards.length === 0) return;
+    const boards = features.filter((f) => f.type === 'board-mount' && f.board && !f.hidden);
+    const fans = features.filter((f) => f.type === 'fan-mount' && f.fan && !f.hidden);
+    if (boards.length === 0 && fans.length === 0) return;
 
     const geom = bodyGeometry(body);
-    const material = new THREE.MeshStandardMaterial({
+    const boardMaterial = new THREE.MeshStandardMaterial({
       color: 0x1f7a3d,
       roughness: 0.5,
       metalness: 0.1,
       transparent: true,
       opacity: 0.55,
     });
+    const fanMaterial = new THREE.MeshStandardMaterial({
+      color: 0x5b6472,
+      roughness: 0.6,
+      metalness: 0.1,
+      transparent: true,
+      opacity: 0.45,
+    });
     const geometries: THREE.BufferGeometry[] = [];
+
     for (const feature of boards) {
       const board = feature.board!;
       const [x, y] = faceFrame('bottom', geom).toWorld(feature.u, feature.v);
       const boxGeom = new THREE.BoxGeometry(board.boardWidth, board.boardDepth, board.boardThickness);
       geometries.push(boxGeom);
-      const mesh = new THREE.Mesh(boxGeom, material);
+      const mesh = new THREE.Mesh(boxGeom, boardMaterial);
       mesh.position.set(x, y, body.wallThickness + board.standoff.height + board.boardThickness / 2);
       mesh.rotation.z = (feature.rotationDeg * Math.PI) / 180;
       group.add(mesh);
     }
 
+    for (const feature of fans) {
+      const fan = feature.fan!;
+      const frame = faceFrame(feature.face, geom);
+      const [x, y, z] = frame.toWorld(feature.u, feature.v);
+      const [nx, ny, nz] = frame.normalAt(feature.u, feature.v);
+      const boxGeom = new THREE.BoxGeometry(fan.size, fan.size, fan.bodyDepth);
+      geometries.push(boxGeom);
+      const mesh = new THREE.Mesh(boxGeom, fanMaterial);
+      // The fan sits against the inside of the wall (or on top of its mounting bosses), so its
+      // body runs inward from there -- the same stack the CSG builds the bosses through.
+      const inset = body.wallThickness + Math.max(fan.bossHeight, 0) + fan.bodyDepth / 2;
+      mesh.position.set(x - nx * inset, y - ny * inset, z - nz * inset);
+      // Box local +Z onto the face's outward normal, then spin about that axis for rotationDeg --
+      // a square fan's envelope really does change when it's turned.
+      mesh.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 0, 1),
+        new THREE.Vector3(nx, ny, nz).normalize(),
+      );
+      mesh.rotateOnAxis(new THREE.Vector3(0, 0, 1), (feature.rotationDeg * Math.PI) / 180);
+      group.add(mesh);
+    }
+
     return () => {
-      material.dispose();
+      boardMaterial.dispose();
+      fanMaterial.dispose();
       for (const g of geometries) g.dispose();
     };
   }, [features, body]);

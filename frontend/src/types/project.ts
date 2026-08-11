@@ -9,14 +9,37 @@ export interface CornerStyle {
   radius: number; // mm, ignored if 'sharp'
 }
 
-export type ScrewSize = 'M2' | 'M2.5' | 'M3';
+export type ScrewSize = 'M2' | 'M2.5' | 'M3' | 'M4';
 export type ScrewInsertType = 'heat-set' | 'self-tap';
 export type ScrewCount = 4 | 6 | 8;
+
+/** Column cross-section. A square column is stiffer for the same footprint and gives a flat face
+ * to blend into a wall; a round one wastes less interior space. */
+export type ScrewColumnShape = 'round' | 'square';
+
+/** 'flush' leaves the screw head proud of the lid. 'counterbore' sinks it into a pocket so the
+ * head sits below the surface -- concealed, and pluggable with a printed cap if you want the lid
+ * to read as unbroken. */
+export type ScrewHeadStyle = 'flush' | 'counterbore';
+
+/** Where the lid's screw columns stand. 'interior' bosses rise inside the cavity (the default, and
+ * the right call whenever there's floor space to spare); 'exterior' columns straddle the outside of
+ * the front and back walls instead, which is the only option once the board fills the interior. */
+export type ScrewPlacement = 'interior' | 'exterior';
 
 export interface ScrewSpec {
   size: ScrewSize;
   insertType: ScrewInsertType;
   count: ScrewCount;
+  placement?: ScrewPlacement; // undefined = 'interior'
+  shape?: ScrewColumnShape; // undefined = 'round'
+  headStyle?: ScrewHeadStyle; // undefined = 'flush'
+  /** How tall the base's column is, in mm. Undefined = the full distance from the floor to the lid
+   * seam (the original behaviour). A shorter column hangs from the seam instead of standing on the
+   * floor, which keeps the interior clear underneath -- room for a board, a battery, or cable
+   * routing to pass beneath it. Hanging columns are pushed into the wall far enough to weld to it,
+   * since they no longer have the floor holding them up. */
+  columnHeight?: number;
   /** mm from the interior cavity wall to each boss center. Undefined = the CSG default
    * (bossRadius + 1mm, just enough to keep the boss inside the wall) -- see bossPositions in
    * csg/primitives.ts. Lower values pull bosses toward the case's outer edge, which is also the
@@ -43,12 +66,32 @@ export interface LidSpec {
 
 export type BodyShape = 'box' | 'cylinder';
 
+/** The four box walls that can be swapped for a separately-printed slide-in panel. */
+export type PanelFace = 'front' | 'back' | 'left' | 'right';
+
+/**
+ * Slide-in end panels: the listed walls are removed from the base and printed as separate flat
+ * plates that drop into a channel formed by grooves cut into the two adjacent walls and the floor
+ * (and optionally the lid's underside). This is what makes a multi-part enclosure -- a connector
+ * panel can be reprinted on its own when the port layout changes, and every port cutout on that
+ * face is cut into the plate instead of the base. Box bodies only: a cylinder has no flat wall to
+ * replace.
+ */
+export interface PanelSpec {
+  faces: PanelFace[];
+  thickness: number; // mm, plate thickness
+  fitClearance: number; // mm of total slop in the channel (half of it per side)
+  grooveDepth: number; // mm the channel bites into the adjacent walls and the floor
+  captureInLid: boolean; // lid gets a matching groove over the plate's top edge
+}
+
 export interface BoxBody {
   shape: 'box';
   outer: { length: number; width: number; height: number }; // mm
   wallThickness: number; // mm
   cornerStyle: CornerStyle;
   lid: LidSpec;
+  panels?: PanelSpec; // absent = every wall is part of the base, the original single-piece body
 }
 
 /** Phase 5 stretch shape (DESIGN.md §9/§13): a round mast/antenna-mount enclosure. No corner
@@ -88,7 +131,113 @@ export interface BoardMountSpec {
   standoff: StandoffSpec; // shared by every hole
 }
 
-export type FeatureType = 'connector-cutout' | 'standoff' | 'vent' | 'custom-hole' | 'board-mount';
+/** 'flange' is a flat ear standing out from a face (wall-mount tab); 'boss' is a cylindrical post
+ * along the face's outward normal (external standoff / foot / spacer column). */
+export type ExternalMountStyle = 'flange' | 'boss';
+
+/** Hole through an external mount. 'slot' and 'keyhole' both run along the outward direction --
+ * a slot for screw-position adjustment, a keyhole so the case can be dropped over a screw head
+ * and slid to trap it. */
+export type ExternalMountHoleStyle = 'none' | 'round' | 'slot' | 'keyhole';
+
+/**
+ * A feature that grows *outward* from a face instead of cutting into it -- the outside counterpart
+ * to the interior-only `standoff`. Unions into whichever printed part owns that patch of the face
+ * (base, lid, or a slide-in panel).
+ */
+/** 'face' centres the mount on the face at its (u, v). 'corner' snaps it to whichever vertical
+ * corner of a box that face's u is nearest and aims it out along the diagonal, so it welds into
+ * both walls at once -- the four-ears-at-the-corners pattern most wall-mounted project boxes use.
+ * Ignored (falls back to 'face') on a cylinder and on the top/bottom faces, which have no vertical
+ * corner to anchor to. */
+export type ExternalMountAnchor = 'face' | 'corner';
+
+export interface ExternalMountSpec {
+  style: ExternalMountStyle;
+  anchor?: ExternalMountAnchor; // undefined = 'face'
+  /** flange: length along the face's u axis. boss: outer diameter. */
+  width: number; // mm
+  /** How far it stands proud of the face. */
+  protrusion: number; // mm
+  /** flange: plate thickness (along the face's v axis). Ignored for a boss. */
+  thickness: number; // mm
+  hole: ExternalMountHoleStyle;
+  holeDiameter: number; // mm
+  /** 'slot': total travel of the slot. 'keyhole': center distance between the big and small ends. */
+  slotLength: number; // mm
+  /** boss only: blind hole depth measured from the boss's outer end. Undefined = drilled through. */
+  holeDepth?: number; // mm
+}
+
+/** How the air actually gets through a fan opening. 'concentric' is the classic ring grille (open
+ * rings held together by radial spokes); 'honeycomb' reuses the vent hex pattern; 'open' is a
+ * single round hole for a fan with its own finger guard. */
+export type FanGrilleStyle = 'concentric' | 'honeycomb' | 'open';
+
+/**
+ * A fan opening: grille + the four screw holes on the fan's own bolt circle, and optionally raised
+ * bosses on the inside face to screw the fan into. Sizes and hole pitches come from FAN_PRESETS
+ * (csg/fanLibrary.ts).
+ */
+export interface FanMountSpec {
+  /** Nominal fan size in mm -- the fan's square footprint (40 = a 40x40mm fan). */
+  size: number;
+  /** How deep the fan's own body is (40x40x10 -> 10). Nothing is cut or printed from this: it
+   * drives the translucent ghost the viewport draws inside the case, which is how you check the
+   * fan won't foul a HAT or heatsink under it. */
+  bodyDepth: number;
+  /** Screw hole spacing, center to center. */
+  holePitch: number;
+  screwHoleDiameter: number;
+  grille: FanGrilleStyle;
+  /** concentric: width of each open ring and the material bridge left between rings. */
+  ringWidth: number;
+  ringGap: number;
+  spokeCount: number;
+  spokeWidth: number;
+  /** Diameter of the plain hole at the middle of a concentric grille. 0 = no central hole. */
+  hubDiameter: number;
+  /** Raised pads on the inside face, so the fan screws pull against a boss rather than the bare
+   * wall. 0 = flat. */
+  bossHeight: number;
+}
+
+/**
+ * A blind pillar on the interior floor with no screw hole -- something for an unsupported board
+ * edge to rest on. Carrier boards whose mounting holes are all down one side (the Waveshare CM4
+ * base among them) cantilever the opposite edge over open air, and a connector pushed into that
+ * edge flexes the PCB; a pad under it takes the load instead. Sized in plan and stopped just under
+ * the board, so it supports without fighting the standoffs for the board's height.
+ */
+export interface SupportPadSpec {
+  shape: 'rect' | 'round';
+  /** rect: extent along the floor's u axis. round: diameter. */
+  width: number;
+  /** rect: extent along the floor's v axis. Ignored for a round pad. */
+  depth: number;
+  /** Height above the interior floor -- normally the same as the board's standoff height. */
+  height: number;
+  /** Repeat the pad in an evenly spaced row, centred on the feature's own position. 1 (or
+   * undefined) is a single pad. A row is one feature that emits several pillars -- the same
+   * arrangement a board-mount uses for its standoffs -- so it moves and edits as a unit. Rows are
+   * for evenly supported edges; where the pads have to dodge components underneath, place them
+   * individually instead. */
+  count?: number;
+  /** Centre-to-centre spacing of the repeats, mm. */
+  pitch?: number;
+  /** Which of the floor's axes the row runs along, before the feature's own rotation. */
+  axis?: 'u' | 'v';
+}
+
+export type FeatureType =
+  | 'connector-cutout'
+  | 'standoff'
+  | 'support-pad'
+  | 'vent'
+  | 'custom-hole'
+  | 'board-mount'
+  | 'external-mount'
+  | 'fan-mount';
 
 /** Per-placement size override for a connector cutout. Fields fall back to the library entry,
  * so overriding one dimension doesn't freeze the others. */
@@ -111,6 +260,9 @@ export interface Feature {
   vent?: VentSpec;
   custom?: { shape: 'circle' | 'rect'; width: number; height?: number };
   board?: BoardMountSpec; // for 'board-mount'
+  mount?: ExternalMountSpec; // for 'external-mount'
+  fan?: FanMountSpec; // for 'fan-mount'
+  pad?: SupportPadSpec; // for 'support-pad'
   hidden?: boolean; // when true, feature is hidden from CSG generation and 3D preview
   locked?: boolean; // when true, feature is locked against 3D drag gestures
 }

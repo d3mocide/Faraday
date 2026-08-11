@@ -1,5 +1,14 @@
 import type { BoardPresetBody } from '../state/projectStore';
-import type { BoardMountSpec, Face } from '../types/project';
+import { fanSpecFor } from '../csg/fanLibrary';
+import type {
+  BoardMountSpec,
+  ConnectorSizeOverride,
+  ExternalMountSpec,
+  Face,
+  FanMountSpec,
+  SupportPadSpec,
+  VentSpec,
+} from '../types/project';
 import {
   ARDUINO_MEGA_MOUNT,
   ARDUINO_UNO_MOUNT,
@@ -9,7 +18,36 @@ import {
   PI_FULL_SIZE_MOUNT,
   PI_ZERO_MOUNT,
   PICO_MOUNT,
+  WAVESHARE_CM4_DUAL_ETH_MOUNT,
 } from './boardMounts';
+
+/** Wall-mount ear used at four points around the Waveshare CM4 base (two per long wall), sized to
+ * the source design's 10mm reach and 5x9mm adjustment slot. */
+const CM4_WALL_TAB: ExternalMountSpec = {
+  style: 'flange',
+  width: 16,
+  protrusion: 10,
+  thickness: 3,
+  hole: 'slot',
+  holeDiameter: 5,
+  slotLength: 9,
+};
+
+/** Pad under the CM4 base's unsupported right edge: 6mm across (in X), as deep as the gap between
+ * that edge's own components allows, and 4mm tall to meet the board on its standoffs. */
+const CM4_SUPPORT_PAD = (depth: number): SupportPadSpec => ({
+  shape: 'rect',
+  width: 6,
+  depth,
+  height: 4,
+});
+
+/** Louvre band: 8-9 slots stacked along the wall at CM4/HAT-sandwich height, so intake air crosses
+ * the module. Built rotated (rotationDeg 90 on the feature) because the slot generator stacks its
+ * slats along the face's v axis and these run the other way. */
+function cm4IntakeVent(slotWidth: number, pitch: number, bandLength: number): VentSpec {
+  return { pattern: 'slots', areaWidth: 6, areaHeight: bandLength, slotWidth, slotSpacing: pitch };
+}
 
 /** One wall cutout in a preset's IO layout, positioned relative to the (centered) board rather
  * than the enclosure, so the same layout survives a body-size tweak of the preset. Horizontal
@@ -23,11 +61,29 @@ import {
 export interface BoardIoCutout {
   /** Connector library entry to cut... */
   connectorId?: string;
-  /** ...or a one-off custom hole for ports with no library entry. */
+  /** ...pinned to a measured size rather than the library's generic one, where the preset's source
+   * actually dimensions the opening. Falls back field-by-field, so the inspector's "reset to
+   * library size" still works. */
+  override?: ConnectorSizeOverride;
+  /** ...or a one-off custom hole for ports with no library entry... */
   custom?: { shape: 'circle' | 'rect'; width: number; height?: number };
+  /** ...or a vent pattern (intake/exhaust louvres)... */
+  vent?: VentSpec;
+  /** ...or a fan opening (grille + the fan's screw holes)... */
+  fan?: FanMountSpec;
+  /** ...or a floor pad propping up an unsupported board edge (bottom face; alongMm/acrossMm are
+   * its X/Y offsets from the board center)... */
+  pad?: SupportPadSpec;
+  /** ...or something that grows outward instead of cutting in (wall-mount ear, external post).
+   * Not an "IO port", but positioned board-relative exactly like one, so it rides the same list. */
+  mount?: ExternalMountSpec;
   face: Face;
   alongMm: number;
   aboveBoardMm: number;
+  /** Top/bottom faces only: position along the face's v axis (the case's Y), from the board
+   * center. Those faces are horizontal, so `aboveBoardMm` has no meaning there. */
+  acrossMm?: number;
+  rotationDeg?: number;
 }
 
 export interface BoardPreset {
@@ -46,8 +102,9 @@ export interface BoardPreset {
    * is would be a real assembly conflict even though it unions into a perfectly valid (watertight)
    * mesh -- test/presetFeatures.test.ts's boss-clearance check enforces this for every preset. */
   boardMount?: BoardMountSpec;
-  /** Wall cutouts for the board's IO ports, only meaningful alongside `boardMount` (positions
-   * derive from the centered board). Present only where port centerlines are documented. */
+  /** Wall features positioned relative to the (centered) board: the IO port cutouts first and
+   * foremost, but also vents and external mounts where a preset models a whole case rather than
+   * just its ports. Present only where the positions are documented. */
   io?: BoardIoCutout[];
 }
 
@@ -302,6 +359,127 @@ export const BOARD_PRESETS: BoardPreset[] = [
       { connectorId: 'usb-a-dual-stack', face: 'front', alongMm: 5.6, aboveBoardMm: 13.4 },
       { connectorId: 'ethernet-rj45', face: 'front', alongMm: 22.95, aboveBoardMm: 12.35 },
       { connectorId: 'usb-c-panel', face: 'front', alongMm: 37.975, aboveBoardMm: 7.35 },
+    ],
+  },
+  {
+    id: 'waveshare-cm4-dual-eth-wifi6',
+    label: 'Waveshare CM4 Dual ETH WiFi6 Base',
+    notes:
+      "Complete multi-part case for Waveshare's CM4-DUAL-ETH-WIFI6-BASE carrier: tray + lid + two slide-in end plates carrying all the IO, four wall-mount tabs, intake louvres at CM4/HAT height, and a 40mm exhaust fan grille in the lid. Interior height clears a Pi-HAT stack (e.g. a WM1302 LoRa concentrator) plus the fan plenum -- drop the body height if you're not stacking a HAT. Lid screws use exterior columns because the board fills the interior: there is no floor left for corner bosses. Every dimension here (board outline, hole pattern, port silhouettes) was measured off the vendor's STEP model rather than a published drawing -- Waveshare doesn't dimension one -- so verify against the real board before printing. Four pads under the board's cantilevered right edge take the load when a cable is pushed into the port stack. The microSD finger scallop from the source design is not modelled.",
+    body: {
+      outer: { length: 97.4, width: 114.8, height: 45.5 },
+      wallThickness: 2.4,
+      // Well clear of the tallest opening (the SMA row tops out at 37.2mm) and low enough that the
+      // lid keeps a real skirt to capture the end plates in.
+      splitHeight: 41,
+      lidType: 'screw-boss',
+      screwPlacement: 'exterior',
+      panels: {
+        faces: ['left', 'right'],
+        thickness: 2.4,
+        fitClearance: 0.2,
+        grooveDepth: 1.2,
+        captureInLid: true,
+      },
+    },
+    boardMount: WAVESHARE_CM4_DUAL_ETH_MOUNT,
+    // Port silhouettes were measured at the board's own left/right edge planes, so `alongMm` is
+    // each port's centerline offset from the board center along Y and `aboveBoardMm` its center
+    // height above the PCB top -- exactly the coordinates the source model used. Library entries
+    // carry the label; `override` pins the measured opening where it differs from the library's
+    // generic one (e.g. this board's USB-A ports are mounted vertically, so the opening is tall
+    // and narrow rather than wide and short).
+    io: [
+      // Right end plate: video + USB + dual Ethernet
+      {
+        connectorId: 'hdmi-full-size',
+        override: { width: 16, height: 6.6 },
+        face: 'right',
+        alongMm: -43.745,
+        aboveBoardMm: 3.5,
+      },
+      {
+        connectorId: 'hdmi-full-size',
+        override: { width: 16, height: 6.6 },
+        face: 'right',
+        alongMm: -22.485,
+        aboveBoardMm: 3.5,
+      },
+      {
+        connectorId: 'usb-a-panel',
+        override: { width: 8.2, height: 15.5 },
+        face: 'right',
+        alongMm: -6.035,
+        aboveBoardMm: 6.75,
+      },
+      {
+        connectorId: 'usb-a-panel',
+        override: { width: 8.2, height: 15.5 },
+        face: 'right',
+        alongMm: 4.355,
+        aboveBoardMm: 6.75,
+      },
+      {
+        connectorId: 'usb-a-panel',
+        override: { width: 8.2, height: 15.5 },
+        face: 'right',
+        alongMm: 14.745,
+        aboveBoardMm: 6.75,
+      },
+      // Side-by-side dual RJ45 in one shell: 32.6mm of jack, not two separate cutouts.
+      {
+        connectorId: 'ethernet-rj45',
+        override: { width: 33.6, height: 15.2 },
+        face: 'right',
+        alongMm: 35.83,
+        aboveBoardMm: 7.1,
+      },
+      // Left end plate: power in, status LEDs, card slot, display FFC, USB-C, antennas
+      { custom: { shape: 'rect', width: 10.5, height: 8 }, face: 'left', alongMm: -39.525, aboveBoardMm: 3.6 },
+      { custom: { shape: 'rect', width: 4, height: 9 }, face: 'left', alongMm: -28.215, aboveBoardMm: 5.7 },
+      {
+        connectorId: 'microsd-slot',
+        override: { width: 14, height: 3.6 },
+        face: 'left',
+        alongMm: -12.975,
+        aboveBoardMm: 1,
+      },
+      // DSI display FFC exit slot.
+      { custom: { shape: 'rect', width: 18.5, height: 4.5 }, face: 'left', alongMm: 25.475, aboveBoardMm: 2.05 },
+      { connectorId: 'usb-c-panel', face: 'left', alongMm: 41.47, aboveBoardMm: 1.7 },
+      // Four SMA bulkheads in a row above the HAT stack: two for a mini-PCIe card, two for M.2
+      // Wi-Fi, kept as far apart as the plate allows.
+      { connectorId: 'sma-bulkhead-female', override: { diameter: 6.4 }, face: 'left', alongMm: -41.275, aboveBoardMm: 26 },
+      { connectorId: 'sma-bulkhead-female', override: { diameter: 6.4 }, face: 'left', alongMm: -13.275, aboveBoardMm: 26 },
+      { connectorId: 'sma-bulkhead-female', override: { diameter: 6.4 }, face: 'left', alongMm: 14.725, aboveBoardMm: 26 },
+      { connectorId: 'sma-bulkhead-female', override: { diameter: 6.4 }, face: 'left', alongMm: 42.725, aboveBoardMm: 26 },
+      // Intake louvres at CM4/HAT-sandwich height on the left plate and the front wall, so the
+      // lid fan pulls air across the module rather than short-circuiting through the port openings.
+      { vent: cm4IntakeVent(4, 7, 55), rotationDeg: 90, face: 'left', alongMm: 26.225, aboveBoardMm: 8 },
+      { vent: cm4IntakeVent(3, 8, 70), rotationDeg: 90, face: 'front', alongMm: -2.735, aboveBoardMm: 8 },
+      // 40mm exhaust fan in the lid, centred over the HAT chamber: ring grille plus its four
+      // screw holes on the standard 32mm pitch. Position is X/Y from the board center (a
+      // horizontal face), and 2.6mm holes suit a self-tapping fan screw.
+      {
+        fan: { ...fanSpecFor(40), screwHoleDiameter: 2.6 },
+        face: 'top',
+        alongMm: -9.735,
+        acrossMm: 26.225,
+        aboveBoardMm: 0,
+      },
+      // Support pads under the board's cantilevered right edge: every mounting hole on this board
+      // is down the left/middle, so the right edge -- the one carrying the HDMI, USB and Ethernet
+      // stack -- hangs over open air and flexes when a cable is pushed in. Four pads at the source
+      // design's bands, stopping level with the standoffs so they meet the PCB without lifting it.
+      { pad: CM4_SUPPORT_PAD(5.1), face: 'bottom', alongMm: 41.765, acrossMm: -33.125, aboveBoardMm: 0 },
+      { pad: CM4_SUPPORT_PAD(4.1), face: 'bottom', alongMm: 41.765, acrossMm: -12.325, aboveBoardMm: 0 },
+      { pad: CM4_SUPPORT_PAD(2), face: 'bottom', alongMm: 41.765, acrossMm: -0.875, aboveBoardMm: 0 },
+      { pad: CM4_SUPPORT_PAD(2), face: 'bottom', alongMm: 41.765, acrossMm: 9.525, aboveBoardMm: 0 },
+      // Wall-mount tabs, level with the underside of the tray so the case bolts flat to a surface.
+      { mount: CM4_WALL_TAB, face: 'front', alongMm: -20.735, aboveBoardMm: -6.5 },
+      { mount: CM4_WALL_TAB, face: 'front', alongMm: 20.265, aboveBoardMm: -6.5 },
+      { mount: CM4_WALL_TAB, face: 'back', alongMm: -20.735, aboveBoardMm: -6.5 },
+      { mount: CM4_WALL_TAB, face: 'back', alongMm: 20.265, aboveBoardMm: -6.5 },
     ],
   },
   {

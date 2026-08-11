@@ -26,6 +26,12 @@ export function isValidEnclosureProject(data: unknown): data is EnclosureProject
     }
     if (typeof body.cornerStyle !== 'object' || body.cornerStyle === null) return false;
     if (typeof (body.cornerStyle as Record<string, unknown>).type !== 'string') return false;
+    // panels is optional, but a malformed one would break the CSG's face lookup rather than just
+    // rendering oddly -- so it's checked to the same depth as cornerStyle.
+    if (body.panels !== undefined) {
+      if (typeof body.panels !== 'object' || body.panels === null) return false;
+      if (!Array.isArray((body.panels as Record<string, unknown>).faces)) return false;
+    }
   } else {
     if (typeof outer.diameter !== 'number' || typeof outer.height !== 'number') return false;
   }

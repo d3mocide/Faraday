@@ -494,6 +494,43 @@
   margin: 0;
 }
 
+/* Design-check findings (state/designChecks.ts): advisory, so they read as notes rather than
+   errors -- a warning stripe down the side instead of a red panel. Each row selects its feature. */
+.check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.check-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 45, 120, 0.35);
+  border-left: 3px solid #ff2d78;
+  border-radius: 5px;
+  background: rgba(255, 45, 120, 0.08);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.check-item:hover {
+  background: rgba(255, 45, 120, 0.16);
+}
+
+.check-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.check-detail {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+
 .viewport-toolbar {
   position: absolute;
   top: 12px;
