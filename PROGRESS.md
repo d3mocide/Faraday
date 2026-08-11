@@ -440,6 +440,112 @@ errors in any run.
   matched the expected reflection; confirmed Export still opens and packages STLs normally with the
   mirrored duplicate present. No console errors in any step.
 
+## Multi-part enclosures: slide-in panels + external mounts (2026-08-11 session)
+
+Prompted by a user-contributed CadQuery design for the Waveshare CM4-DUAL-ETH-WIFI6-BASE — a
+four-piece case (tray, lid, two slide-in end plates) with wall-mount ears and exterior screw
+columns, none of which the app could express. Three capabilities plus the preset:
+
+### Parts, not "base and lid"
+
+- **`generateEnclosure` now returns `parts: EnclosurePart[]`** (id/label/kind/face/manifold)
+  instead of a fixed `{ base, lid }` pair. That shape flows through `workerProtocol`
+  (`PartMesh[]`), `CsgWorkerClient` (`EnclosureMeshes.parts`), `Viewport3D` (one `THREE.Mesh` per
+  part, created and disposed as the set changes — the set is dynamic now, so meshes can't be
+  allocated once at mount like the old base/lid pair) and `stlExport` (one STL per piece:
+  `case_base.stl`, `case_lid.stl`, `panel_left.stl`, …).
+- **New `csg/parts.ts` owns the routing rule** (`featurePart`), replacing `lidSplit.ts`'s
+  `featureOnLid`, which had only two possible answers. Same one-source-of-truth pattern as
+  `faceFrame.ts`/`lidSplit.ts`: the worker uses it to pick a boolean target, the viewport uses it
+  to know which piece a marker rides on.
+- **Exploded view moved from "lift the lid" to a per-part offset** (`partDisplayOffset`): the lid
+  lifts, each panel slides out along its own face normal. Raycast hits are mapped back to model
+  space by subtracting the hit mesh's own position, which generalizes the old lid-only offset.
+
+### Slide-in panels (`BoxBody.panels`)
+
+- Any of the four walls can be printed as a separate flat plate that drops into a channel grooved
+  into the two adjacent walls, the floor, and (optionally) the lid's underside. Cutouts placed on
+  that face are cut into the **plate**, not the base — which is the point: a connector panel can be
+  reprinted on its own when the port layout changes.
+- **Channels are cut after the lid mating geometry**, so a screw boss or friction lip can never end
+  up blocking the slot the plate has to slide down.
+- **Plates are trimmed against the outer shell** so their ends follow the body's corner style
+  instead of poking out past a rounded corner.
+- **Where two panels meet, their ends stop clear of the corner radius** (`cornerInset + 0.6`, not
+  just the neighbouring channel). Found by the "all four walls are panels" test: with the default
+  3mm rounded corners, stopping at the neighbouring channel leaves a corner post made of nothing
+  but a sliver of the corner arc, which comes out non-manifold.
+- **Lid capture depth is clamped to the skirt actually available** and drops to zero (plate flush
+  with the base rim, held by the flat lid) when there isn't enough. Without this, a shallow lid
+  gets its groove cut past its own interior ceiling, leaving a razor-thin ledge — a real
+  non-manifold pinch, 16 edges shared by 4 triangles, found via the CM4 preset.
+
+### External mounts (`external-mount` feature)
+
+- The outward-growing counterpart to the interior-only `standoff`: `flange` is a flat wall-mount
+  ear (optional round/slot/keyhole hole, the slot and keyhole both running along the outward
+  direction so the screw position is adjustable / the case can be dropped over a screw head and
+  slid to trap it); `boss` is an external post — a foot, a spacer, a bolt pillar — with an optional
+  blind hole. Both union into whichever part owns that patch of the face, so a boss placed above
+  the lid seam attaches to the lid.
+- **`orientOutward` is a second orientation helper alongside `orientAlongFace`**, because a
+  one-sided solid needs the sign of "outward" right on every face, where a symmetric cutout
+  extrusion never did. On the faces whose (u, v, n) frame is left-handed (back, left, bottom) no
+  pure rotation matches all three axes; those flip v, which is invisible here since the mount
+  geometry's only asymmetric axis is the normal.
+- Flange ears are built in their own natural frame (X across, Y outward, Z through the plate) and
+  rotated into the local frame, so the hole cross-sections are drawn in the plane you'd draw them
+  on paper.
+
+### Exterior lid screw columns (`ScrewSpec.placement`)
+
+- `'exterior'` puts the columns outside the front and back walls instead of inside the cavity. This
+  is what a case whose board fills the interior has to use — there is no floor left for corner
+  bosses — and it's the one case the existing `edgeInset` lever can't reach. Left/right walls are
+  left alone until count 8, since those are the faces most likely to be slide-in panels.
+- Unlike an interior boss (which lives entirely in the base, under a flat lid), an exterior column
+  is a continuous post that the split cuts in half, so the lid gets **matching material** plus its
+  clearance hole rather than a hole alone.
+
+### Waveshare CM4 Dual ETH WiFi6 preset
+
+- Full four-piece case: 6-hole board mount, 12 port cutouts across the two end plates (including
+  four SMA bulkheads above the HAT stack), intake louvres on the left plate and the front wall, a
+  40mm fan grille + screw holes in the lid, and four slotted wall-mount tabs.
+- **Provenance is different from every other preset here and is flagged as such**: the board
+  outline, hole pattern and port silhouettes were measured off Waveshare's vendor STEP model (they
+  publish no dimensioned drawing), by way of the contributed CadQuery design. Same "verify before
+  printing" tier, but the mounting holes are the thing worth checking first.
+- **Measured openings ride library entries plus a `connectorOverride`** rather than becoming
+  anonymous custom holes, so the inspector still names the connector and offers "reset to library
+  size". The board's USB-A ports are mounted vertically, so their opening is tall and narrow — a
+  good example of why the override exists.
+- Preset plumbing grew to match: `BoardIoCutout` can now carry a vent, an external mount or a size
+  override, and can sit on the horizontal top/bottom faces (`acrossMm`); `BoardPresetBody` can pin
+  the lid type, screw placement and panel spec. Applying a preset **replaces** panels (unlike the
+  gasket, which is preserved) — panels change how many pieces the case prints as and which piece
+  each cutout lands on, so inheriting them silently would reshape the new case.
+- The preset's `splitHeight` (41mm) is deliberately below the source design's lid plane: it keeps a
+  real lid skirt for the end plates to be captured in, and still clears the tallest opening (the
+  SMA row tops out at 37.2mm).
+
+### Verification
+
+- `tsc -b`, `oxlint`, `npm run build` clean; **73 vitest tests passing** (was 43). New CSG coverage:
+  panel part counts and plate dimensions, cutout routing to the plate, all four walls as panels,
+  panels across every lid type, each external mount style watertight, and — for the CM4 preset —
+  part list, feature routing, board-relative position round-trip, and a **geometric probe check**
+  that each measured port is a real hole through the end plate at its measured height (a 0.8mm
+  cube intersected against the plate must be empty at the port center and solid just beside it).
+- Playwright against the dev server: panels toggled on from the Body card produce visibly separate
+  plates in exploded view; the CM4 preset applies (27 features: 1 board-mount, 12 connector
+  cutouts, 7 custom holes, 3 vents, 4 external mounts) and survives a full page reload through
+  autosave; toggling a panel face off drops that part and undo restores it; a flange and a boss
+  placed by hand land on the clicked wall (the boss above the seam correctly attaching to the lid);
+  the inspector's mount editor round-trips a hole-style change; and Export produces a zip with four
+  STLs plus `bom.csv`. Zero console errors across every run.
+
 ## Next steps (suggested order)
 
 All phases in DESIGN.md §13 (0 through 5) are implemented and verified, plus the 2026-07-12
@@ -448,8 +554,12 @@ board mounts). Remaining ideas, roughly by value for radio projects:
 
 - Text embossing/engraving (project name, port labels next to cutouts) — needs a font→polygon
   path (e.g. opentype.js) feeding a Manifold extrude.
-- Case-mounting features: pole/mast clamp bosses, keyhole wall hangers, external flange tabs;
-  zip-tie anchors (PG7/PG9/PG11 cable glands landed as library entries 2026-07-20).
+- Case-mounting features: pole/mast clamp bosses (still nothing anywhere in the app); zip-tie
+  anchors. Keyhole wall hangers and external flange tabs landed 2026-08-11 as the `external-mount`
+  feature; cable glands (PG7/PG9/PG11) landed as library entries 2026-07-20.
+- Panels: no per-panel thickness/groove override yet (one `PanelSpec` covers every selected face),
+  and a panel can't yet be split by the lid seam — a face is either a plate up to the split or it
+  isn't. Neither blocked anything so far.
 - Battery features: 18650 holder pocket, LiPo tray with strap slots.
 - Printability: chamfered hole edges, thin-wall/feature-collision warnings, snap-fit wedge
   profile upgrade (see Phase 5 notes), 3MF export alongside STL.
@@ -756,3 +866,16 @@ never-verified Docker build.
 
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->
+
+- **2026-08-11**: Multi-part enclosures, per user request (a contributed CadQuery design for the
+  Waveshare CM4-DUAL-ETH-WIFI6-BASE, plus "add features to support designing cases like this") —
+  see the "Multi-part enclosures" section above for the full rationale. (1) The CSG pipeline now
+  returns a list of parts instead of a base/lid pair, with `csg/parts.ts` owning which piece each
+  feature belongs to. (2) New `BoxBody.panels`: any wall can be printed as a slide-in plate, with
+  cutouts on that face routed into the plate. (3) New `external-mount` feature (wall-mount flange
+  ears with round/slot/keyhole holes, and external bosses). (4) New `ScrewSpec.placement:
+  'exterior'` for cases whose board leaves no floor for interior corner bosses. (5) The Waveshare
+  CM4 preset itself, with the preset plumbing (vents/mounts/overrides/top-face placement/panels)
+  it needed. Two real geometry bugs caught during verification: a non-manifold corner post where
+  two panels meet on a rounded corner, and a non-manifold pinch when a shallow lid's capture groove
+  cuts past its own ceiling. 73 tests passing (was 43); browser-verified end to end.
