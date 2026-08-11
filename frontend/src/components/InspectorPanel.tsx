@@ -5,6 +5,8 @@ import { displayStep, displayToMm, mmToDisplay, roundForDisplay, unitLabel } fro
 import { cornerHolePattern } from '../state/featureFactory';
 import { alignedPosition, cloneFeatureAt, mirroredPosition, type Axis, type AxisTarget } from '../state/alignMirror';
 import { bodyGeometry, faceSize } from '../csg/faceFrame';
+import { effectiveSplitHeight } from '../csg/lidSplit';
+import { FAN_PRESETS, fanSpecFor } from '../csg/fanLibrary';
 import { bossRadiusFor } from '../csg/primitives';
 import type { LidView, PreviewTarget } from './Viewport3D';
 import type {
@@ -15,10 +17,13 @@ import type {
   Face,
   Feature,
   ExternalMountSpec,
+  FanMountSpec,
   LidType,
   PanelFace,
   ScrewCount,
   ScrewInsertType,
+  ScrewColumnShape,
+  ScrewHeadStyle,
   ScrewPlacement,
   ScrewSize,
   Units,
@@ -33,6 +38,7 @@ function featureLabel(feature: Feature): string {
   if (feature.type === 'external-mount') {
     return feature.mount?.style === 'boss' ? 'External boss' : 'Mounting flange';
   }
+  if (feature.type === 'fan-mount') return `${feature.fan?.size ?? ''}mm fan`;
   if (feature.type === 'connector-cutout' && feature.connectorId) {
     return findConnector(feature.connectorId)?.label ?? feature.connectorId;
   }
@@ -152,6 +158,14 @@ function FeatureTypeIcon({ type }: { type: Feature['type'] }) {
         <svg className="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <rect x="3" y="3" width="18" height="18" rx="2" />
           <path d="M7 8h10M7 12h10M7 16h10" />
+        </svg>
+      );
+    case 'fan-mount':
+      return (
+        <svg className="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="9" />
+          <circle cx="12" cy="12" r="2" />
+          <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
         </svg>
       );
     case 'external-mount':
@@ -412,16 +426,47 @@ function ExternalMountFields({
   feature,
   mount,
   units,
+  isBox,
   onUpdateFeature,
+  onAddFeature,
 }: {
   feature: Feature;
   mount: ExternalMountSpec;
   units: Units;
+  isBox: boolean;
   onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
+  onAddFeature: (feature: Feature) => void;
 }) {
   const setMount = (patch: Partial<ExternalMountSpec>) =>
     onUpdateFeature(feature.id, { mount: { ...mount, ...patch } });
   const isFlange = mount.style === 'flange';
+  const isCorner = mount.anchor === 'corner' && isBox && feature.face !== 'top' && feature.face !== 'bottom';
+
+  // The four vertical corners of a box, each expressed as a (face, u) pair -- front/back at u=0
+  // and u=1 covers all of them, so "one on each corner" is just the three this mount isn't on.
+  const cornerTargets: Array<{ face: Face; u: number }> = [
+    { face: 'front', u: 0 },
+    { face: 'front', u: 1 },
+    { face: 'back', u: 0 },
+    { face: 'back', u: 1 },
+  ];
+  const signsOf = (face: Face, u: number): [number, number] => {
+    const near = u < 0.5 ? -1 : 1;
+    return [face === 'left' ? -1 : face === 'right' ? 1 : near, face === 'front' ? -1 : face === 'back' ? 1 : near];
+  };
+  const [selfX, selfY] = signsOf(feature.face, feature.u);
+  const fillCorners = () => {
+    for (const target of cornerTargets) {
+      const [sx, sy] = signsOf(target.face, target.u);
+      if (sx === selfX && sy === selfY) continue;
+      onAddFeature({
+        ...structuredClone(feature),
+        id: crypto.randomUUID(),
+        face: target.face,
+        u: target.u,
+      });
+    }
+  };
 
   return (
     <div className="inspector-subgroup">
@@ -435,6 +480,16 @@ function ExternalMountFields({
           >
             <option value="flange">Flange (wall tab)</option>
             <option value="boss">Boss (post/foot)</option>
+          </select>
+        </label>
+        <label className="field">
+          <span>Anchored to</span>
+          <select
+            value={mount.anchor ?? 'face'}
+            onChange={(e) => setMount({ anchor: e.target.value as ExternalMountSpec['anchor'] })}
+          >
+            <option value="face">Face (at U/V)</option>
+            <option value="corner">Nearest corner</option>
           </select>
         </label>
         <label className="field">
@@ -502,6 +557,132 @@ function ExternalMountFields({
           />
         )}
       </FieldsGrid2Col>
+      {isCorner && (
+        <>
+          <button type="button" className="btn-secondary" onClick={fillCorners}>
+            Put one on each corner
+          </button>
+          <p className="field-hint">
+            Corner mounts sit on the diagonal and weld into both walls, so U only picks which end of
+            the face they snap to — V still sets their height.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Editor for a fan opening. Picking a size re-derives the standard hole pitch and screw size for
+ * that fan (FAN_PRESETS), keeping the grille choices the user has already made. */
+function FanMountFields({
+  feature,
+  fan,
+  units,
+  onUpdateFeature,
+}: {
+  feature: Feature;
+  fan: FanMountSpec;
+  units: Units;
+  onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
+}) {
+  const setFan = (patch: Partial<FanMountSpec>) =>
+    onUpdateFeature(feature.id, { fan: { ...fan, ...patch } });
+  const resize = (size: number) =>
+    onUpdateFeature(feature.id, {
+      fan: { ...fanSpecFor(size), grille: fan.grille, bossHeight: fan.bossHeight },
+    });
+
+  return (
+    <div className="inspector-subgroup">
+      <div className="subgroup-title">Fan Opening</div>
+      <FieldsGrid2Col>
+        <label className="field">
+          <span>Fan size</span>
+          <select value={fan.size} onChange={(e) => resize(Number(e.target.value))}>
+            {FAN_PRESETS.map((preset) => (
+              <option key={preset.size} value={preset.size}>
+                {preset.size}×{preset.size}mm
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Grille</span>
+          <select
+            value={fan.grille}
+            onChange={(e) => setFan({ grille: e.target.value as FanMountSpec['grille'] })}
+          >
+            <option value="concentric">Concentric rings</option>
+            <option value="honeycomb">Honeycomb</option>
+            <option value="open">Open hole</option>
+          </select>
+        </label>
+        <UnitNumberField
+          label="Screw pitch"
+          valueMm={fan.holePitch}
+          units={units}
+          minMm={1}
+          onChangeMm={(v) => setFan({ holePitch: v })}
+        />
+        <UnitNumberField
+          label="Screw hole"
+          valueMm={fan.screwHoleDiameter}
+          units={units}
+          minMm={0.5}
+          onChangeMm={(v) => setFan({ screwHoleDiameter: v })}
+        />
+        {fan.grille === 'concentric' && (
+          <>
+            <UnitNumberField
+              label="Ring width"
+              valueMm={fan.ringWidth}
+              units={units}
+              minMm={0.5}
+              onChangeMm={(v) => setFan({ ringWidth: v })}
+            />
+            <UnitNumberField
+              label="Ring bridge"
+              valueMm={fan.ringGap}
+              units={units}
+              minMm={0.5}
+              onChangeMm={(v) => setFan({ ringGap: v })}
+            />
+            <NumberField
+              label="Spokes"
+              value={fan.spokeCount}
+              min={0}
+              max={12}
+              step={2}
+              onChange={(v) => setFan({ spokeCount: v })}
+            />
+            <UnitNumberField
+              label="Spoke width"
+              valueMm={fan.spokeWidth}
+              units={units}
+              minMm={0.4}
+              onChangeMm={(v) => setFan({ spokeWidth: v })}
+            />
+            <UnitNumberField
+              label="Hub hole"
+              valueMm={fan.hubDiameter}
+              units={units}
+              minMm={0}
+              onChangeMm={(v) => setFan({ hubDiameter: v })}
+            />
+          </>
+        )}
+        <UnitNumberField
+          label="Mount boss height"
+          valueMm={fan.bossHeight}
+          units={units}
+          minMm={0}
+          onChangeMm={(v) => setFan({ bossHeight: v })}
+        />
+      </FieldsGrid2Col>
+      <p className="field-hint">
+        Screw holes sit on the fan's own {fan.holePitch}mm bolt circle. Bosses (if any) stand on the
+        inside face, so the fan pulls against a pad instead of the bare wall.
+      </p>
     </div>
   );
 }
@@ -728,6 +909,9 @@ export function InspectorPanel({
   const setScrewCount = useProjectStore((s) => s.setScrewCount);
   const setScrewEdgeInset = useProjectStore((s) => s.setScrewEdgeInset);
   const setScrewPlacement = useProjectStore((s) => s.setScrewPlacement);
+  const setScrewColumnShape = useProjectStore((s) => s.setScrewColumnShape);
+  const setScrewHeadStyle = useProjectStore((s) => s.setScrewHeadStyle);
+  const setScrewColumnHeight = useProjectStore((s) => s.setScrewColumnHeight);
   const setGasketEnabled = useProjectStore((s) => s.setGasketEnabled);
   const setGasketWidth = useProjectStore((s) => s.setGasketWidth);
   const setGasketDepth = useProjectStore((s) => s.setGasketDepth);
@@ -866,6 +1050,7 @@ export function InspectorPanel({
                 <option value="M2">M2</option>
                 <option value="M2.5">M2.5</option>
                 <option value="M3">M3</option>
+                <option value="M4">M4</option>
               </select>
             </label>
             <label className="field">
@@ -901,6 +1086,26 @@ export function InspectorPanel({
                 </select>
               </label>
             )}
+            <label className="field">
+              <span>Column shape</span>
+              <select
+                value={lid.screw.shape ?? 'round'}
+                onChange={(e) => setScrewColumnShape(e.target.value as ScrewColumnShape)}
+              >
+                <option value="round">Round</option>
+                <option value="square">Square</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Screw head</span>
+              <select
+                value={lid.screw.headStyle ?? 'flush'}
+                onChange={(e) => setScrewHeadStyle(e.target.value as ScrewHeadStyle)}
+              >
+                <option value="flush">On the surface</option>
+                <option value="counterbore">Concealed (counterbored)</option>
+              </select>
+            </label>
             {(lid.screw.placement ?? 'interior') === 'interior' && (
               <UnitNumberField
                 label="Screw edge inset"
@@ -915,13 +1120,40 @@ export function InspectorPanel({
           </FieldsGrid2Col>
         )}
         {lid.type === 'screw-boss' && lid.screw && (
-          <p className="field-hint">
-            Distance from the interior wall to each screw boss. Smaller pulls bosses toward the
-            case's outer edge -- useful for keeping them clear of a board-mount sitting in the
-            middle of the cavity. Default (
-            {roundForDisplay(mmToDisplay(bossRadiusFor(lid.screw) + 1, units), units)}
-            {unitLabel(units)}) is the minimum that reliably keeps the boss inside the wall.
-          </p>
+          <>
+            <label className="field field-checkbox">
+              <input
+                type="checkbox"
+                checked={lid.screw.columnHeight === undefined}
+                onChange={(e) =>
+                  setScrewColumnHeight(
+                    e.target.checked ? undefined : Math.max(effectiveSplitHeight(body) / 2, 4),
+                  )
+                }
+              />
+              <span>Columns run the full height</span>
+            </label>
+            {lid.screw.columnHeight !== undefined && (
+              <UnitNumberField
+                label="Column height"
+                valueMm={lid.screw.columnHeight}
+                units={units}
+                minMm={2}
+                maxMm={effectiveSplitHeight(body)}
+                onChangeMm={setScrewColumnHeight}
+              />
+            )}
+            <p className="field-hint">
+              {(lid.screw.placement ?? 'interior') === 'interior'
+                ? 'Distance from the interior wall to each screw boss. Smaller pulls bosses toward the ' +
+                  "case's outer edge -- useful for keeping them clear of a board-mount sitting in the " +
+                  'middle of the cavity. '
+                : 'Exterior columns stand against the outside of the front and back walls -- the option ' +
+                  'for a case whose board leaves no floor space inside. '}
+              A short column hangs from the lid seam instead of standing on the floor, keeping the
+              space underneath clear; it is pushed into the wall far enough to weld to it.
+            </p>
+          </>
         )}
 
         <label className="field field-checkbox">
@@ -1347,6 +1579,17 @@ export function InspectorPanel({
             <ExternalMountFields
               feature={selectedFeature}
               mount={selectedFeature.mount}
+              units={units}
+              isBox={body.shape === 'box'}
+              onUpdateFeature={onUpdateFeature}
+              onAddFeature={onAddFeature}
+            />
+          )}
+
+          {selectedFeature.type === 'fan-mount' && selectedFeature.fan && (
+            <FanMountFields
+              feature={selectedFeature}
+              fan={selectedFeature.fan}
               units={units}
               onUpdateFeature={onUpdateFeature}
             />

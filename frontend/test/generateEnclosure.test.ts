@@ -1,15 +1,19 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import type { ManifoldToplevel } from 'manifold-3d';
+import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { generateEnclosure } from '../src/csg/generateEnclosure';
 import { extractMeshData } from '../src/csg/manifoldToGeometry';
 import type {
   EnclosureProject,
   Feature,
   GasketSpec,
+  FanMountSpec,
   LidType,
   PanelSpec,
+  ScrewSpec,
 } from '../src/types/project';
 import type { MeshData } from '../src/csg/workerProtocol';
+import { fanSpecFor } from '../src/csg/fanLibrary';
+import { bossRadiusFor } from '../src/csg/primitives';
 import { getTestWasm } from './helpers/wasm';
 import { boundingBox, isWatertight } from './helpers/geometry';
 
@@ -408,6 +412,191 @@ describe('slide-in panels', () => {
       for (const [id, mesh] of Object.entries(parts)) {
         expect(isWatertight(mesh), `${lid}/${id} watertight`).toBe(true);
       }
+    }
+  });
+});
+
+/** Is there material at this world point? Probes a part with a small cube. */
+function solidAt(part: Manifold, [x, y, z]: [number, number, number], size = 0.8): boolean {
+  const probe = wasm.Manifold.cube([size, size, size], true).translate(x, y, z);
+  const hit = part.intersect(probe);
+  const empty = hit.isEmpty();
+  hit.delete();
+  probe.delete();
+  return !empty;
+}
+
+/** Same as generateParts, but hands back live Manifolds for probing (caller deletes them). */
+function generateSolids(project: EnclosureProject): Record<string, Manifold> {
+  const result = generateEnclosure(wasm, project, 'export');
+  return Object.fromEntries(result.parts.map((p) => [p.id, p.manifold]));
+}
+
+describe('fan mounts', () => {
+  const fanFeature = (over: Partial<FanMountSpec> = {}, face: Feature['face'] = 'top'): Feature => ({
+    id: 'fan',
+    type: 'fan-mount',
+    face,
+    u: 0.5,
+    v: 0.5,
+    rotationDeg: 0,
+    fan: { ...fanSpecFor(40), ...over },
+  });
+
+  for (const size of [20, 30, 40, 80]) {
+    it(`${size}mm fan keeps both pieces watertight`, () => {
+      const { base, lid } = generateMeshes(makeBox({ features: [fanFeature({ ...fanSpecFor(size) })] }));
+      expect(isWatertight(base), 'base watertight').toBe(true);
+      expect(isWatertight(lid), 'lid watertight').toBe(true);
+    });
+  }
+
+  for (const grille of ['concentric', 'honeycomb', 'open'] as const) {
+    it(`${grille} grille stays watertight, with bosses`, () => {
+      const parts = generateParts(makeBox({ features: [fanFeature({ grille, bossHeight: 2.5 })] }));
+      for (const [id, mesh] of Object.entries(parts)) {
+        expect(isWatertight(mesh), `${id} watertight`).toBe(true);
+      }
+    });
+  }
+
+  it('opens the lid on the ring gaps and keeps the spokes and hub bridges', () => {
+    const spec = fanSpecFor(40);
+    const solids = generateSolids(makeBox({ features: [fanFeature(spec)] }));
+    const z = 30 - 1; // inside the lid's top slab (body height 30)
+    // First open ring starts a gap outboard of the hub, measured off the fan's own numbers.
+    const firstRingMid = spec.hubDiameter / 2 + spec.ringGap + spec.ringWidth / 2;
+    // ...but not along a spoke, so probe at 45 degrees where the 4 spokes (at 0/90) aren't.
+    const diag = firstRingMid / Math.SQRT2;
+    expect(solidAt(solids.lid, [diag, diag, z], 0.4), 'ring gap is open').toBe(false);
+    expect(solidAt(solids.lid, [firstRingMid, 0, z], 0.4), 'spoke is solid').toBe(true);
+    expect(solidAt(solids.lid, [0, 0, z], 0.4), 'hub hole is open').toBe(false);
+    // The bridge between the first and second ring.
+    const bridge = spec.hubDiameter / 2 + spec.ringGap + spec.ringWidth + spec.ringGap / 2;
+    expect(solidAt(solids.lid, [bridge / Math.SQRT2, bridge / Math.SQRT2, z], 0.3), 'ring bridge').toBe(true);
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('bores the screw holes on the fan bolt circle, through the mounting bosses', () => {
+    const spec = { ...fanSpecFor(40), bossHeight: 3 };
+    const solids = generateSolids(makeBox({ features: [fanFeature(spec)] }));
+    const half = spec.holePitch / 2;
+    const insideBossZ = 30 - 2 - 1.5; // within the boss, below the lid's inner face
+    expect(solidAt(solids.lid, [half, half, 30 - 1], 0.4), 'screw hole is open').toBe(false);
+    expect(solidAt(solids.lid, [half, half, insideBossZ], 0.4), 'bored through the boss').toBe(false);
+    // The boss itself is material a little to the side of its own bore.
+    expect(solidAt(solids.lid, [half + 2, half, insideBossZ], 0.4), 'boss body').toBe(true);
+    for (const part of Object.values(solids)) part.delete();
+  });
+});
+
+describe('corner-anchored external mounts', () => {
+  const cornerEar: Feature = {
+    id: 'ear',
+    type: 'external-mount',
+    face: 'front',
+    u: 0,
+    v: 0.1,
+    rotationDeg: 0,
+    mount: {
+      style: 'flange',
+      anchor: 'corner',
+      width: 14,
+      protrusion: 10,
+      thickness: 3,
+      hole: 'round',
+      holeDiameter: 4.5,
+      slotLength: 0,
+    },
+  };
+
+  it('welds to the corner and reaches out past it on the diagonal', () => {
+    const plain = generateMeshes(makeBox({ corner: 'sharp' }));
+    const withEar = generateMeshes(makeBox({ corner: 'sharp', features: [cornerEar] }));
+    expect(isWatertight(withEar.base), 'base watertight').toBe(true);
+    // Front-left corner of an 80x50 box is (-40, -25); the ear runs out along (-1,-1)/sqrt2.
+    const bb = boundingBox(withEar.base);
+    expect(bb.min[0]).toBeLessThan(boundingBox(plain.base).min[0] - 5);
+    expect(bb.min[1]).toBeLessThan(boundingBox(plain.base).min[1] - 5);
+  });
+
+  it('stays one solid with a rounded corner, which cuts the corner point away', () => {
+    const parts = generateParts(makeBox({ corner: 'rounded', features: [cornerEar] }));
+    expect(isWatertight(parts.base), 'base watertight').toBe(true);
+    const solids = generateSolids(makeBox({ corner: 'rounded', features: [cornerEar] }));
+    // Material on the diagonal just outside the corner arc: the ear bridges the gap the radius
+    // opened up, so it is not floating.
+    expect(solidAt(solids.base, [-40 + 1, -25 + 1, 3], 0.6)).toBe(true);
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('attaches to the base even when its face is a slide-in panel', () => {
+    const panels: PanelSpec = {
+      faces: ['left', 'right'],
+      thickness: 2.4,
+      fitClearance: 0.2,
+      grooveDepth: 1.2,
+      captureInLid: true,
+    };
+    const onPanelFace: Feature = { ...cornerEar, id: 'ear2', face: 'left', u: 0 };
+    const parts = generateParts(makeBox({ panels, features: [onPanelFace] }));
+    for (const [id, mesh] of Object.entries(parts)) {
+      expect(isWatertight(mesh), `${id} watertight`).toBe(true);
+    }
+    // The plate is unchanged; the ear went onto the base's corner post instead.
+    const bare = generateParts(makeBox({ panels }));
+    expect(parts['panel-left'].indices.length).toBe(bare['panel-left'].indices.length);
+    expect(parts.base.indices.length).toBeGreaterThan(bare.base.indices.length);
+  });
+});
+
+describe('screw column variations', () => {
+  function screwBox(screw: Partial<ScrewSpec>): EnclosureProject {
+    const project = makeBox({ lid: 'screw-boss' });
+    project.body.lid.screw = { size: 'M3', insertType: 'heat-set', count: 4, ...screw };
+    return project;
+  }
+
+  it('square columns are watertight and fill their corner more than round ones', () => {
+    const square = generateSolids(screwBox({ shape: 'square' }));
+    const round = generateSolids(screwBox({ shape: 'round' }));
+    expect(square.base.volume()).toBeGreaterThan(round.base.volume());
+    for (const part of [...Object.values(square), ...Object.values(round)]) part.delete();
+  });
+
+  it('a short column hangs from the seam and leaves the floor under it clear', () => {
+    const solids = generateSolids(screwBox({ columnHeight: 8 }));
+    const bossRadius = bossRadiusFor({ size: 'M3', insertType: 'heat-set', count: 4 });
+    // Boss center for a hanging column: pushed into the corner so it welds to both walls.
+    const x = 80 / 2 - 2 - (bossRadius - 0.6);
+    const y = 50 / 2 - 2 - (bossRadius - 0.6);
+    // Below the 5mm heat-set bore but still inside the 8mm column.
+    expect(solidAt(solids.base, [x, y, 24 - 6.5]), 'column material near the seam').toBe(true);
+    expect(solidAt(solids.base, [x, y, 24 - 12]), 'clear below the column').toBe(false);
+    expect(solidAt(solids.base, [x, y, 3]), 'clear down at the floor').toBe(false);
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('a counterbore sinks the head below the lid surface without holing it through', () => {
+    const flush = generateSolids(screwBox({}));
+    const bored = generateSolids(screwBox({ headStyle: 'counterbore' }));
+    const bossRadius = bossRadiusFor({ size: 'M3', insertType: 'heat-set', count: 4 });
+    const x = 80 / 2 - 2 - (bossRadius + 1);
+    const y = 50 / 2 - 2 - (bossRadius + 1);
+    // 2.2mm out from the screw axis: inside the head pocket (M3 head 5.5mm + clearance), but
+    // outside the 3.4mm clearance hole that both lids have.
+    // The lid's solid top slab is its wall thickness (28..30); with a 2mm wall the pocket can only
+    // be 1.2mm deep, so it opens the top of the slab and leaves the rest.
+    expect(solidAt(flush.lid, [x + 2.2, y, 29.4], 0.3), 'flush lid is solid there').toBe(true);
+    expect(solidAt(bored.lid, [x + 2.2, y, 29.4], 0.3), 'counterbored lid is open there').toBe(false);
+    expect(solidAt(bored.lid, [x + 2.2, y, 28.4], 0.3), 'floor of the counterbore').toBe(true);
+    for (const part of [...Object.values(flush), ...Object.values(bored)]) part.delete();
+  });
+
+  it('M4 is available end to end', () => {
+    const parts = generateParts(screwBox({ size: 'M4' }));
+    for (const [id, mesh] of Object.entries(parts)) {
+      expect(isWatertight(mesh), `${id} watertight`).toBe(true);
     }
   });
 });

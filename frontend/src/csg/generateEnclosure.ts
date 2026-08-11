@@ -7,6 +7,7 @@ import {
   buildConnectorCutout,
   buildCustomHole,
   buildExternalMount,
+  buildFanMount,
   buildStandoff,
   buildVentCutout,
 } from './featurePrimitives';
@@ -107,6 +108,7 @@ export function generateEnclosure(
         innerWidth,
         outerLength: body.outer.length,
         outerWidth: body.outer.width,
+        wallThickness,
         splitHeight,
         outerHeight: height,
         screw: body.lid.screw,
@@ -114,6 +116,7 @@ export function generateEnclosure(
     } else {
       ({ base, lid } = applyScrewBossLidCylinder(wasm, base, lid, {
         innerDiameter,
+        wallThickness,
         splitHeight,
         outerHeight: height,
         screw: body.lid.screw,
@@ -232,7 +235,21 @@ export function generateEnclosure(
       continue;
     }
     if (feature.type === 'external-mount' && feature.mount) {
-      addTo(featurePart(feature, body), buildExternalMount(wasm, feature, geom, wallThickness));
+      const cornerRadius =
+        body.shape === 'box' && body.cornerStyle.type !== 'sharp' ? body.cornerStyle.radius : 0;
+      addTo(
+        featurePart(feature, body),
+        buildExternalMount(wasm, feature, geom, wallThickness, cornerRadius),
+      );
+      continue;
+    }
+
+    // A fan opening is both: bosses union in, then the same cut bores its screw holes through them.
+    if (feature.type === 'fan-mount' && feature.fan) {
+      const part = featurePart(feature, body);
+      const { add, cut } = buildFanMount(wasm, feature, geom, wallThickness);
+      if (add) addTo(part, add);
+      subtractFrom(part, cut);
       continue;
     }
 

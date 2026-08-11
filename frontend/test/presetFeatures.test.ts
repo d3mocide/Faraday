@@ -62,7 +62,7 @@ describe('board preset IO layouts', () => {
           expect(findConnector(port.connectorId), `${preset.id}: ${port.connectorId}`).toBeDefined();
         }
         expect(
-          port.connectorId || port.custom || port.vent || port.mount,
+          port.connectorId || port.custom || port.vent || port.mount || port.fan,
           `${preset.id}: wall feature needs a shape`,
         ).toBeTruthy();
       }
@@ -179,10 +179,10 @@ describe('waveshare CM4 dual-ETH preset: the multi-part case', () => {
   it('keeps the fan grille on the lid and the wall tabs on the tray', () => {
     const project = projectFromPreset(preset);
     const lidFeatures = project.features.filter((f) => f.face === 'top');
-    expect(lidFeatures).toHaveLength(5); // honeycomb grille + 4 fan screws
-    for (const feature of lidFeatures) {
-      expect(featurePart(feature, project.body)).toBe('lid');
-    }
+    expect(lidFeatures).toHaveLength(1); // one fan mount: grille + its own four screw holes
+    expect(lidFeatures[0].type).toBe('fan-mount');
+    expect(lidFeatures[0].fan?.size).toBe(40);
+    expect(featurePart(lidFeatures[0], project.body)).toBe('lid');
 
     const tabs = project.features.filter((f) => f.type === 'external-mount');
     expect(tabs).toHaveLength(4);

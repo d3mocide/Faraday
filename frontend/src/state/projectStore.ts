@@ -11,7 +11,10 @@ import type {
   PanelSpec,
   ScrewCount,
   ScrewInsertType,
+  ScrewColumnShape,
+  ScrewHeadStyle,
   ScrewPlacement,
+  ScrewSpec,
   ScrewSize,
   Units,
 } from '../types/project';
@@ -58,6 +61,9 @@ interface ProjectStore {
   setScrewCount: (count: ScrewCount) => void;
   setScrewEdgeInset: (edgeInset: number | undefined) => void;
   setScrewPlacement: (placement: ScrewPlacement) => void;
+  setScrewColumnShape: (shape: ScrewColumnShape) => void;
+  setScrewHeadStyle: (headStyle: ScrewHeadStyle) => void;
+  setScrewColumnHeight: (height: number | undefined) => void;
   setGasketEnabled: (enabled: boolean) => void;
   setGasketWidth: (value: number) => void;
   setGasketDepth: (value: number) => void;
@@ -191,17 +197,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, count } } } };
       }),
 
-    setScrewEdgeInset: (edgeInset) =>
-      mutate((p) => {
-        const screw = p.body.lid.screw ?? defaultScrewSpec();
-        return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, edgeInset } } } };
-      }),
+    setScrewEdgeInset: (edgeInset) => mutate(patchScrew((screw) => ({ ...screw, edgeInset }))),
 
-    setScrewPlacement: (placement) =>
-      mutate((p) => {
-        const screw = p.body.lid.screw ?? defaultScrewSpec();
-        return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, placement } } } };
-      }),
+    setScrewPlacement: (placement) => mutate(patchScrew((screw) => ({ ...screw, placement }))),
+
+    setScrewColumnShape: (shape) => mutate(patchScrew((screw) => ({ ...screw, shape }))),
+
+    setScrewHeadStyle: (headStyle) => mutate(patchScrew((screw) => ({ ...screw, headStyle }))),
+
+    // undefined restores the default full-height column (floor to seam).
+    setScrewColumnHeight: (height) =>
+      mutate(patchScrew((screw) => ({ ...screw, columnHeight: height }))),
 
     setGasketEnabled: (enabled) =>
       mutate((p) => ({
@@ -323,7 +329,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
   };
 });
 
-function defaultScrewSpec(): { size: ScrewSize; insertType: ScrewInsertType; count: ScrewCount } {
+function defaultScrewSpec(): ScrewSpec {
   return { size: 'M3', insertType: 'heat-set', count: 4 };
 }
 
@@ -340,6 +346,17 @@ function defaultPanelSpec(wallThickness: number): PanelSpec {
     grooveDepth: 1.2,
     captureInLid: true,
   };
+}
+
+/** Shared shape of the "edit one field of the screw spec" actions above. Fills in the default spec
+ * first, so the controls work even on a project whose lid type never carried one. */
+function patchScrew(
+  update: (screw: ScrewSpec) => ScrewSpec,
+): (project: EnclosureProject) => EnclosureProject {
+  return (p) => ({
+    ...p,
+    body: { ...p.body, lid: { ...p.body.lid, screw: update(p.body.lid.screw ?? defaultScrewSpec()) } },
+  });
 }
 
 /** Shared shape of the "edit one field of the panel spec" actions above. */

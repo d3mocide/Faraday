@@ -1,4 +1,4 @@
-import type { EnclosureBody, Face } from '../types/project';
+import type { EnclosureBody, Face, Feature } from '../types/project';
 
 export interface FaceFrame {
   /** Maps normalized (u,v) in [0,1] on this face to a world-space [x,y,z] point on the outer surface. */
@@ -190,4 +190,27 @@ export function closestFace(normal: [number, number, number], shape: 'box' | 'cy
 
 export function clamp01(value: number): number {
   return Math.min(Math.max(value, 0), 1);
+}
+
+/** Which box corner a corner-anchored mount belongs to, and which way "out" points there. Returns
+ * null whenever corner anchoring doesn't apply, which is the signal to fall back to face
+ * placement: a cylinder has no vertical corners, and top/bottom aren't vertical faces. */
+export function cornerAnchor(
+  feature: Pick<Feature, 'face' | 'u' | 'v' | 'mount'>,
+  geom: BodyGeometry,
+): { x: number; y: number; z: number; angleDeg: number } | null {
+  if (feature.mount?.anchor !== 'corner' || geom.shape !== 'box') return null;
+  const { face, u, v } = feature;
+  if (face === 'top' || face === 'bottom' || face === 'side') return null;
+
+  // u picks which end of its own face the mount is nearest; the face itself fixes the other axis.
+  const near = u < 0.5 ? -1 : 1;
+  const sx = face === 'left' ? -1 : face === 'right' ? 1 : near;
+  const sy = face === 'front' ? -1 : face === 'back' ? 1 : near;
+  return {
+    x: (sx * geom.length) / 2,
+    y: (sy * geom.width) / 2,
+    z: v * geom.height,
+    angleDeg: (Math.atan2(sy, sx) * 180) / Math.PI,
+  };
 }

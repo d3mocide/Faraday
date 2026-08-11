@@ -1,5 +1,6 @@
 import type { ArmedFeatureTemplate } from '../components/FeaturePalette';
 import { findBoardMountPreset } from '../presets/boardMounts';
+import { fanSpecFor } from '../csg/fanLibrary';
 import type { BoardIoCutout, BoardPreset } from '../presets/boards';
 import type { EnclosureProject, Face, Feature, FeatureType } from '../types/project';
 
@@ -69,6 +70,7 @@ export function buildPresetFeatures(preset: BoardPreset): Feature[] {
       connectorOverride: port.override ? structuredClone(port.override) : undefined,
       custom: port.custom ? structuredClone(port.custom) : undefined,
       vent: port.vent ? structuredClone(port.vent) : undefined,
+      fan: port.fan ? structuredClone(port.fan) : undefined,
       mount: port.mount ? structuredClone(port.mount) : undefined,
     });
   }
@@ -76,6 +78,7 @@ export function buildPresetFeatures(preset: BoardPreset): Feature[] {
 }
 
 function presetFeatureType(port: BoardIoCutout): FeatureType {
+  if (port.fan) return 'fan-mount';
   if (port.mount) return 'external-mount';
   if (port.vent) return 'vent';
   if (port.connectorId) return 'connector-cutout';
@@ -173,6 +176,18 @@ export function buildFeatureFromTemplate(
               holeDiameter: 4.5,
               slotLength: 9,
             },
+    };
+  }
+
+  if (template.type === 'fan-mount') {
+    return {
+      id,
+      type: 'fan-mount',
+      face,
+      u,
+      v,
+      rotationDeg: 0,
+      fan: fanSpecFor(template.fanSize),
     };
   }
 

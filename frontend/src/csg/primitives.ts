@@ -1,5 +1,11 @@
 import type { CrossSection, Manifold, ManifoldToplevel } from 'manifold-3d';
-import type { CornerStyle, GasketSpec, ScrewCount, ScrewSpec } from '../types/project';
+import type {
+  CornerStyle,
+  GasketSpec,
+  ScrewColumnShape,
+  ScrewCount,
+  ScrewSpec,
+} from '../types/project';
 import { SCREW_HOLE_SPECS, bossOuterDiameter } from './screwLibrary';
 
 export function footprintCrossSection(
@@ -76,6 +82,7 @@ interface ScrewBossLidParams {
   innerWidth: number;
   outerLength: number; // outer footprint -- what exterior columns stand against
   outerWidth: number;
+  wallThickness: number; // how much solid lid sits over an interior boss, for the head pocket
   splitHeight: number;
   outerHeight: number;
   screw: ScrewSpec;
@@ -152,6 +159,42 @@ function bossPositionsCircular(
   return positions;
 }
 
+/** A screw column: a round or square post spanning [zBottom, zBottom + height] on the Z axis. */
+function columnSolid(
+  wasm: ManifoldToplevel,
+  shape: ScrewColumnShape,
+  size: number,
+  height: number,
+  zBottom: number,
+): Manifold {
+  return shape === 'square'
+    ? wasm.Manifold.cube([size, size, height], false).translate(-size / 2, -size / 2, zBottom)
+    : cylinderZ(wasm, size, height, zBottom);
+}
+
+/** How much of the base's height a column occupies: the full floor-to-seam span by default, or a
+ * shorter post hanging down from the seam when ScrewSpec.columnHeight asks for one. */
+export function columnSpan(
+  screw: ScrewSpec,
+  splitHeight: number,
+): { zBottom: number; height: number } {
+  if (screw.columnHeight === undefined) return { zBottom: 0, height: splitHeight };
+  const height = Math.min(Math.max(screw.columnHeight, 1), splitHeight);
+  return { zBottom: splitHeight - height, height };
+}
+
+/**
+ * Depth of the concealed-head pocket in the lid, or 0 for a flush head. `solidTop` is how much
+ * material the lid actually has above its cavity at the screw -- usually the wall thickness, not
+ * the whole lid piece, since the piece is a tray with air underneath. The pocket always leaves
+ * 0.8mm of that behind: any deeper and it stops being a counterbore and starts being a hole for
+ * the head to drop through.
+ */
+export function counterboreDepth(screw: ScrewSpec, solidTop: number): number {
+  if (screw.headStyle !== 'counterbore') return 0;
+  return Math.max(Math.min(2.6, solidTop - 0.8), 0);
+}
+
 /** Adds bosses (with pilot/insert holes) to the base and matching clearance holes to the lid, at
  * the given positions. Shared by the box (corner bosses) and cylinder (evenly-spaced ring)
  * bodies -- see bossPositions()/bossPositionsCircular() and their generateEnclosure.ts call sites. */
@@ -163,21 +206,27 @@ export function applyScrewBossLidAt(
   outerHeight: number,
   screw: ScrewSpec,
   positions: Array<[number, number]>,
+  wallThickness: number,
 ): { base: Manifold; lid: Manifold } {
   const spec = SCREW_HOLE_SPECS[screw.size];
   const pilotDiameter =
     screw.insertType === 'heat-set' ? spec.heatSetHoleDiameter : spec.selfTapPilotDiameter;
   const outerDiameter = bossOuterDiameter(pilotDiameter);
+  const shape = screw.shape ?? 'round';
+  const { zBottom, height } = columnSpan(screw, splitHeight);
   const holeDepth =
     screw.insertType === 'heat-set'
-      ? Math.min(spec.heatSetDepth, splitHeight - 1)
-      : Math.max(splitHeight - 1.5, 1);
+      ? Math.min(spec.heatSetDepth, height - 1)
+      : Math.max(height - 1.5, 1);
+  const lidThickness = Math.max(outerHeight - splitHeight, 0.5);
+  const boreDepth = counterboreDepth(screw, Math.min(lidThickness, wallThickness));
 
   let nextBase = base;
   let nextLid = lid;
   for (const [x, y] of positions) {
-    const boss = cylinderZ(wasm, outerDiameter, splitHeight, 0).translate(x, y, 0);
-    nextBase = nextBase.add(boss);
+    nextBase = nextBase.add(
+      columnSolid(wasm, shape, outerDiameter, height, zBottom).translate(x, y, 0),
+    );
 
     const pilotHole = cylinderZ(wasm, pilotDiameter, holeDepth, splitHeight - holeDepth).translate(
       x,
@@ -186,13 +235,23 @@ export function applyScrewBossLidAt(
     );
     nextBase = nextBase.subtract(pilotHole);
 
-    const clearanceHole = cylinderZ(
-      wasm,
-      spec.clearanceDiameter,
-      outerHeight - splitHeight,
-      splitHeight,
-    ).translate(x, y, 0);
+    const clearanceHole = cylinderZ(wasm, spec.clearanceDiameter, lidThickness, splitHeight).translate(
+      x,
+      y,
+      0,
+    );
     nextLid = nextLid.subtract(clearanceHole);
+
+    if (boreDepth > 0) {
+      // Head pocket, opened from the lid's outer face downward.
+      nextLid = nextLid.subtract(
+        cylinderZ(wasm, spec.headDiameter + 0.6, boreDepth + 1, outerHeight - boreDepth).translate(
+          x,
+          y,
+          0,
+        ),
+      );
+    }
   }
 
   return { base: nextBase, lid: nextLid };
@@ -223,26 +282,41 @@ function applyExteriorScrewBossLidAt(
   const pilotDiameter =
     screw.insertType === 'heat-set' ? spec.heatSetHoleDiameter : spec.selfTapPilotDiameter;
   const outerDiameter = bossOuterDiameter(pilotDiameter);
+  const shape = screw.shape ?? 'round';
+  const { zBottom, height } = columnSpan(screw, splitHeight);
   const holeDepth =
     screw.insertType === 'heat-set'
-      ? Math.min(spec.heatSetDepth, splitHeight - 1)
-      : Math.max(splitHeight - 1.5, 1);
+      ? Math.min(spec.heatSetDepth, height - 1)
+      : Math.max(height - 1.5, 1);
   const lidHeight = Math.max(outerHeight - splitHeight, 0.5);
+  // An exterior column is solid all the way up, so the head pocket is only limited by the lid
+  // piece's own height, not by a cavity beneath it.
+  const boreDepth = counterboreDepth(screw, lidHeight);
 
   let nextBase = base;
   let nextLid = lid;
   for (const [x, y] of positions) {
     nextBase = nextBase
-      .add(cylinderZ(wasm, outerDiameter, splitHeight, 0).translate(x, y, 0))
+      .add(columnSolid(wasm, shape, outerDiameter, height, zBottom).translate(x, y, 0))
       .subtract(
         cylinderZ(wasm, pilotDiameter, holeDepth, splitHeight - holeDepth).translate(x, y, 0),
       );
 
     nextLid = nextLid
-      .add(cylinderZ(wasm, outerDiameter, lidHeight, splitHeight).translate(x, y, 0))
+      .add(columnSolid(wasm, shape, outerDiameter, lidHeight, splitHeight).translate(x, y, 0))
       .subtract(
         cylinderZ(wasm, spec.clearanceDiameter, lidHeight + 1, splitHeight - 0.5).translate(x, y, 0),
       );
+
+    if (boreDepth > 0) {
+      nextLid = nextLid.subtract(
+        cylinderZ(wasm, spec.headDiameter + 0.6, boreDepth + 1, outerHeight - boreDepth).translate(
+          x,
+          y,
+          0,
+        ),
+      );
+    }
   }
 
   return { base: nextBase, lid: nextLid };
@@ -255,7 +329,8 @@ export function applyScrewBossLid(
   lid: Manifold,
   params: ScrewBossLidParams,
 ): { base: Manifold; lid: Manifold } {
-  const { innerLength, innerWidth, outerLength, outerWidth, splitHeight, outerHeight, screw } = params;
+  const { innerLength, innerWidth, outerLength, outerWidth, wallThickness, splitHeight, outerHeight, screw } =
+    params;
   if (screw.placement === 'exterior') {
     return applyExteriorScrewBossLidAt(
       wasm,
@@ -267,18 +342,31 @@ export function applyScrewBossLid(
       exteriorBossPositions(screw.count, outerLength / 2, outerWidth / 2, bossRadiusFor(screw)),
     );
   }
-  const positions = bossPositions(
-    screw.count,
-    innerLength / 2,
-    innerWidth / 2,
-    bossRadiusFor(screw),
-    screw.edgeInset,
+  const bossRadius = bossRadiusFor(screw);
+  return applyScrewBossLidAt(
+    wasm,
+    base,
+    lid,
+    splitHeight,
+    outerHeight,
+    screw,
+    bossPositions(screw.count, innerLength / 2, innerWidth / 2, bossRadius, hangingInset(screw, bossRadius)),
+    wallThickness,
   );
-  return applyScrewBossLidAt(wasm, base, lid, splitHeight, outerHeight, screw, positions);
+}
+
+/** A column hanging from the seam has no floor under it, so it has to reach into the wall to weld:
+ * the inset is capped at just inside the boss radius, overriding a user edgeInset that would leave
+ * it floating. Full-height columns keep whatever inset was asked for -- they stand on the floor. */
+function hangingInset(screw: ScrewSpec, bossRadius: number): number | undefined {
+  if (screw.columnHeight === undefined) return screw.edgeInset;
+  const maxInset = Math.max(bossRadius - 0.6, 0);
+  return Math.min(screw.edgeInset ?? maxInset, maxInset);
 }
 
 interface ScrewBossLidCylinderParams {
   innerDiameter: number; // base cavity diameter (diameter - 2*wallThickness)
+  wallThickness: number;
   splitHeight: number;
   outerHeight: number;
   screw: ScrewSpec;
@@ -291,14 +379,15 @@ export function applyScrewBossLidCylinder(
   lid: Manifold,
   params: ScrewBossLidCylinderParams,
 ): { base: Manifold; lid: Manifold } {
-  const { innerDiameter, splitHeight, outerHeight, screw } = params;
+  const { innerDiameter, wallThickness, splitHeight, outerHeight, screw } = params;
+  const bossRadius = bossRadiusFor(screw);
   const positions = bossPositionsCircular(
     screw.count,
     innerDiameter / 2,
-    bossRadiusFor(screw),
-    screw.edgeInset,
+    bossRadius,
+    hangingInset(screw, bossRadius),
   );
-  return applyScrewBossLidAt(wasm, base, lid, splitHeight, outerHeight, screw, positions);
+  return applyScrewBossLidAt(wasm, base, lid, splitHeight, outerHeight, screw, positions, wallThickness);
 }
 
 interface FrictionLipParams {

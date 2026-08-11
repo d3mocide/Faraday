@@ -103,7 +103,7 @@ export function isPanelFace(face: Face, metrics: PanelMetrics | null): face is P
  * there.
  */
 export function featurePart(
-  feature: Pick<Feature, 'type' | 'face' | 'u' | 'v'>,
+  feature: Pick<Feature, 'type' | 'face' | 'u' | 'v' | 'mount'>,
   body: EnclosureBody,
 ): PartId {
   if (feature.type === 'standoff' || feature.type === 'board-mount') return 'base';
@@ -114,7 +114,10 @@ export function featurePart(
   const z = faceFrame(feature.face, bodyGeometry(body)).toWorld(feature.u, feature.v)[2];
 
   const metrics = panelMetrics(body);
-  if (metrics && isPanelFace(feature.face, metrics)) {
+  // A corner-anchored mount hangs off the corner post, which is base/lid material -- panels stop
+  // short of the corners, so it must never be routed to one even when its face is a panel face.
+  const cornerAnchored = feature.type === 'external-mount' && feature.mount?.anchor === 'corner';
+  if (metrics && !cornerAnchored && isPanelFace(feature.face, metrics)) {
     if (z >= metrics.plateBottomZ && z <= metrics.plateTopZ) return panelPartId(feature.face);
   }
   return z > splitHeight ? 'lid' : 'base';

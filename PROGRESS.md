@@ -546,6 +546,79 @@ columns, none of which the app could express. Three capabilities plus the preset
   the inspector's mount editor round-trips a hole-style change; and Export produces a zip with four
   STLs plus `bom.csv`. Zero console errors across every run.
 
+## Fans, corner mounts, screw column variations (2026-08-11 session, follow-up)
+
+Second round on the same request, filling the gaps the CM4 port exposed.
+
+### Fan mounts (`fan-mount` feature, `csg/fanLibrary.ts`)
+
+- **Ten standard sizes** (20 → 120mm) with their square bolt-circle pitches, in the same
+  "starter values, verify against your actual part" tier as the connector and screw libraries. The
+  20mm entry is flagged as the least standardized (some use 15.5mm rather than 16mm).
+- **The concentric ring grille is ported from the contributed CadQuery design**, generalized to any
+  fan size: open annuli from the hub outward, cut back by N radial spokes so the middle stays tied
+  to the rim. Every span is a short bridge between two rings, which is what makes it print without
+  support. `honeycomb` (reusing the vent hex generator, clipped to the fan circle) and `open` (a
+  plain round hole for a fan with its own guard) are the alternatives.
+- **The hub hole is restored after the spokes are cut**, not before — cutting spokes across a
+  grille that already contains the hub fills the middle back in. Caught by a probe test; it's also
+  what the source design does (its central hole is the last operation).
+- **Mounting bosses run from the outer surface inward through the wall**, so `bossHeight` is what
+  actually stands proud on the inside. The first version measured from the outer face, which on a
+  2mm wall turned a 3mm boss into 1mm of usable pad. Also caught by a probe test.
+- A fan mount is the only feature that is **both additive and subtractive** — bosses union in, then
+  the same cut bores the screw holes through them — so `buildFanMount` returns `{ add, cut }` and
+  `generateEnclosure` applies both to the same part.
+- The CM4 preset now uses a real 40mm fan mount instead of a honeycomb vent plus four hand-placed
+  circles.
+
+### Corner-anchored external mounts (`ExternalMountSpec.anchor`)
+
+- `'corner'` snaps a mount to whichever vertical corner of a box its `u` is nearest and aims it out
+  along the diagonal, welding into **both** walls — the four-ears-at-the-corners pattern most
+  wall-mounted project boxes use. `u` picks the end of the face, `v` still sets the height.
+- **Corner ears sink deeper into the case than face-mounted ones**: a rounded or chamfered corner
+  cuts the corner point away by `r*(sqrt2 - 1)` along the diagonal, so the embed depth adds that
+  back. Without it the ear would float next to a radiused corner instead of welding to it.
+- **A corner mount always belongs to the base/lid, never a panel**, even when its face is a panel
+  face — panels stop short of the corners, so the ear physically hangs off the corner post
+  (`featurePart` has an explicit carve-out for this).
+- `cornerAnchor()` lives in `csg/faceFrame.ts` with the rest of the shape-aware placement math, so
+  the CSG and the viewport's marker placement can't drift.
+- Inspector adds a **"Put one on each corner"** action: the four vertical corners are exactly
+  front/back × u∈{0,1}, so it clones the mount onto the three it isn't on.
+
+### Screw column variations (`ScrewSpec`)
+
+- **`shape`**: round or square columns. **`size`**: M4 joins M2/M2.5/M3 (the library grew a
+  `headDiameter` per size for counterbores).
+- **`columnHeight`**: a column shorter than the base hangs from the lid seam instead of standing on
+  the floor, leaving the space underneath clear for a board or cable run. A hanging column has no
+  floor holding it up, so its edge inset is **capped at just inside the boss radius** — it has to
+  reach into the wall far enough to weld, overriding a user `edgeInset` that would leave it
+  floating.
+- **`headStyle: 'counterbore'`** conceals the screw head in a pocket in the lid. Depth is clamped
+  against the material actually over the screw — for an interior boss that's the lid's top slab
+  (the wall thickness), *not* the lid piece's height, since the piece is a tray with air under it.
+  The first version used the piece height and cut straight through into the cavity: another probe
+  test catch. Exterior columns are solid to the top, so they're clamped against the piece instead.
+- BOM now names the screw **`M3x12mm`** rather than just `M3`, deriving the length from what it has
+  to pass through (lid, less any counterbore) plus its engagement in the column, rounded up to the
+  next even millimetre.
+
+### Verification
+
+- 89 vitest tests passing (was 73). The new ones lean on a **geometric probe helper** (intersect a
+  0.8mm cube with a part and ask whether it's empty), which is what caught all three of the bugs
+  above — every one of them produced perfectly watertight geometry that was simply the wrong shape,
+  so watertightness checks alone would have passed them.
+- Playwright: all ten fan sizes render in a new palette group and a placed 40mm fan shows its ring
+  grille and four screw holes in the lid; a flange switched to corner anchoring plus "put one on
+  each corner" yields four diagonal ears (verified in the store as four distinct corners); square +
+  concealed + 12mm columns apply live and the shortened columns are visibly hanging from the seam
+  with the floor clear beneath them; the CM4 preset re-applies (23 features now the fan is one
+  feature instead of five) and survives a reload. No console errors.
+
 ## Next steps (suggested order)
 
 All phases in DESIGN.md §13 (0 through 5) are implemented and verified, plus the 2026-07-12
@@ -555,11 +628,14 @@ board mounts). Remaining ideas, roughly by value for radio projects:
 - Text embossing/engraving (project name, port labels next to cutouts) — needs a font→polygon
   path (e.g. opentype.js) feeding a Manifold extrude.
 - Case-mounting features: pole/mast clamp bosses (still nothing anywhere in the app); zip-tie
-  anchors. Keyhole wall hangers and external flange tabs landed 2026-08-11 as the `external-mount`
-  feature; cable glands (PG7/PG9/PG11) landed as library entries 2026-07-20.
+  anchors. Keyhole wall hangers, external flange tabs and corner ears landed 2026-08-11 as the
+  `external-mount` feature; cable glands (PG7/PG9/PG11) landed as library entries 2026-07-20.
 - Panels: no per-panel thickness/groove override yet (one `PanelSpec` covers every selected face),
   and a panel can't yet be split by the lid seam — a face is either a plate up to the split or it
   isn't. Neither blocked anything so far.
+- Fans: no finger-guard-only mode (grille without screw holes), no rectangular blower support, and
+  the fan's own body isn't drawn as a ghost the way a board-mount's PCB is — clearance to a HAT or
+  heatsink under it still has to be judged from the numbers.
 - Battery features: 18650 holder pocket, LiPo tray with strap slots.
 - Printability: chamfered hole edges, thin-wall/feature-collision warnings, snap-fit wedge
   profile upgrade (see Phase 5 notes), 3MF export alongside STL.
@@ -879,3 +955,17 @@ editing old entries, so this stays a readable history. -->
   it needed. Two real geometry bugs caught during verification: a non-manifold corner post where
   two panels meet on a rounded corner, and a non-manifold pinch when a shallow lid's capture groove
   cuts past its own ceiling. 73 tests passing (was 43); browser-verified end to end.
+
+- **2026-08-11**: Follow-up round per user request (fan support "40mm, 30mm and 20mm are pretty
+  standard", the script's circular grille, corner-mountable flanges, and screw column variations
+  "shape, screw size length and the option to also conceal them" plus internal columns that don't
+  run floor-to-lid) — see the "Fans, corner mounts, screw column variations" section above.
+  (1) New `fan-mount` feature with a ten-size library and the source design's concentric ring
+  grille, honeycomb and open alternatives, plus optional inner mounting bosses; the CM4 preset now
+  uses it. (2) `ExternalMountSpec.anchor: 'corner'` for diagonal corner ears that weld into both
+  walls, with a one-click "put one on each corner". (3) `ScrewSpec` gained column shape, M4,
+  explicit column height (hanging columns that leave the floor clear) and counterbored/concealed
+  heads; the BOM now derives the screw length. Three geometry bugs caught by the new probe-based
+  tests, each of which produced watertight-but-wrong geometry: a spoke-filled fan hub, bosses
+  measured from the wrong face, and a counterbore cutting through the lid into the cavity.
+  89 tests passing (was 73); browser-verified end to end.

@@ -2,7 +2,15 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { EnclosureMeshes } from '../csg/CsgWorkerClient';
-import { bodyGeometry, clamp01, closestFace, faceFrame, faceFromWorld, faceSize } from '../csg/faceFrame';
+import {
+  bodyGeometry,
+  clamp01,
+  closestFace,
+  cornerAnchor,
+  faceFrame,
+  faceFromWorld,
+  faceSize,
+} from '../csg/faceFrame';
 import type { PartKind } from '../csg/generateEnclosure';
 import { effectiveSplitHeight } from '../csg/lidSplit';
 import { meshDataToBufferGeometry } from '../csg/meshToBufferGeometry';
@@ -829,11 +837,20 @@ export function Viewport3D({
         markerZ = body.wallThickness + feature.board.standoff.height + 1.2;
       } else if (feature.type === 'external-mount' && feature.mount) {
         // Sits at the mount's outer end rather than just proud of the wall, so the marker doesn't
-        // end up buried inside the ear or post it belongs to.
+        // end up buried inside the ear or post it belongs to. A corner-anchored mount isn't at its
+        // face's (u,v) at all -- it's out on the diagonal, and its marker follows it there.
         const stand = Math.max(feature.mount.protrusion, 1) + 1.5;
-        markerX = x + nx * stand + ox;
-        markerY = y + ny * stand + oy;
-        markerZ = z + nz * stand + oz;
+        const corner = cornerAnchor(feature, geom);
+        if (corner) {
+          const rad = (corner.angleDeg * Math.PI) / 180;
+          markerX = corner.x + Math.cos(rad) * stand + ox;
+          markerY = corner.y + Math.sin(rad) * stand + oy;
+          markerZ = corner.z + oz;
+        } else {
+          markerX = x + nx * stand + ox;
+          markerY = y + ny * stand + oy;
+          markerZ = z + nz * stand + oz;
+        }
       }
 
       marker.position.set(markerX, markerY, markerZ);

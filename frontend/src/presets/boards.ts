@@ -1,9 +1,11 @@
 import type { BoardPresetBody } from '../state/projectStore';
+import { fanSpecFor } from '../csg/fanLibrary';
 import type {
   BoardMountSpec,
   ConnectorSizeOverride,
   ExternalMountSpec,
   Face,
+  FanMountSpec,
   VentSpec,
 } from '../types/project';
 import {
@@ -55,8 +57,10 @@ export interface BoardIoCutout {
   override?: ConnectorSizeOverride;
   /** ...or a one-off custom hole for ports with no library entry... */
   custom?: { shape: 'circle' | 'rect'; width: number; height?: number };
-  /** ...or a vent pattern (intake/exhaust louvres, fan grille)... */
+  /** ...or a vent pattern (intake/exhaust louvres)... */
   vent?: VentSpec;
+  /** ...or a fan opening (grille + the fan's screw holes)... */
+  fan?: FanMountSpec;
   /** ...or something that grows outward instead of cutting in (wall-mount ear, external post).
    * Not an "IO port", but positioned board-relative exactly like one, so it rides the same list. */
   mount?: ExternalMountSpec;
@@ -440,19 +444,16 @@ export const BOARD_PRESETS: BoardPreset[] = [
       // lid fan pulls air across the module rather than short-circuiting through the port openings.
       { vent: cm4IntakeVent(4, 7, 55), rotationDeg: 90, face: 'left', alongMm: 26.225, aboveBoardMm: 8 },
       { vent: cm4IntakeVent(3, 8, 70), rotationDeg: 90, face: 'front', alongMm: -2.735, aboveBoardMm: 8 },
-      // 40mm exhaust fan in the lid: honeycomb grille plus its four M3 screw holes on the
-      // standard 32mm pitch. Positions are X/Y from the board center (a horizontal face).
+      // 40mm exhaust fan in the lid, centred over the HAT chamber: ring grille plus its four
+      // screw holes on the standard 32mm pitch. Position is X/Y from the board center (a
+      // horizontal face), and 2.6mm holes suit a self-tapping fan screw.
       {
-        vent: { pattern: 'honeycomb', areaWidth: 36, areaHeight: 36, slotWidth: 5, slotSpacing: 6.5 },
+        fan: { ...fanSpecFor(40), screwHoleDiameter: 2.6 },
         face: 'top',
         alongMm: -9.735,
         acrossMm: 26.225,
         aboveBoardMm: 0,
       },
-      { custom: { shape: 'circle', width: 2.6 }, face: 'top', alongMm: -25.735, acrossMm: 10.225, aboveBoardMm: 0 },
-      { custom: { shape: 'circle', width: 2.6 }, face: 'top', alongMm: 6.265, acrossMm: 10.225, aboveBoardMm: 0 },
-      { custom: { shape: 'circle', width: 2.6 }, face: 'top', alongMm: -25.735, acrossMm: 42.225, aboveBoardMm: 0 },
-      { custom: { shape: 'circle', width: 2.6 }, face: 'top', alongMm: 6.265, acrossMm: 42.225, aboveBoardMm: 0 },
       // Wall-mount tabs, level with the underside of the tray so the case bolts flat to a surface.
       { mount: CM4_WALL_TAB, face: 'front', alongMm: -20.735, aboveBoardMm: -6.5 },
       { mount: CM4_WALL_TAB, face: 'front', alongMm: 20.265, aboveBoardMm: -6.5 },

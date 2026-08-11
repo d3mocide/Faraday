@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { CONNECTOR_LIBRARY } from '../connectors/library';
+import { FAN_PRESETS } from '../csg/fanLibrary';
 import { BOARD_MOUNT_PRESETS } from '../presets/boardMounts';
 import type { ConnectorCategory, ConnectorLibraryEntry } from '../types/project';
 
@@ -9,7 +10,8 @@ export type ArmedFeatureTemplate =
   | { type: 'board-mount'; label: string; boardPresetId?: string }
   | { type: 'vent'; label: string }
   | { type: 'custom-hole'; label: string }
-  | { type: 'external-mount'; label: string; mountStyle: 'flange' | 'boss' };
+  | { type: 'external-mount'; label: string; mountStyle: 'flange' | 'boss' }
+  | { type: 'fan-mount'; label: string; fanSize: number };
 
 interface FeaturePaletteProps {
   armed: ArmedFeatureTemplate | null;
@@ -30,8 +32,15 @@ const CATEGORY_LABELS: Record<ConnectorCategory, string> = {
   misc: 'Misc',
 };
 
-function CategoryIcon({ category }: { category: FilterCategory | 'boards' }) {
+function CategoryIcon({ category }: { category: FilterCategory | 'boards' | 'fans' }) {
   switch (category) {
+    case 'fans':
+      return (
+        <svg className="cat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 12c0-4 1-6 3-6s2 3 0 4.5M12 12c4 0 6 1 6 3s-3 2-4.5 0M12 12c0 4-1 6-3 6s-2-3 0-4.5M12 12c-4 0-6-1-6-3s3-2 4.5 0" />
+        </svg>
+      );
     case 'boards':
       return (
         <svg className="cat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -163,11 +172,22 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
     (matchesQuery('Vent Panel', 'slots/honeycomb cooling', 'Vent') ||
       matchesQuery('Custom Hole', 'circle/rect custom opening', 'Custom'));
 
+  const filteredFans =
+    activeCategory === 'all' || activeCategory === 'openings'
+      ? FAN_PRESETS.filter((preset) =>
+          matchesQuery(
+            `${preset.size}mm Fan`,
+            `axial fan grille cooling exhaust intake ${preset.screw} ${preset.pitch}mm pitch`,
+            `${preset.size}×${preset.size}mm`,
+          ),
+        )
+      : [];
+
   return (
     <div className="feature-palette">
       <div className="palette-header">
         <h3>Features</h3>
-        <span className="palette-count">{CONNECTOR_LIBRARY.length + BOARD_MOUNT_PRESETS.length + 6} parts</span>
+        <span className="palette-count">{CONNECTOR_LIBRARY.length + BOARD_MOUNT_PRESETS.length + FAN_PRESETS.length + 6} parts</span>
       </div>
 
       <div className="palette-search">
@@ -374,6 +394,40 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
           </section>
         )}
 
+        {filteredFans.length > 0 && (
+          <section className="palette-group">
+            <div className="group-title">
+              <CategoryIcon category="fans" />
+              <span>Fans ({filteredFans.length})</span>
+            </div>
+            <div className="card-grid">
+              {filteredFans.map((preset) => {
+                const isArmed = armed?.type === 'fan-mount' && armed.fanSize === preset.size;
+                return (
+                  <button
+                    key={preset.size}
+                    type="button"
+                    className={isArmed ? 'palette-card armed' : 'palette-card'}
+                    onClick={() =>
+                      onArm({ type: 'fan-mount', fanSize: preset.size, label: `${preset.size}mm Fan` })
+                    }
+                  >
+                    <div className="card-top">
+                      <span className="card-name">{preset.size}mm Fan</span>
+                      <span className="dim-badge">
+                        {preset.size}×{preset.size}mm
+                      </span>
+                    </div>
+                    <span className="card-note">
+                      Ring grille + {preset.pitch}mm screw pitch ({preset.screw})
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         {filteredConnectors.length > 0 && (
           <section className="palette-group">
             <div className="group-title">
@@ -406,7 +460,11 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
           </section>
         )}
 
-        {!showMounting && !showOpenings && filteredBoardPresets.length === 0 && filteredConnectors.length === 0 && (
+        {!showMounting &&
+          !showOpenings &&
+          filteredBoardPresets.length === 0 &&
+          filteredFans.length === 0 &&
+          filteredConnectors.length === 0 && (
           <div className="palette-empty">
             <p>No features match "{search}"</p>
             <button type="button" onClick={() => setSearch('')}>
