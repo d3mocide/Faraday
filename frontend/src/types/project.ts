@@ -83,6 +83,16 @@ export interface PanelSpec {
   fitClearance: number; // mm of total slop in the channel (half of it per side)
   grooveDepth: number; // mm the channel bites into the adjacent walls and the floor
   captureInLid: boolean; // lid gets a matching groove over the plate's top edge
+  /**
+   * What actually holds the plate in. The plate's face is flush with the case's outer surface, so
+   * a groove alone can only stop it falling *inward* -- to stop it falling *outward* something has
+   * to overlap it from the outside. This is how much of the adjacent wall is left standing proud
+   * of the plate at each end: the plate's ends are rebated to match, so they slide down behind that
+   * lip and can't come back out sideways. 0 leaves the plate unretained (only sensible if you plan
+   * to glue or screw it). Undefined takes the default; clamped so the rebated end keeps at least
+   * 0.8mm of thickness.
+   */
+  retainLip?: number;
 }
 
 export interface BoxBody {
@@ -165,6 +175,14 @@ export interface ExternalMountSpec {
   holeDiameter: number; // mm
   /** 'slot': total travel of the slot. 'keyhole': center distance between the big and small ends. */
   slotLength: number; // mm
+  /**
+   * How far the sloped brace where the mount meets the wall runs out from it, in mm. Without one a
+   * mount is a slab butted onto a flat wall: it looks stuck on, and the sharp inside corner is
+   * where it will snap off. A flange gets a triangular web at each end (clear of the middle, so the
+   * screw stays reachable); a boss gets a conical collar. The slope is 45 degrees, which is what
+   * lets it print without support. 0 removes it; undefined takes a default sized from the mount.
+   */
+  gusset?: number;
   /** boss only: blind hole depth measured from the boss's outer end. Undefined = drilled through. */
   holeDepth?: number; // mm
 }

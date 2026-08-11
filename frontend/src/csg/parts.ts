@@ -35,6 +35,9 @@ export interface PanelMetrics {
   /** Total slop between plate and channel; half of it lands on each side. */
   clearance: number;
   grooveDepth: number;
+  /** Wall material left standing proud of the plate at each end, overlapping its rebated ends so
+   * it can't be pulled out sideways -- see PanelSpec.retainLip. 0 means no retention. */
+  retainLip: number;
   /** How deep the lid's own capture pocket actually is. Usually `grooveDepth`, but reduced (or
    * dropped to 0, meaning "no capture, the plate stops flush with the base rim") when the lid is
    * too shallow to take the full groove -- cutting past the lid's interior ceiling leaves a
@@ -54,6 +57,9 @@ export interface PanelMetrics {
 }
 
 const MIN_PANEL_SKIN = 0.8; // mm of wall/floor left outboard of a groove
+/** Two perimeters at a typical 0.4mm nozzle -- enough of a lip to hold a plate without being a
+ * feature you have to think about. */
+const DEFAULT_RETAIN_LIP = 1;
 
 export function panelMetrics(body: EnclosureBody): PanelMetrics | null {
   if (body.shape !== 'box' || !body.panels || body.panels.faces.length === 0) return null;
@@ -66,6 +72,9 @@ export function panelMetrics(body: EnclosureBody): PanelMetrics | null {
     Math.max(spec.grooveDepth, 0.2),
     Math.max(wallThickness - MIN_PANEL_SKIN, 0.2),
   );
+  // The lip eats into the plate's thickness (the ends are rebated to slide behind it), so it can
+  // never take so much that the rebated end stops being printable.
+  const retainLip = Math.min(Math.max(spec.retainLip ?? DEFAULT_RETAIN_LIP, 0), Math.max(thickness - 0.8, 0));
   const channelBottomZ = wallThickness - grooveDepth;
   // The lid's cavity ceiling: how far the capture pocket can bite up from the seam before it runs
   // out of skirt to cut.
@@ -78,6 +87,7 @@ export function panelMetrics(body: EnclosureBody): PanelMetrics | null {
     thickness,
     clearance,
     grooveDepth,
+    retainLip,
     lidCaptureDepth: captured ? lidCaptureDepth : 0,
     wallThickness,
     cornerInset: body.cornerStyle.type === 'sharp' ? 0 : Math.max(body.cornerStyle.radius, 0),

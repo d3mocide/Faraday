@@ -582,6 +582,14 @@ function ExternalMountFields({
             onChangeMm={(v) => setMount({ holeDiameter: v })}
           />
         )}
+        <UnitNumberField
+          label="Wall brace"
+          valueMm={mount.gusset ?? Math.min(Math.max(mount.protrusion, 1) * 0.45, 4)}
+          units={units}
+          minMm={0}
+          maxMm={Math.max(mount.protrusion - 0.5, 0)}
+          onChangeMm={(v) => setMount({ gusset: v })}
+        />
         {(mount.hole === 'slot' || mount.hole === 'keyhole') && (
           <UnitNumberField
             label={mount.hole === 'slot' ? 'Slot length' : 'Keyhole travel'}
@@ -601,6 +609,12 @@ function ExternalMountFields({
           />
         )}
       </FieldsGrid2Col>
+      <p className="field-hint">
+        The wall brace is the sloped blend where the mount meets the case: triangular webs at each
+        end of a flange (clear of the middle, so the screw stays reachable) or a conical collar
+        round a boss. It goes underneath where there's room and on top where there isn't, and its
+        45&deg; slope prints without support. 0 leaves the mount butted flat against the wall.
+      </p>
       {isCorner && (
         <>
           <button type="button" className="btn-secondary" onClick={fillCorners}>
@@ -1080,6 +1094,7 @@ export function InspectorPanel({
   const setPanelFitClearance = useProjectStore((s) => s.setPanelFitClearance);
   const setPanelGrooveDepth = useProjectStore((s) => s.setPanelGrooveDepth);
   const setPanelCaptureInLid = useProjectStore((s) => s.setPanelCaptureInLid);
+  const setPanelRetainLip = useProjectStore((s) => s.setPanelRetainLip);
 
   const { body, units } = project;
   const { lid } = body;
@@ -1448,6 +1463,15 @@ export function InspectorPanel({
                     stepMm={0.05}
                     onChangeMm={setPanelFitClearance}
                   />
+                  <UnitNumberField
+                    label="Retaining lip"
+                    valueMm={body.panels.retainLip ?? 1}
+                    units={units}
+                    minMm={0}
+                    maxMm={Math.max(body.panels.thickness - 0.8, 0)}
+                    stepMm={0.1}
+                    onChangeMm={setPanelRetainLip}
+                  />
                 </FieldsGrid2Col>
                 <label className="field field-checkbox">
                   <input
@@ -1460,7 +1484,9 @@ export function InspectorPanel({
                 <p className="field-hint">
                   Each selected wall becomes its own STL, sliding down into grooves in the
                   neighbouring walls and the floor. Cutouts placed on that face are cut into the
-                  plate.
+                  plate. The retaining lip is what stops the plate falling back out: that much wall
+                  is left standing proud of it at each end, and the plate's ends are rebated to
+                  match. Set it to 0 only if you intend to glue or screw the plate in.
                 </p>
               </>
             )}
@@ -1510,7 +1536,7 @@ export function InspectorPanel({
                 key={finding.id}
                 type="button"
                 className="check-item"
-                onClick={() => onSelectFeature(finding.featureId)}
+                onClick={() => finding.featureId && onSelectFeature(finding.featureId)}
               >
                 <span className="check-title">{finding.title}</span>
                 <span className="check-detail">{finding.detail}</span>

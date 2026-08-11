@@ -191,3 +191,35 @@ describe('overhang support planner', () => {
     expect(x).toBeCloseTo(41.765, 2);
   });
 });
+
+describe('panel retention check', () => {
+  function withPanels(thickness: number, retainLip?: number): EnclosureProject {
+    const p = project([]);
+    if (p.body.shape === 'box') {
+      p.body.panels = {
+        faces: ['left', 'right'],
+        thickness,
+        fitClearance: 0.2,
+        grooveDepth: 1.2,
+        captureInLid: true,
+        retainLip,
+      };
+    }
+    return p;
+  }
+
+  it('says nothing about a plate thick enough to keep its lip', () => {
+    expect(runDesignChecks(withPanels(2.4))).toEqual([]);
+  });
+
+  it('flags a plate too thin to be retained at all', () => {
+    const findings = runDesignChecks(withPanels(1));
+    expect(findings.map((f) => f.title)).toEqual(['Slide-in plates are too thin to be retained']);
+    expect(findings[0].featureId).toBeUndefined();
+  });
+
+  it('stays quiet when the lip was deliberately turned off', () => {
+    expect(runDesignChecks(withPanels(1, 0))).toEqual([]);
+    expect(runDesignChecks(withPanels(2.4, 0))).toEqual([]);
+  });
+});

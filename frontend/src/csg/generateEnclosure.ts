@@ -195,7 +195,17 @@ export function generateEnclosure(
       );
       if (metrics.lidCaptureDepth > 0) {
         lid = lid.subtract(
-          panelChannelCut(wasm, dims, metrics, face, splitHeight, splitHeight + metrics.lidCaptureDepth),
+          // The lid's pocket is plain full-depth: its job is to stop the plate lifting, and a
+          // retaining lip hanging off the lid would be a fragile tab for no gain.
+          panelChannelCut(
+            wasm,
+            dims,
+            metrics,
+            face,
+            splitHeight,
+            splitHeight + metrics.lidCaptureDepth,
+            false,
+          ),
         );
       }
       panels.set(face, panelPlate(wasm, dims, metrics, face, outerShape));

@@ -322,6 +322,30 @@ describe('external mounts', () => {
     });
   }
 
+  it('braces the ear into the wall at its ends, leaving the middle clear for a screwdriver', () => {
+    const solids = generateSolids(makeBox({ corner: 'sharp', features: [cases[0].feature] }));
+    // Front-face ear at v=0.1 on a 30mm-tall box: plate centred at z=3, 3mm thick, so it spans
+    // 1.5..4.5 with no room underneath -- the webs go above it.
+    const wall = -25 - 1; // 1mm out from the front wall
+    expect(solidAt(solids.base, [6.24, wall, 5.2], 0.5), 'web at one end of the ear').toBe(true);
+    expect(solidAt(solids.base, [-6.24, wall, 5.2], 0.5), 'web at the other end').toBe(true);
+    expect(solidAt(solids.base, [0, wall, 5.2], 0.5), 'middle stays open above the hole').toBe(false);
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('the brace can be turned off', () => {
+    const braced = generateSolids(makeBox({ corner: 'sharp', features: [cases[0].feature] }));
+    const bare = generateSolids(
+      makeBox({
+        corner: 'sharp',
+        features: [{ ...cases[0].feature, mount: { ...cases[0].feature.mount!, gusset: 0 } }],
+      }),
+    );
+    expect(braced.base.volume()).toBeGreaterThan(bare.base.volume());
+    expect(solidAt(bare.base, [6.24, -26, 5.2], 0.5), 'no web without a gusset').toBe(false);
+    for (const part of [...Object.values(braced), ...Object.values(bare)]) part.delete();
+  });
+
   it('a flange actually grows the part it is attached to, outward', () => {
     const plain = generateMeshes(makeBox({}));
     const withFlange = generateMeshes(makeBox({ features: [cases[0].feature] }));
@@ -404,6 +428,56 @@ describe('slide-in panels', () => {
     for (const [id, mesh] of Object.entries(parts)) {
       expect(isWatertight(mesh), `${id} watertight`).toBe(true);
     }
+  });
+
+  it('the plate cannot be pulled straight out of the assembled case', () => {
+    // The whole point of the retaining lip. Sweep the plate outward in small steps: if the case
+    // grips it at all, the swept volume has to run into base material. Without a lip the plate is
+    // flush with the outer surface and simply falls out sideways -- which is what shipped first.
+    const result = generateEnclosure(wasm, makeBox({ panels: PANELS, corner: 'sharp' }), 'export');
+    const parts = new Map(result.parts.map((p) => [p.id, p.manifold]));
+    let blocked = false;
+    for (let d = 0.5; d <= 4; d += 0.5) {
+      const moved = parts.get('panel-right')!.translate(d, 0, 0);
+      const hit = moved.intersect(parts.get('base')!);
+      if (!hit.isEmpty()) blocked = true;
+      hit.delete();
+      moved.delete();
+    }
+    for (const part of result.parts) part.manifold.delete();
+    expect(blocked, 'the base blocks the plate from sliding out').toBe(true);
+  });
+
+  it('...but still lifts straight out of the base, or it could never be assembled', () => {
+    // The mirror of the test above: retention must not turn into a trap. The plate goes in from
+    // the top before the lid, so nothing in the base may obstruct that path.
+    const result = generateEnclosure(wasm, makeBox({ panels: PANELS, corner: 'sharp' }), 'export');
+    const parts = new Map(result.parts.map((p) => [p.id, p.manifold]));
+    let obstructed = false;
+    for (let d = 0.5; d <= 8; d += 0.5) {
+      const moved = parts.get('panel-right')!.translate(0, 0, d);
+      const hit = moved.intersect(parts.get('base')!);
+      if (!hit.isEmpty()) obstructed = true;
+      hit.delete();
+      moved.delete();
+    }
+    for (const part of result.parts) part.manifold.delete();
+    expect(obstructed, 'nothing in the base is in the way of lifting the plate out').toBe(false);
+  });
+
+  it('a plate with the lip switched off is unretained, and says so', () => {
+    const result = generateEnclosure(
+      wasm,
+      makeBox({ panels: { ...PANELS, retainLip: 0 }, corner: 'sharp' }),
+      'export',
+    );
+    const parts = new Map(result.parts.map((p) => [p.id, p.manifold]));
+    const moved = parts.get('panel-right')!.translate(3, 0, 0);
+    const hit = moved.intersect(parts.get('base')!);
+    expect(hit.isEmpty(), 'no lip means nothing holds the plate').toBe(true);
+    hit.delete();
+    moved.delete();
+    for (const part of result.parts) part.manifold.delete();
   });
 
   it('panels combine with every lid type', () => {
@@ -574,6 +648,19 @@ describe('screw column variations', () => {
     expect(solidAt(solids.base, [x, y, 24 - 6.5]), 'column material near the seam').toBe(true);
     expect(solidAt(solids.base, [x, y, 24 - 12]), 'clear below the column').toBe(false);
     expect(solidAt(solids.base, [x, y, 3]), 'clear down at the floor').toBe(false);
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('a shortened column gets a sloped foot instead of stopping dead in mid-air', () => {
+    const solids = generateSolids(screwBox({ columnHeight: 8 }));
+    const bossRadius = bossRadiusFor({ size: 'M3', insertType: 'heat-set', count: 4 });
+    const x = 80 / 2 - 2 - (bossRadius - 0.6);
+    const y = 50 / 2 - 2 - (bossRadius - 0.6);
+    // Column bottom is at 24 - 8 = 16; the foot tapers away below that over ~3.6mm.
+    expect(solidAt(solids.base, [x, y, 15], 0.4), 'foot material just under the column').toBe(true);
+    expect(solidAt(solids.base, [x, y, 11], 0.4), 'nothing left below the foot').toBe(false);
+    // ...and it really is a taper: 3mm off the axis there is already nothing at the foot's waist.
+    expect(solidAt(solids.base, [x + 3, y, 13], 0.4), 'the foot narrows as it descends').toBe(false);
     for (const part of Object.values(solids)) part.delete();
   });
 

@@ -1,4 +1,5 @@
 import { bodyGeometry, faceFrame, supportPadPositions } from '../csg/faceFrame';
+import { panelMetrics } from '../csg/parts';
 import type { BoardMountSpec, EnclosureProject, Feature } from '../types/project';
 
 /**
@@ -9,8 +10,9 @@ import type { BoardMountSpec, EnclosureProject, Feature } from '../types/project
 export interface DesignCheckFinding {
   /** Stable within one run, for React keys. */
   id: string;
-  /** The feature the finding is about, so the UI can select it and the viewport can flag it. */
-  featureId: string;
+  /** The feature the finding is about, so the UI can select it and the viewport can flag it.
+   * Absent for findings about the body itself. */
+  featureId?: string;
   title: string;
   detail: string;
 }
@@ -82,6 +84,23 @@ function padRadius(feature: Feature): number {
 export function runDesignChecks(project: EnclosureProject): DesignCheckFinding[] {
   const findings: DesignCheckFinding[] = [];
   const geom = bodyGeometry(project.body);
+
+  // A lip the user asked for but can't have: the plate is too thin to rebate, so the panel ends up
+  // with nothing holding it in. Choosing 0 deliberately is not flagged -- that's an opt-out, not a
+  // mistake.
+  const panels = panelMetrics(project.body);
+  const requestedLip =
+    project.body.shape === 'box' ? project.body.panels?.retainLip : undefined;
+  if (panels && requestedLip !== 0 && panels.retainLip < 0.4) {
+    findings.push({
+      id: 'panels:no-lip',
+      title: 'Slide-in plates are too thin to be retained',
+      detail:
+        'A plate needs about 1.8mm of thickness to keep a retaining lip and still hold together. ' +
+        'At this thickness nothing stops it sliding straight back out of the case.',
+    });
+  }
+
   const boards = boardFootprints(project);
   if (boards.length === 0) return findings;
 
