@@ -3,9 +3,16 @@ import * as THREE from 'three';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import type { CsgWorkerClient } from '../csg/CsgWorkerClient';
 import { meshDataToBufferGeometry } from '../csg/meshToBufferGeometry';
+import type { PartMesh } from '../csg/workerProtocol';
 import type { EnclosureProject } from '../types/project';
 import { generateBomCsv } from './bom';
 import { sanitizeFilename } from './filename';
+
+/** `case_base.stl`, `case_lid.stl`, `panel_left.stl`, ... -- one file per printed piece. */
+function stlFilename(part: PartMesh): string {
+  if (part.kind === 'panel' && part.face) return `panel_${part.face}.stl`;
+  return `case_${part.kind}.stl`;
+}
 
 function partToStlBytes(mesh: { positions: Float32Array; indices: Uint32Array }): Uint8Array {
   const geometry = meshDataToBufferGeometry(mesh);
@@ -27,8 +34,9 @@ export async function exportEnclosureZip(
 
   onStatus?.('Packaging STL files...');
   const zip = new JSZip();
-  zip.file('case_base.stl', partToStlBytes(meshes.base));
-  zip.file('case_lid.stl', partToStlBytes(meshes.lid));
+  for (const part of meshes.parts) {
+    zip.file(stlFilename(part), partToStlBytes(part.mesh));
+  }
   zip.file('bom.csv', generateBomCsv(project));
   const blob = await zip.generateAsync({ type: 'blob' });
 

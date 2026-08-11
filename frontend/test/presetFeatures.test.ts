@@ -126,14 +126,13 @@ describe('board preset IO layouts', () => {
   }
 
   for (const preset of BOARD_PRESETS.filter((p) => p.boardMount || (p.io && p.io.length > 0))) {
-    it(`${preset.id}: full preset generates watertight base + lid`, () => {
+    it(`${preset.id}: full preset generates watertight parts`, () => {
       const result = generateEnclosure(wasm, projectFromPreset(preset), 'export');
-      const base = extractMeshData(result.base);
-      const lid = extractMeshData(result.lid);
-      result.base.delete();
-      result.lid.delete();
-      expect(isWatertight(base), 'base watertight').toBe(true);
-      expect(isWatertight(lid), 'lid watertight').toBe(true);
+      for (const part of result.parts) {
+        const mesh = extractMeshData(part.manifold);
+        part.manifold.delete();
+        expect(isWatertight(mesh), `${part.id} watertight`).toBe(true);
+      }
     });
   }
 });

@@ -14,7 +14,9 @@ import type {
   CornerStyleType,
   Face,
   Feature,
+  ExternalMountSpec,
   LidType,
+  PanelFace,
   ScrewCount,
   ScrewInsertType,
   ScrewSize,
@@ -27,6 +29,9 @@ function featureLabel(feature: Feature): string {
   if (feature.type === 'board-mount') return 'Board mount';
   if (feature.type === 'vent') return 'Vent';
   if (feature.type === 'custom-hole') return 'Custom hole';
+  if (feature.type === 'external-mount') {
+    return feature.mount?.style === 'boss' ? 'External boss' : 'Mounting flange';
+  }
   if (feature.type === 'connector-cutout' && feature.connectorId) {
     return findConnector(feature.connectorId)?.label ?? feature.connectorId;
   }
@@ -146,6 +151,14 @@ function FeatureTypeIcon({ type }: { type: Feature['type'] }) {
         <svg className="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <rect x="3" y="3" width="18" height="18" rx="2" />
           <path d="M7 8h10M7 12h10M7 16h10" />
+        </svg>
+      );
+    case 'external-mount':
+      return (
+        <svg className="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M4 4v16" />
+          <rect x="4" y="9" width="15" height="6" rx="1" />
+          <circle cx="14" cy="12" r="2" />
         </svg>
       );
     default:
@@ -391,6 +404,107 @@ function VentFields({
   );
 }
 
+/** Editor for an external mount: the outward-growing counterpart to the interior standoff. Field
+ * labels change with the style, since a flange's `width` is an ear length while a boss's is a
+ * diameter. */
+function ExternalMountFields({
+  feature,
+  mount,
+  units,
+  onUpdateFeature,
+}: {
+  feature: Feature;
+  mount: ExternalMountSpec;
+  units: Units;
+  onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
+}) {
+  const setMount = (patch: Partial<ExternalMountSpec>) =>
+    onUpdateFeature(feature.id, { mount: { ...mount, ...patch } });
+  const isFlange = mount.style === 'flange';
+
+  return (
+    <div className="inspector-subgroup">
+      <div className="subgroup-title">External Mount</div>
+      <FieldsGrid2Col>
+        <label className="field">
+          <span>Style</span>
+          <select
+            value={mount.style}
+            onChange={(e) => setMount({ style: e.target.value as ExternalMountSpec['style'] })}
+          >
+            <option value="flange">Flange (wall tab)</option>
+            <option value="boss">Boss (post/foot)</option>
+          </select>
+        </label>
+        <label className="field">
+          <span>Hole</span>
+          <select
+            value={mount.hole}
+            onChange={(e) => setMount({ hole: e.target.value as ExternalMountSpec['hole'] })}
+          >
+            <option value="none">None</option>
+            <option value="round">Round</option>
+            {isFlange && <option value="slot">Slot</option>}
+            {isFlange && <option value="keyhole">Keyhole</option>}
+          </select>
+        </label>
+      </FieldsGrid2Col>
+      <FieldsGrid2Col>
+        <UnitNumberField
+          label={isFlange ? 'Tab width' : 'Post diameter'}
+          valueMm={mount.width}
+          units={units}
+          minMm={1}
+          onChangeMm={(v) => setMount({ width: v })}
+        />
+        <UnitNumberField
+          label={isFlange ? 'Reach out' : 'Post height'}
+          valueMm={mount.protrusion}
+          units={units}
+          minMm={1}
+          onChangeMm={(v) => setMount({ protrusion: v })}
+        />
+        {isFlange && (
+          <UnitNumberField
+            label="Plate thickness"
+            valueMm={mount.thickness}
+            units={units}
+            minMm={0.8}
+            onChangeMm={(v) => setMount({ thickness: v })}
+          />
+        )}
+        {mount.hole !== 'none' && (
+          <UnitNumberField
+            label="Hole dia"
+            valueMm={mount.holeDiameter}
+            units={units}
+            minMm={0.5}
+            onChangeMm={(v) => setMount({ holeDiameter: v })}
+          />
+        )}
+        {(mount.hole === 'slot' || mount.hole === 'keyhole') && (
+          <UnitNumberField
+            label={mount.hole === 'slot' ? 'Slot length' : 'Keyhole travel'}
+            valueMm={mount.slotLength}
+            units={units}
+            minMm={1}
+            onChangeMm={(v) => setMount({ slotLength: v })}
+          />
+        )}
+        {!isFlange && mount.hole !== 'none' && (
+          <UnitNumberField
+            label="Hole depth (0 = through)"
+            valueMm={mount.holeDepth ?? 0}
+            units={units}
+            minMm={0}
+            onChangeMm={(v) => setMount({ holeDepth: v > 0 ? v : undefined })}
+          />
+        )}
+      </FieldsGrid2Col>
+    </div>
+  );
+}
+
 function AlignMirrorAxisRow({
   feature,
   axis,
@@ -615,6 +729,12 @@ export function InspectorPanel({
   const setGasketEnabled = useProjectStore((s) => s.setGasketEnabled);
   const setGasketWidth = useProjectStore((s) => s.setGasketWidth);
   const setGasketDepth = useProjectStore((s) => s.setGasketDepth);
+  const setPanelsEnabled = useProjectStore((s) => s.setPanelsEnabled);
+  const togglePanelFace = useProjectStore((s) => s.togglePanelFace);
+  const setPanelThickness = useProjectStore((s) => s.setPanelThickness);
+  const setPanelFitClearance = useProjectStore((s) => s.setPanelFitClearance);
+  const setPanelGrooveDepth = useProjectStore((s) => s.setPanelGrooveDepth);
+  const setPanelCaptureInLid = useProjectStore((s) => s.setPanelCaptureInLid);
 
   const { body, units } = project;
   const { lid } = body;
@@ -871,6 +991,74 @@ export function InspectorPanel({
             onChangeMm={setWallThickness}
           />
         </FieldsGrid2Col>
+        {body.shape === 'box' && (
+          <div className="inspector-subgroup">
+            <div className="subgroup-title">Slide-in Panels</div>
+            <label className="field field-checkbox">
+              <input
+                type="checkbox"
+                checked={body.panels !== undefined}
+                onChange={(e) => setPanelsEnabled(e.target.checked)}
+              />
+              <span>Print selected walls as separate plates</span>
+            </label>
+            {body.panels && (
+              <>
+                <div className="panel-face-buttons">
+                  {(['front', 'back', 'left', 'right'] as PanelFace[]).map((face) => (
+                    <button
+                      key={face}
+                      type="button"
+                      className={`btn-lid-mode ${body.panels!.faces.includes(face) ? 'active' : ''}`}
+                      onClick={() => togglePanelFace(face)}
+                    >
+                      {face.charAt(0).toUpperCase() + face.slice(1)}
+                    </button>
+                  ))}
+                </div>
+                <FieldsGrid2Col>
+                  <UnitNumberField
+                    label="Plate thickness"
+                    valueMm={body.panels.thickness}
+                    units={units}
+                    minMm={0.8}
+                    onChangeMm={setPanelThickness}
+                  />
+                  <UnitNumberField
+                    label="Groove depth"
+                    valueMm={body.panels.grooveDepth}
+                    units={units}
+                    minMm={0.2}
+                    maxMm={Math.max(body.wallThickness - 0.8, 0.2)}
+                    onChangeMm={setPanelGrooveDepth}
+                  />
+                  <UnitNumberField
+                    label="Slide fit gap"
+                    valueMm={body.panels.fitClearance}
+                    units={units}
+                    minMm={0}
+                    maxMm={1.5}
+                    stepMm={0.05}
+                    onChangeMm={setPanelFitClearance}
+                  />
+                </FieldsGrid2Col>
+                <label className="field field-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={body.panels.captureInLid}
+                    onChange={(e) => setPanelCaptureInLid(e.target.checked)}
+                  />
+                  <span>Capture plate top in the lid</span>
+                </label>
+                <p className="field-hint">
+                  Each selected wall becomes its own STL, sliding down into grooves in the
+                  neighbouring walls and the floor. Cutouts placed on that face are cut into the
+                  plate.
+                </p>
+              </>
+            )}
+          </div>
+        )}
         {body.shape === 'box' && (
           <div className="inspector-subgroup">
             <div className="subgroup-title">Corner Style</div>
@@ -1134,6 +1322,15 @@ export function InspectorPanel({
             <BoardMountFields
               feature={selectedFeature}
               board={selectedFeature.board}
+              units={units}
+              onUpdateFeature={onUpdateFeature}
+            />
+          )}
+
+          {selectedFeature.type === 'external-mount' && selectedFeature.mount && (
+            <ExternalMountFields
+              feature={selectedFeature}
+              mount={selectedFeature.mount}
               units={units}
               onUpdateFeature={onUpdateFeature}
             />

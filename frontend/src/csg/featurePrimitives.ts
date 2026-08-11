@@ -1,5 +1,12 @@
 import type { CrossSection, Manifold, ManifoldToplevel } from 'manifold-3d';
-import type { ConnectorLibraryEntry, ConnectorSizeOverride, Face, Feature, VentSpec } from '../types/project';
+import type {
+  ConnectorLibraryEntry,
+  ConnectorSizeOverride,
+  ExternalMountSpec,
+  Face,
+  Feature,
+  VentSpec,
+} from '../types/project';
 import { faceFrame, type BodyGeometry } from './faceFrame';
 import { cylinderZ } from './primitives';
 
@@ -211,6 +218,130 @@ export function buildStandoff(
   if (!spec) throw new Error('standoff feature is missing its standoff spec');
   const [x, y] = faceFrame('bottom', geom).toWorld(feature.u, feature.v);
   return standoffAt(wasm, spec, x, y, wallThickness);
+}
+
+/**
+ * Rotation taking a solid built in the local frame (X = the face's u axis, Y = its v axis, Z = its
+ * outward normal) into world orientation. orientAlongFace above only has to get the extrusion
+ * *axis* right -- cutout solids are symmetric about their own origin, so the sign never matters --
+ * but an external mount is one-sided, so "outward" has to come out with the correct sign on every
+ * face. On the faces whose (u, v, n) frame is left-handed (back, left, bottom) no pure rotation can
+ * match all three axes at once; those flip v instead, which is invisible here because the mount
+ * geometry is symmetric in v -- its only asymmetric axis is the outward normal.
+ */
+function orientOutward(solid: Manifold, face: Face, u: number): Manifold {
+  switch (face) {
+    case 'top':
+      return solid;
+    case 'bottom':
+      return solid.rotate(180, 0, 0);
+    case 'front':
+      return solid.rotate(90, 0, 0);
+    case 'back':
+      return solid.rotate(-90, 0, 0);
+    case 'right':
+      return solid.rotate(90, 0, 0).rotate(0, 0, 90);
+    case 'left':
+      return solid.rotate(-90, 0, 0).rotate(0, 0, 90);
+    case 'side':
+      return solid.rotate(90, 0, 0).rotate(0, 0, 90 + u * 360);
+  }
+}
+
+/** Hole through a flange, drawn in the plate's own plane: X across the ear, Y outward from the
+ * wall. A slot runs along Y so the screw position is adjustable in and out; a keyhole puts its
+ * clearance circle at the ear's tip with the neck running back toward the case, so the case drops
+ * over the screw heads and slides inward to trap them. */
+function flangeHoleCrossSection(
+  wasm: ManifoldToplevel,
+  spec: ExternalMountSpec,
+  holeCenterY: number,
+): CrossSection | null {
+  const { CrossSection } = wasm;
+  const d = Math.max(spec.holeDiameter, 0.5);
+  if (spec.hole === 'none') return null;
+  if (spec.hole === 'round') return CrossSection.circle(d / 2).translate(0, holeCenterY);
+
+  // slotLength is the opening's overall length, so the swept centerline is that minus one hole
+  // diameter (half a round end at each tip).
+  const travel = Math.max(spec.slotLength - d, 0.1);
+  if (spec.hole === 'slot') {
+    return CrossSection.square([0.01, travel], true)
+      .offset(d / 2, 'Round')
+      .translate(0, holeCenterY);
+  }
+
+  const neck = Math.max(d * 0.55, 0.5);
+  const head = CrossSection.circle(d / 2).translate(0, holeCenterY + travel / 2);
+  const slot = CrossSection.square([0.01, travel], true)
+    .offset(neck / 2, 'Round')
+    .translate(0, holeCenterY);
+  return head.add(slot);
+}
+
+/** Flat ear standing out from a face (wall-mount tab), built in its own natural frame: X across the
+ * ear, Y outward, Z through the plate's thickness. `embed` sinks its root into the wall so the
+ * union always welds instead of just touching. */
+function flangeSolid(
+  wasm: ManifoldToplevel,
+  spec: ExternalMountSpec,
+  wallThickness: number,
+): Manifold {
+  const width = Math.max(spec.width, 1);
+  const protrusion = Math.max(spec.protrusion, 1);
+  const thickness = Math.max(spec.thickness, 0.8);
+  const embed = Math.max(wallThickness, 0.4);
+
+  const plate = wasm.Manifold.cube([width, protrusion + embed, thickness], true).translate(
+    0,
+    (protrusion - embed) / 2,
+    0,
+  );
+  const hole = flangeHoleCrossSection(wasm, spec, protrusion / 2);
+  if (!hole) return plate;
+  return plate.subtract(hole.extrude(thickness + 2, undefined, undefined, undefined, true));
+}
+
+/** Cylindrical post along the face's outward normal -- an external standoff: a foot under the base,
+ * a spacer column on the lid, a bolt-down pillar on a wall. */
+function bossSolid(
+  wasm: ManifoldToplevel,
+  spec: ExternalMountSpec,
+  wallThickness: number,
+): Manifold {
+  const diameter = Math.max(spec.width, 1);
+  const protrusion = Math.max(spec.protrusion, 1);
+  const embed = Math.max(wallThickness, 0.4);
+  const post = cylinderZ(wasm, diameter, protrusion + embed, -embed);
+  if (spec.hole === 'none') return post;
+
+  const holeDiameter = Math.min(Math.max(spec.holeDiameter, 0.5), diameter - 0.8);
+  // A blind hole is measured down from the outer end; without one it is drilled all the way
+  // through the post and the wall behind it.
+  const depth = spec.holeDepth !== undefined ? Math.max(spec.holeDepth, 0.5) : protrusion + embed + 1;
+  const bore = cylinderZ(wasm, holeDiameter, depth + 0.5, protrusion - depth);
+  return post.subtract(bore);
+}
+
+/** Builds an external mount (flange ear or boss), positioned and oriented on its face. Unlike every
+ * other feature primitive this one is additive -- the caller unions it into the part that owns that
+ * patch of the face. */
+export function buildExternalMount(
+  wasm: ManifoldToplevel,
+  feature: Feature,
+  geom: BodyGeometry,
+  wallThickness: number,
+): Manifold {
+  const spec = feature.mount;
+  if (!spec) throw new Error('external-mount feature is missing its mount spec');
+
+  const local =
+    spec.style === 'boss'
+      ? bossSolid(wasm, spec, wallThickness)
+      : flangeSolid(wasm, spec, wallThickness).rotate(90, 0, 0);
+  const spun = feature.rotationDeg ? local.rotate(0, 0, feature.rotationDeg) : local;
+  const [x, y, z] = faceFrame(feature.face, geom).toWorld(feature.u, feature.v);
+  return orientOutward(spun, feature.face, feature.u).translate(x, y, z);
 }
 
 /** Builds a board-mount feature: one standoff per mounting hole, the whole pattern positioned at

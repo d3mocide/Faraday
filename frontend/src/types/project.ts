@@ -43,12 +43,32 @@ export interface LidSpec {
 
 export type BodyShape = 'box' | 'cylinder';
 
+/** The four box walls that can be swapped for a separately-printed slide-in panel. */
+export type PanelFace = 'front' | 'back' | 'left' | 'right';
+
+/**
+ * Slide-in end panels: the listed walls are removed from the base and printed as separate flat
+ * plates that drop into a channel formed by grooves cut into the two adjacent walls and the floor
+ * (and optionally the lid's underside). This is what makes a multi-part enclosure -- a connector
+ * panel can be reprinted on its own when the port layout changes, and every port cutout on that
+ * face is cut into the plate instead of the base. Box bodies only: a cylinder has no flat wall to
+ * replace.
+ */
+export interface PanelSpec {
+  faces: PanelFace[];
+  thickness: number; // mm, plate thickness
+  fitClearance: number; // mm of total slop in the channel (half of it per side)
+  grooveDepth: number; // mm the channel bites into the adjacent walls and the floor
+  captureInLid: boolean; // lid gets a matching groove over the plate's top edge
+}
+
 export interface BoxBody {
   shape: 'box';
   outer: { length: number; width: number; height: number }; // mm
   wallThickness: number; // mm
   cornerStyle: CornerStyle;
   lid: LidSpec;
+  panels?: PanelSpec; // absent = every wall is part of the base, the original single-piece body
 }
 
 /** Phase 5 stretch shape (DESIGN.md §9/§13): a round mast/antenna-mount enclosure. No corner
@@ -88,7 +108,43 @@ export interface BoardMountSpec {
   standoff: StandoffSpec; // shared by every hole
 }
 
-export type FeatureType = 'connector-cutout' | 'standoff' | 'vent' | 'custom-hole' | 'board-mount';
+/** 'flange' is a flat ear standing out from a face (wall-mount tab); 'boss' is a cylindrical post
+ * along the face's outward normal (external standoff / foot / spacer column). */
+export type ExternalMountStyle = 'flange' | 'boss';
+
+/** Hole through an external mount. 'slot' and 'keyhole' both run along the outward direction --
+ * a slot for screw-position adjustment, a keyhole so the case can be dropped over a screw head
+ * and slid to trap it. */
+export type ExternalMountHoleStyle = 'none' | 'round' | 'slot' | 'keyhole';
+
+/**
+ * A feature that grows *outward* from a face instead of cutting into it -- the outside counterpart
+ * to the interior-only `standoff`. Unions into whichever printed part owns that patch of the face
+ * (base, lid, or a slide-in panel).
+ */
+export interface ExternalMountSpec {
+  style: ExternalMountStyle;
+  /** flange: length along the face's u axis. boss: outer diameter. */
+  width: number; // mm
+  /** How far it stands proud of the face. */
+  protrusion: number; // mm
+  /** flange: plate thickness (along the face's v axis). Ignored for a boss. */
+  thickness: number; // mm
+  hole: ExternalMountHoleStyle;
+  holeDiameter: number; // mm
+  /** 'slot': total travel of the slot. 'keyhole': center distance between the big and small ends. */
+  slotLength: number; // mm
+  /** boss only: blind hole depth measured from the boss's outer end. Undefined = drilled through. */
+  holeDepth?: number; // mm
+}
+
+export type FeatureType =
+  | 'connector-cutout'
+  | 'standoff'
+  | 'vent'
+  | 'custom-hole'
+  | 'board-mount'
+  | 'external-mount';
 
 /** Per-placement size override for a connector cutout. Fields fall back to the library entry,
  * so overriding one dimension doesn't freeze the others. */
@@ -111,6 +167,7 @@ export interface Feature {
   vent?: VentSpec;
   custom?: { shape: 'circle' | 'rect'; width: number; height?: number };
   board?: BoardMountSpec; // for 'board-mount'
+  mount?: ExternalMountSpec; // for 'external-mount'
   hidden?: boolean; // when true, feature is hidden from CSG generation and 3D preview
   locked?: boolean; // when true, feature is locked against 3D drag gestures
 }

@@ -3,9 +3,9 @@ import Module from 'manifold-3d';
 import type { ManifoldToplevel } from 'manifold-3d';
 import wasmUrl from 'manifold-3d/manifold.wasm?url';
 import { garbageCollectManifold, cleanup } from 'manifold-3d/lib/garbage-collector';
-import { generateEnclosure, orientLidForPrint } from './generateEnclosure';
+import { generateEnclosure, orientPartForPrint } from './generateEnclosure';
 import { extractMeshData } from './manifoldToGeometry';
-import type { CsgRequest, CsgResponse } from './workerProtocol';
+import type { CsgRequest, CsgResponse, PartMesh } from './workerProtocol';
 
 let wasmPromise: Promise<ManifoldToplevel> | null = null;
 
@@ -25,21 +25,20 @@ self.onmessage = async (event: MessageEvent<CsgRequest>) => {
   try {
     const wasm = await getWasm();
     const result = generateEnclosure(wasm, project, quality);
-    const lidForOutput =
-      quality === 'export'
-        ? orientLidForPrint(result.lid, result.splitHeight, result.outerHeight)
-        : result.lid;
 
-    const base = extractMeshData(result.base);
-    const lid = extractMeshData(lidForOutput);
+    const parts: PartMesh[] = result.parts.map((part) => ({
+      id: part.id,
+      label: part.label,
+      kind: part.kind,
+      face: part.face,
+      mesh: extractMeshData(quality === 'export' ? orientPartForPrint(part, result) : part.manifold),
+    }));
 
-    const response: CsgResponse = { id, type: 'result', base, lid };
-    self.postMessage(response, [
-      base.positions.buffer,
-      base.indices.buffer,
-      lid.positions.buffer,
-      lid.indices.buffer,
-    ]);
+    const response: CsgResponse = { id, type: 'result', parts };
+    self.postMessage(
+      response,
+      parts.flatMap((p) => [p.mesh.positions.buffer, p.mesh.indices.buffer]),
+    );
   } catch (err) {
     const response: CsgResponse = {
       id,

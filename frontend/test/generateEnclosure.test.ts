@@ -7,7 +7,9 @@ import type {
   Feature,
   GasketSpec,
   LidType,
+  PanelSpec,
 } from '../src/types/project';
+import type { MeshData } from '../src/csg/workerProtocol';
 import { getTestWasm } from './helpers/wasm';
 import { boundingBox, isWatertight } from './helpers/geometry';
 
@@ -23,6 +25,7 @@ function makeBox(over: {
   gasket?: GasketSpec;
   corner?: 'sharp' | 'rounded' | 'chamfered';
   features?: Feature[];
+  panels?: PanelSpec;
 }): EnclosureProject {
   return {
     id: 'test',
@@ -42,6 +45,7 @@ function makeBox(over: {
         screw: { size: 'M3', insertType: 'heat-set', count: 4 },
         gasket: over.gasket,
       },
+      panels: over.panels,
     },
     features: over.features ?? [],
   };
@@ -70,14 +74,20 @@ function makeCylinder(over: { lid?: LidType; gasket?: GasketSpec }): EnclosurePr
   };
 }
 
-/** Runs the pipeline at export quality and returns transferable meshes; always frees Manifolds. */
-function generateMeshes(project: EnclosureProject) {
+/** Runs the pipeline at export quality and returns every part's mesh; always frees Manifolds. */
+function generateParts(project: EnclosureProject): Record<string, MeshData> {
   const result = generateEnclosure(wasm, project, 'export');
-  const base = extractMeshData(result.base);
-  const lid = extractMeshData(result.lid);
-  result.base.delete();
-  result.lid.delete();
-  return { base, lid };
+  const meshes: Record<string, MeshData> = {};
+  for (const part of result.parts) {
+    meshes[part.id] = extractMeshData(part.manifold);
+    part.manifold.delete();
+  }
+  return meshes;
+}
+
+function generateMeshes(project: EnclosureProject) {
+  const parts = generateParts(project);
+  return { base: parts.base, lid: parts.lid };
 }
 
 const LID_TYPES: LidType[] = ['friction-lip', 'screw-boss', 'snap-fit'];
@@ -220,5 +230,184 @@ describe('each feature type keeps both pieces watertight', () => {
     const { base: baseMesh, lid } = generateMeshes(makeBox({ features: cases.map((c) => c.feature) }));
     expect(isWatertight(baseMesh), 'base watertight').toBe(true);
     expect(isWatertight(lid), 'lid watertight').toBe(true);
+  });
+});
+
+describe('external mounts', () => {
+  const mountBase = { id: 'm', type: 'external-mount' as const, u: 0.5, v: 0.1, rotationDeg: 0 };
+
+  const cases: Array<{ name: string; feature: Feature }> = [
+    {
+      name: 'slotted wall-mount flange (front)',
+      feature: {
+        ...mountBase,
+        face: 'front',
+        mount: {
+          style: 'flange',
+          width: 16,
+          protrusion: 10,
+          thickness: 3,
+          hole: 'slot',
+          holeDiameter: 5,
+          slotLength: 9,
+        },
+      },
+    },
+    {
+      name: 'keyhole flange (back)',
+      feature: {
+        ...mountBase,
+        id: 'm2',
+        face: 'back',
+        mount: {
+          style: 'flange',
+          width: 16,
+          protrusion: 12,
+          thickness: 3,
+          hole: 'keyhole',
+          holeDiameter: 8,
+          slotLength: 9,
+        },
+      },
+    },
+    {
+      name: 'external boss with a blind hole (right, on the lid half)',
+      feature: {
+        ...mountBase,
+        id: 'm3',
+        face: 'right',
+        v: 0.9,
+        mount: {
+          style: 'boss',
+          width: 9,
+          protrusion: 8,
+          thickness: 3,
+          hole: 'round',
+          holeDiameter: 4.2,
+          slotLength: 0,
+          holeDepth: 6,
+        },
+      },
+    },
+    {
+      name: 'foot under the base (bottom face)',
+      feature: {
+        ...mountBase,
+        id: 'm4',
+        face: 'bottom',
+        u: 0.25,
+        v: 0.25,
+        mount: {
+          style: 'boss',
+          width: 10,
+          protrusion: 5,
+          thickness: 3,
+          hole: 'none',
+          holeDiameter: 3,
+          slotLength: 0,
+        },
+      },
+    },
+  ];
+
+  for (const { name, feature } of cases) {
+    it(`${name} keeps both pieces watertight`, () => {
+      const { base, lid } = generateMeshes(makeBox({ features: [feature] }));
+      expect(isWatertight(base), 'base watertight').toBe(true);
+      expect(isWatertight(lid), 'lid watertight').toBe(true);
+    });
+  }
+
+  it('a flange actually grows the part it is attached to, outward', () => {
+    const plain = generateMeshes(makeBox({}));
+    const withFlange = generateMeshes(makeBox({ features: [cases[0].feature] }));
+    // The front flange sticks out along -Y: the base's bounding box must reach further that way.
+    expect(boundingBox(withFlange.base).min[1]).toBeLessThan(boundingBox(plain.base).min[1] - 9);
+    expect(boundingBox(withFlange.lid).min[1]).toBeCloseTo(boundingBox(plain.lid).min[1], 1);
+  });
+
+  it('an external boss on a lid-height wall attaches to the lid, not the base', () => {
+    const plain = generateMeshes(makeBox({}));
+    const withBoss = generateMeshes(makeBox({ features: [cases[2].feature] }));
+    expect(boundingBox(withBoss.lid).max[0]).toBeGreaterThan(boundingBox(plain.lid).max[0] + 7);
+    expect(boundingBox(withBoss.base).max[0]).toBeCloseTo(boundingBox(plain.base).max[0], 1);
+  });
+});
+
+describe('slide-in panels', () => {
+  const PANELS: PanelSpec = {
+    faces: ['left', 'right'],
+    thickness: 2.4,
+    fitClearance: 0.2,
+    grooveDepth: 1.2,
+    captureInLid: true,
+  };
+
+  it('produces one extra part per panel face, all watertight', () => {
+    const parts = generateParts(makeBox({ panels: PANELS }));
+    expect(Object.keys(parts).sort()).toEqual(['base', 'lid', 'panel-left', 'panel-right']);
+    for (const [id, mesh] of Object.entries(parts)) {
+      expect(isWatertight(mesh), `${id} watertight`).toBe(true);
+    }
+  });
+
+  it('each plate is a thin slab spanning the wall it replaces', () => {
+    const parts = generateParts(makeBox({ panels: PANELS, corner: 'sharp' }));
+    const right = boundingBox(parts['panel-right']);
+    // Thickness through the wall, and flush with the case's outer surface (length 80 -> x = 40).
+    expect(right.size[0]).toBeCloseTo(PANELS.thickness, 1);
+    expect(right.max[0]).toBeCloseTo(40, 1);
+    // Spans the interior width plus a groove's worth into each side wall, minus the fit clearance.
+    expect(right.size[1]).toBeCloseTo(50 - 2 * 2 + 2 * 1.2 - 0.2, 1);
+    // Bottom sits in the floor groove; top runs past the split into the lid's capture groove.
+    expect(right.min[2]).toBeCloseTo(2 - 1.2 + 0.1, 1);
+    expect(right.max[2]).toBeCloseTo(24 + 1.2 - 0.1, 1);
+  });
+
+  it('the base loses the wall the panel replaces', () => {
+    const plain = generateMeshes(makeBox({ corner: 'sharp' }));
+    const panelled = generateParts(makeBox({ panels: PANELS, corner: 'sharp' }));
+    // Outer bbox is unchanged (the plate is flush), but the base no longer reaches x = +40 at
+    // mid-width, so its volume must drop.
+    expect(boundingBox(panelled.base).size[0]).toBeCloseTo(boundingBox(plain.base).size[0], 1);
+    expect(panelled.base.positions.length).toBeGreaterThan(0);
+  });
+
+  it('a cutout on a panel face is cut into the plate, not the base', () => {
+    const port: Feature = {
+      id: 'p',
+      type: 'connector-cutout',
+      face: 'right',
+      u: 0.5,
+      v: 0.4,
+      rotationDeg: 0,
+      connectorId: 'sma-bulkhead-female',
+    };
+    const withPort = generateParts(makeBox({ panels: PANELS, features: [port] }));
+    const withoutPort = generateParts(makeBox({ panels: PANELS }));
+    for (const [id, mesh] of Object.entries(withPort)) {
+      expect(isWatertight(mesh), `${id} watertight`).toBe(true);
+    }
+    expect(withPort['panel-right'].indices.length).not.toBe(withoutPort['panel-right'].indices.length);
+    expect(withPort.base.indices.length).toBe(withoutPort.base.indices.length);
+  });
+
+  it('all four walls can be panels at once', () => {
+    const parts = generateParts(
+      makeBox({ panels: { ...PANELS, faces: ['front', 'back', 'left', 'right'] } }),
+    );
+    expect(Object.keys(parts)).toHaveLength(6);
+    for (const [id, mesh] of Object.entries(parts)) {
+      expect(isWatertight(mesh), `${id} watertight`).toBe(true);
+    }
+  });
+
+  it('panels combine with every lid type', () => {
+    for (const lid of LID_TYPES) {
+      const parts = generateParts(makeBox({ lid, panels: PANELS }));
+      for (const [id, mesh] of Object.entries(parts)) {
+        expect(isWatertight(mesh), `${lid}/${id} watertight`).toBe(true);
+      }
+    }
   });
 });

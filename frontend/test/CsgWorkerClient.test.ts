@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { CsgWorkerClient } from '../src/csg/CsgWorkerClient';
 import type { EnclosureProject } from '../src/types/project';
-import type { CsgResponse, MeshData } from '../src/csg/workerProtocol';
+import type { CsgResponse, MeshData, PartMesh } from '../src/csg/workerProtocol';
 
 const DUMMY_MESH: MeshData = { positions: new Float32Array(), indices: new Uint32Array() };
+const DUMMY_PARTS: PartMesh[] = [
+  { id: 'base', label: 'Base', kind: 'base', mesh: DUMMY_MESH },
+  { id: 'lid', label: 'Lid', kind: 'lid', mesh: DUMMY_MESH },
+];
 const PROJECT = {} as unknown as EnclosureProject; // the client never inspects it
 
 /** Stand-in for the real Worker: lets a test drive responses, crashes, and message errors. */
@@ -25,7 +29,7 @@ class FakeWorker {
     return (this.posted[this.posted.length - 1] as { id: number }).id;
   }
   respondResult(id: number): void {
-    this.onmessage?.({ data: { id, type: 'result', base: DUMMY_MESH, lid: DUMMY_MESH } } as MessageEvent<CsgResponse>);
+    this.onmessage?.({ data: { id, type: 'result', parts: DUMMY_PARTS } } as MessageEvent<CsgResponse>);
   }
   respondError(id: number, message: string): void {
     this.onmessage?.({ data: { id, type: 'error', message } } as MessageEvent<CsgResponse>);
@@ -50,7 +54,7 @@ describe('CsgWorkerClient', () => {
     const { fake, client } = makeClient();
     const { result } = client.generate(PROJECT, 'live');
     fake.respondResult(fake.lastId());
-    await expect(result).resolves.toEqual({ base: DUMMY_MESH, lid: DUMMY_MESH });
+    await expect(result).resolves.toEqual({ parts: DUMMY_PARTS });
   });
 
   it('rejects when the worker reports an error response', async () => {

@@ -8,7 +8,8 @@ export type ArmedFeatureTemplate =
   | { type: 'standoff'; label: string }
   | { type: 'board-mount'; label: string; boardPresetId?: string }
   | { type: 'vent'; label: string }
-  | { type: 'custom-hole'; label: string };
+  | { type: 'custom-hole'; label: string }
+  | { type: 'external-mount'; label: string; mountStyle: 'flange' | 'boss' };
 
 interface FeaturePaletteProps {
   armed: ArmedFeatureTemplate | null;
@@ -148,7 +149,9 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
   const showMounting =
     (activeCategory === 'all' || activeCategory === 'mounting') &&
     (matchesQuery('Standoff (PCB mount)', 'PCB mount standoffs', 'M2.2/M3') ||
-      matchesQuery('Board Mount', 'outline + mounting holes', 'PCB Grid'));
+      matchesQuery('Board Mount', 'outline + mounting holes', 'PCB Grid') ||
+      matchesQuery('Mounting Flange', 'external wall mount tab ear slot keyhole', 'Wall Tab') ||
+      matchesQuery('External Boss', 'external standoff post foot spacer outside', 'Post'));
 
   const filteredBoardPresets =
     activeCategory === 'all' || activeCategory === 'mounting'
@@ -164,7 +167,7 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
     <div className="feature-palette">
       <div className="palette-header">
         <h3>Features</h3>
-        <span className="palette-count">{CONNECTOR_LIBRARY.length + BOARD_MOUNT_PRESETS.length + 4} parts</span>
+        <span className="palette-count">{CONNECTOR_LIBRARY.length + BOARD_MOUNT_PRESETS.length + 6} parts</span>
       </div>
 
       <div className="palette-search">
@@ -267,6 +270,40 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
                   <span className="dim-badge">4-Hole Grid</span>
                 </div>
                 <span className="card-note">PCB outline + 4 corner standoffs</span>
+              </button>
+              <button
+                type="button"
+                className={
+                  armed?.type === 'external-mount' && armed.mountStyle === 'flange'
+                    ? 'palette-card armed'
+                    : 'palette-card'
+                }
+                onClick={() =>
+                  onArm({ type: 'external-mount', mountStyle: 'flange', label: 'Mounting Flange' })
+                }
+              >
+                <div className="card-top">
+                  <span className="card-name">Mounting Flange</span>
+                  <span className="dim-badge">Wall Tab</span>
+                </div>
+                <span className="card-note">External ear with a slotted screw hole</span>
+              </button>
+              <button
+                type="button"
+                className={
+                  armed?.type === 'external-mount' && armed.mountStyle === 'boss'
+                    ? 'palette-card armed'
+                    : 'palette-card'
+                }
+                onClick={() =>
+                  onArm({ type: 'external-mount', mountStyle: 'boss', label: 'External Boss' })
+                }
+              >
+                <div className="card-top">
+                  <span className="card-name">External Boss</span>
+                  <span className="dim-badge">Post</span>
+                </div>
+                <span className="card-note">Outside standoff: foot, spacer or bolt pillar</span>
               </button>
             </div>
           </section>

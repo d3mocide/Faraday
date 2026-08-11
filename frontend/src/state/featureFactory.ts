@@ -127,6 +127,40 @@ export function buildFeatureFromTemplate(
     };
   }
 
+  if (template.type === 'external-mount') {
+    // Flange defaults are a wall-mount ear sized for an M4 screw with a little slot travel; the
+    // boss defaults to an M3 heat-set post. Both are starting points, editable in the inspector.
+    return {
+      id,
+      type: 'external-mount',
+      face,
+      u,
+      v,
+      rotationDeg: 0,
+      mount:
+        template.mountStyle === 'boss'
+          ? {
+              style: 'boss',
+              width: 8,
+              protrusion: 6,
+              thickness: 3,
+              hole: 'round',
+              holeDiameter: 4.2,
+              slotLength: 0,
+              holeDepth: 5,
+            }
+          : {
+              style: 'flange',
+              width: 16,
+              protrusion: 10,
+              thickness: 3,
+              hole: 'slot',
+              holeDiameter: 4.5,
+              slotLength: 9,
+            },
+    };
+  }
+
   if (template.type === 'vent') {
     return {
       id,

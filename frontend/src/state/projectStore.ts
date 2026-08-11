@@ -7,6 +7,8 @@ import type {
   Feature,
   GasketSpec,
   LidType,
+  PanelFace,
+  PanelSpec,
   ScrewCount,
   ScrewInsertType,
   ScrewSize,
@@ -23,6 +25,11 @@ export interface BoardPresetBody {
    * channel on by default -- omitted everywhere else so applying a board preset never clobbers a
    * gasket the user already had enabled (see applyBoardPreset below). */
   gasket?: GasketSpec;
+  /** Slide-in end panels, for presets whose case is genuinely multi-part (e.g. the Waveshare CM4
+   * base). Unlike `gasket` this one is *replaced* rather than merged: panels change how many
+   * pieces the case prints as and which piece each port cutout lands on, so carrying a previous
+   * preset's panels into a new one would silently reshape the new case. */
+  panels?: PanelSpec;
 }
 
 interface ProjectStore {
@@ -46,6 +53,12 @@ interface ProjectStore {
   setGasketEnabled: (enabled: boolean) => void;
   setGasketWidth: (value: number) => void;
   setGasketDepth: (value: number) => void;
+  setPanelsEnabled: (enabled: boolean) => void;
+  togglePanelFace: (face: PanelFace) => void;
+  setPanelThickness: (value: number) => void;
+  setPanelFitClearance: (value: number) => void;
+  setPanelGrooveDepth: (value: number) => void;
+  setPanelCaptureInLid: (value: boolean) => void;
   addFeature: (feature: Feature) => void;
   updateFeature: (id: string, patch: Partial<Feature>) => void;
   removeFeature: (id: string) => void;
@@ -197,6 +210,42 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         return { ...p, body: { ...p.body, lid: { ...p.body.lid, gasket: { ...gasket, depth: value } } } };
       }),
 
+    // Slide-in panels are a box-body property (a cylinder has no flat wall to replace), so all six
+    // actions below no-op on a cylinder -- the inspector only shows the controls for a box.
+    setPanelsEnabled: (enabled) =>
+      mutate((p) =>
+        p.body.shape !== 'box'
+          ? p
+          : {
+              ...p,
+              body: {
+                ...p.body,
+                panels: enabled ? (p.body.panels ?? defaultPanelSpec(p.body.wallThickness)) : undefined,
+              },
+            },
+      ),
+
+    togglePanelFace: (face) =>
+      mutate((p) => {
+        if (p.body.shape !== 'box') return p;
+        const panels = p.body.panels ?? defaultPanelSpec(p.body.wallThickness);
+        const faces = panels.faces.includes(face)
+          ? panels.faces.filter((f) => f !== face)
+          : [...panels.faces, face];
+        return { ...p, body: { ...p.body, panels: { ...panels, faces } } };
+      }),
+
+    setPanelThickness: (value) => mutate(patchPanels((panels) => ({ ...panels, thickness: value }))),
+
+    setPanelFitClearance: (value) =>
+      mutate(patchPanels((panels) => ({ ...panels, fitClearance: value }))),
+
+    setPanelGrooveDepth: (value) =>
+      mutate(patchPanels((panels) => ({ ...panels, grooveDepth: value }))),
+
+    setPanelCaptureInLid: (value) =>
+      mutate(patchPanels((panels) => ({ ...panels, captureInLid: value }))),
+
     addFeature: (feature) => mutate((p) => ({ ...p, features: [...p.features, feature] })),
 
     updateFeature: (id, patch) =>
@@ -227,6 +276,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
             splitHeight: preset.splitHeight,
             ...(preset.gasket ? { gasket: preset.gasket } : {}),
           },
+          panels: preset.panels,
         },
         features: features ?? [],
       })),
@@ -261,4 +311,26 @@ function defaultScrewSpec(): { size: ScrewSize; insertType: ScrewInsertType; cou
 
 function defaultGasketSpec(): { width: number; depth: number } {
   return { width: 1.5, depth: 1 };
+}
+
+/** Left + right end plates: the common case (a connector panel at each end of a board). */
+function defaultPanelSpec(wallThickness: number): PanelSpec {
+  return {
+    faces: ['left', 'right'],
+    thickness: Math.max(wallThickness, 1.2),
+    fitClearance: 0.3,
+    grooveDepth: 1.2,
+    captureInLid: true,
+  };
+}
+
+/** Shared shape of the "edit one field of the panel spec" actions above. */
+function patchPanels(
+  update: (panels: PanelSpec) => PanelSpec,
+): (project: EnclosureProject) => EnclosureProject {
+  return (p) => {
+    if (p.body.shape !== 'box') return p;
+    const panels = p.body.panels ?? defaultPanelSpec(p.body.wallThickness);
+    return { ...p, body: { ...p.body, panels: update(panels) } };
+  };
 }
