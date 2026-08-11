@@ -214,3 +214,34 @@ export function cornerAnchor(
     angleDeg: (Math.atan2(sy, sx) * 180) / Math.PI,
   };
 }
+
+/**
+ * World (x, y) of every pillar a support-pad feature produces: just its own position, or a row of
+ * `count` pillars spaced `pitch` apart, centred on it. The row direction follows the pad's axis
+ * turned by the feature's own rotation, so rotating a row rotates the whole arrangement rather
+ * than skewing it. Shared by the CSG, the design checks and the viewport so all three agree on
+ * where the pillars actually are.
+ */
+export function supportPadPositions(
+  feature: Pick<Feature, 'u' | 'v' | 'rotationDeg' | 'pad'>,
+  geom: BodyGeometry,
+): Array<[number, number]> {
+  const [cx, cy] = faceFrame('bottom', geom).toWorld(feature.u, feature.v);
+  const spec = feature.pad;
+  const count = Math.min(Math.max(Math.round(spec?.count ?? 1), 1), 64);
+  const pitch = Math.max(spec?.pitch ?? 0, 0);
+  if (count === 1 || pitch === 0) return [[cx, cy]];
+
+  const theta = ((feature.rotationDeg ?? 0) * Math.PI) / 180;
+  const [dx, dy] =
+    spec?.axis === 'v'
+      ? [-Math.sin(theta), Math.cos(theta)]
+      : [Math.cos(theta), Math.sin(theta)];
+  const first = -((count - 1) * pitch) / 2;
+  const positions: Array<[number, number]> = [];
+  for (let i = 0; i < count; i++) {
+    const along = first + i * pitch;
+    positions.push([cx + dx * along, cy + dy * along]);
+  }
+  return positions;
+}

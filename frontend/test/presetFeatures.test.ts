@@ -5,6 +5,7 @@ import { extractMeshData } from '../src/csg/manifoldToGeometry';
 import { findConnector } from '../src/connectors/library';
 import { bossPositions, bossRadiusFor } from '../src/csg/primitives';
 import { featurePart } from '../src/csg/parts';
+import { runDesignChecks } from '../src/state/designChecks';
 import { BOARD_PRESETS, type BoardPreset } from '../src/presets/boards';
 import { buildPresetFeatures } from '../src/state/featureFactory';
 import type { EnclosureProject, ScrewSpec } from '../src/types/project';
@@ -109,6 +110,16 @@ describe('board preset IO layouts', () => {
           expect(centerZ - halfH, `${preset.id}/${feature.connectorId} bottom vs floor`).toBeGreaterThan(0);
         }
       }
+    }
+  });
+
+  it('no shipped preset trips its own design checks', () => {
+    // The checks (state/designChecks.ts) encode what we tell users is wrong -- a preset that fires
+    // one is either a broken preset or a broken rule, and either way we want to hear about it here
+    // rather than from someone applying it.
+    for (const preset of BOARD_PRESETS) {
+      const findings = runDesignChecks(projectFromPreset(preset));
+      expect(findings.map((f) => `${preset.id}: ${f.title}`)).toEqual([]);
     }
   });
 

@@ -217,6 +217,16 @@ export interface SupportPadSpec {
   depth: number;
   /** Height above the interior floor -- normally the same as the board's standoff height. */
   height: number;
+  /** Repeat the pad in an evenly spaced row, centred on the feature's own position. 1 (or
+   * undefined) is a single pad. A row is one feature that emits several pillars -- the same
+   * arrangement a board-mount uses for its standoffs -- so it moves and edits as a unit. Rows are
+   * for evenly supported edges; where the pads have to dodge components underneath, place them
+   * individually instead. */
+  count?: number;
+  /** Centre-to-centre spacing of the repeats, mm. */
+  pitch?: number;
+  /** Which of the floor's axes the row runs along, before the feature's own rotation. */
+  axis?: 'u' | 'v';
 }
 
 export type FeatureType =

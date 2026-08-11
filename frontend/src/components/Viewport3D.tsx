@@ -76,10 +76,13 @@ interface Viewport3DProps {
   onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
   onResizeBody: (patch: BodyResizePatch) => void;
   previewTarget: PreviewTarget | null;
+  /** Features the design checks flagged -- drawn with a warning halo round their marker. */
+  flaggedFeatureIds?: ReadonlySet<string>;
 }
 
 const FEATURE_MARKER_COLOR = 0xffb454;
 const FEATURE_MARKER_SELECTED_COLOR = 0xff5a5a;
+const FEATURE_MARKER_WARNING_COLOR = 0xff2d78;
 const PREVIEW_MARKER_COLOR = 0x6fd3ff;
 const HANDLE_COLOR = 0x6fd3ff;
 const MIN_DIMENSION = 5; // mm, matches the numeric field mins in InspectorPanel
@@ -109,6 +112,7 @@ export function Viewport3D({
   onUpdateFeature,
   onResizeBody,
   previewTarget,
+  flaggedFeatureIds,
 }: Viewport3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -815,6 +819,13 @@ export function Viewport3D({
     const geometry = new THREE.SphereGeometry(1.2, 12, 12);
     const normalMaterial = new THREE.MeshStandardMaterial({ color: FEATURE_MARKER_COLOR });
     const selectedMaterial = new THREE.MeshStandardMaterial({ color: FEATURE_MARKER_SELECTED_COLOR });
+    const warningGeometry = new THREE.SphereGeometry(2.6, 10, 8);
+    const warningMaterial = new THREE.MeshBasicMaterial({
+      color: FEATURE_MARKER_WARNING_COLOR,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.9,
+    });
     for (const feature of features) {
       if (feature.hidden) continue;
       const part = featurePart(feature, body);
@@ -859,14 +870,27 @@ export function Viewport3D({
       marker.userData.featureId = feature.id;
       marker.userData.face = feature.face;
       group.add(marker);
+
+      // A flagged feature gets an open wireframe shell around its marker: readable whatever colour
+      // the marker itself is (selection already owns red), and still a pick target for the same
+      // feature, so clicking the halo selects/drags exactly like clicking the marker.
+      if (flaggedFeatureIds?.has(feature.id)) {
+        const halo = new THREE.Mesh(warningGeometry, warningMaterial);
+        halo.position.copy(marker.position);
+        halo.userData.featureId = feature.id;
+        halo.userData.face = feature.face;
+        group.add(halo);
+      }
     }
 
     return () => {
       geometry.dispose();
       normalMaterial.dispose();
       selectedMaterial.dispose();
+      warningGeometry.dispose();
+      warningMaterial.dispose();
     };
-  }, [features, body, selectedFeatureId, lidView]);
+  }, [features, body, selectedFeatureId, lidView, flaggedFeatureIds]);
 
   // Align/mirror hover preview -- see PreviewTarget. Positioned the same way a feature marker is
   // (toWorld + a small offset along the face normal), but it isn't tied to any real Feature, so it

@@ -8,7 +8,7 @@ import type {
   Feature,
   VentSpec,
 } from '../types/project';
-import { cornerAnchor, faceFrame, type BodyGeometry } from './faceFrame';
+import { cornerAnchor, faceFrame, supportPadPositions, type BodyGeometry } from './faceFrame';
 import { cylinderZ } from './primitives';
 
 interface HoleDims {
@@ -313,16 +313,19 @@ export function buildSupportPad(
   const spec = feature.pad;
   if (!spec) throw new Error('support-pad feature is missing its pad spec');
   const height = Math.max(spec.height, 0.5);
-  const [x, y] = faceFrame('bottom', geom).toWorld(feature.u, feature.v);
 
-  if (spec.shape === 'round') {
-    return cylinderZ(wasm, Math.max(spec.width, 1), height, wallThickness).translate(x, y, 0);
+  let solid: Manifold | null = null;
+  for (const [x, y] of supportPadPositions(feature, geom)) {
+    const pillar =
+      spec.shape === 'round'
+        ? cylinderZ(wasm, Math.max(spec.width, 1), height, wallThickness).translate(x, y, 0)
+        : wasm.CrossSection.square([Math.max(spec.width, 1), Math.max(spec.depth, 1)], true)
+            .rotate(feature.rotationDeg)
+            .extrude(height)
+            .translate(x, y, wallThickness);
+    solid = solid ? solid.add(pillar) : pillar;
   }
-  const cross = wasm.CrossSection.square(
-    [Math.max(spec.width, 1), Math.max(spec.depth, 1)],
-    true,
-  ).rotate(feature.rotationDeg);
-  return cross.extrude(height).translate(x, y, wallThickness);
+  return solid!;
 }
 
 /** One floor-standing standoff solid (boss + screw pilot bore) centered at world (x, y). */

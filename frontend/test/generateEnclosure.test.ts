@@ -634,6 +634,20 @@ describe('support pads', () => {
     for (const part of Object.values(solids)) part.delete();
   });
 
+  it('a row emits one pillar per count, spaced by the pitch', () => {
+    // u=0.5 on an 80mm floor -> x = 0; three pillars at 12mm pitch land on -12, 0, +12.
+    const solids = generateSolids(
+      makeBox({ features: [{ ...pad({ count: 3, pitch: 12 }), u: 0.5 }] }),
+    );
+    for (const x of [-12, 0, 12]) {
+      expect(solidAt(solids.base, [x, 0, 5], 0.4), `pillar at x=${x}`).toBe(true);
+    }
+    for (const x of [-6, 6]) {
+      expect(solidAt(solids.base, [x, 0, 5], 0.4), `gap at x=${x}`).toBe(false);
+    }
+    for (const part of Object.values(solids)) part.delete();
+  });
+
   it('meets the underside of a board sitting on standoffs of the same height', () => {
     const board: Feature = {
       id: 'b',

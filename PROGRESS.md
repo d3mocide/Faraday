@@ -663,6 +663,65 @@ The two items the CM4 port had left on the table.
   renders inside the case for both a lid-mounted fan (CM4) and a wall-mounted one, and disappears
   with the Show Ghost Parts toggle. No console errors.
 
+## Pad rows + design checks (2026-08-11 session, fourth round)
+
+Closing the two gaps the support-pad work left: placing a run of pads one at a time, and having no
+way to tell a pad is doing nothing.
+
+### Pad rows and the overhang planner
+
+- **`SupportPadSpec` gained `count` / `pitch` / `axis`**: one feature emits a row of evenly spaced
+  pillars, the same one-feature-many-solids arrangement a board-mount uses for its standoffs, so a
+  run moves and edits as a unit. The row direction is the pad's axis turned by the feature's own
+  rotation, so rotating a row rotates the whole arrangement instead of skewing it.
+- **`csg/faceFrame.ts`'s `supportPadPositions()` is the single source of where the pillars are** —
+  the CSG builds them there, the checks test them there, and they can't drift apart.
+- **New `state/boardSupport.ts`: `planOverhangSupport()`**, behind a "Prop up the *right* edge"
+  button on the board-mount inspector. It measures each board edge's distance to its nearest
+  mounting hole, takes the worst, and returns a ready-made pad row just inside that edge at the
+  board's own standoff height. Returns null (and the inspector says so) when every edge is within
+  15mm of a hole — a four-corner board doesn't need propping.
+- Sanity check on the heuristic: fed the Waveshare CM4's real hole pattern, it puts the pads at
+  x = 41.765mm — the same inset the contributed design chose by hand. There's a test pinning that.
+- **Rows don't replace individual pads.** The CM4's own four bands are irregular (5.1 / 4.1 / 2 /
+  2mm deep at uneven spacings) because they dodge components on the board's underside, so that
+  preset keeps its four hand-placed pads. The inspector hint says as much.
+
+### Design checks (`state/designChecks.ts`)
+
+- A pure `runDesignChecks(project)` returning advisory findings, surfaced in a new **Checks card**
+  (badge = count, each row selects its feature) and as a **magenta wireframe halo** around the
+  flagged feature's marker in the viewport. Nothing blocks an export — every rule is a heuristic
+  about intent, and the user knows more about their hardware than we do.
+- Three rules to start, all about support pads because that's where the ambiguity is: not under any
+  board, height ≠ the host board's standoff height (it either won't touch or will lift the board),
+  and overlapping a standoff.
+- **Deliberately quiet**: a rule only fires when the project holds enough information to be sure.
+  A pad in a project with no board at all is *not* flagged — there's nothing to check it against,
+  and the user may be propping something the app knows nothing about. Hidden features are excluded
+  on both sides. Rotated boards are handled by testing points in the board's own frame.
+- The real value is the seam: `designChecks.ts` is where feature-collision, thin-wall and
+  seam-straddling rules go next, all of which DESIGN.md's own next-steps list already wants.
+- **Every shipped preset is asserted check-clean** in `presetFeatures.test.ts`. A preset that trips
+  a rule is either a broken preset or a broken rule, and we want to hear it there rather than from
+  someone applying it.
+
+### Verification
+
+- 112 vitest tests passing (was 93). The checks and the planner are pure functions, so most of the
+  new tests need no WASM: row geometry (including rotation and a zero pitch collapsing to one
+  pillar), each rule firing on the mistake it's for, each rule staying silent when it can't know,
+  a rotated board changing what counts as "underneath", the planner declining a four-corner board,
+  and the planner's own output passing the checks it would be judged by.
+- Playwright: applying the CM4 preset and selecting its board-mount offers "Prop up the right
+  edge", which adds a 3-pad row at 46.5mm pitch and 4mm height; the Checks card stays empty for
+  that (and for every preset), then fires "3.0mm taller than the board's standoffs" when the row's
+  height is raised and "not under a board" when it's dragged off, with the halo appearing on the
+  flagged marker and a click on a finding selecting its feature. No console errors.
+- One UI bug found and fixed while verifying: the Checks card was created with
+  `defaultOpen={findings.length > 0}`, and `SectionCard` reads `defaultOpen` exactly once — so the
+  card stayed collapsed when the first finding appeared. It's always open now.
+
 ## Next steps (suggested order)
 
 All phases in DESIGN.md §13 (0 through 5) are implemented and verified, plus the 2026-07-12
@@ -679,8 +738,9 @@ board mounts). Remaining ideas, roughly by value for radio projects:
   isn't. Neither blocked anything so far.
 - Fans: no finger-guard-only mode (grille without screw holes) and no rectangular blower support.
   The fan's body *is* now drawn as a ghost (2026-08-11), so clearance under it can be judged by eye.
-- Support pads are hand-placed one at a time; there's no "pad along this edge every N mm" helper,
-  and no check that a pad actually lands under a ghost board rather than beside it.
+- Design checks cover support pads only so far (see the 2026-08-11 section). The obvious next rules,
+  all wanted by DESIGN.md's own list: two features overlapping on the same face, a cutout straddling
+  the lid seam, a wall thinner than two perimeters, a connector taller than the interior.
 - Battery features: 18650 holder pocket, LiPo tray with strap slots.
 - Printability: chamfered hole edges, thin-wall/feature-collision warnings, snap-fit wedge
   profile upgrade (see Phase 5 notes), 3MF export alongside STL.
@@ -1023,3 +1083,15 @@ editing old entries, so this stays a readable history. -->
   is visible; the "Show Ghost Boards" toggle became "Show Ghost Parts" and now covers both ghosts.
   93 tests passing (was 89); browser-verified, including that a pad click on a wall is ignored the
   same way a standoff's is.
+
+- **2026-08-11**: Follow-up on the two gaps the support-pad round left, per user request ("what can
+  we do about the no pad every nmm or checker?") — see the "Pad rows + design checks" section
+  above. (1) `SupportPadSpec` gained count/pitch/axis so one feature emits a row, with
+  `supportPadPositions()` in `faceFrame.ts` as the shared source of truth for where the pillars
+  are; plus `state/boardSupport.ts`'s `planOverhangSupport()` behind a "Prop up the <edge> edge"
+  button on the board-mount inspector, which finds the cantilevered edge from the hole pattern and
+  builds the row (it independently lands on the same 41.765mm inset the CM4 design chose by hand).
+  (2) New `state/designChecks.ts` + a Checks card + magenta halos in the viewport, with three
+  conservative support-pad rules and an assertion that every shipped preset stays check-clean.
+  112 tests passing (was 93); browser-verified, including one UI bug found there (the Checks card
+  stayed collapsed when its first finding appeared, because SectionCard reads defaultOpen once).

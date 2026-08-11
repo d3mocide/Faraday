@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import './App.css';
 import { AppShell } from './components/AppShell';
 import { ExportModal } from './components/ExportModal';
@@ -7,6 +7,7 @@ import { InspectorPanel } from './components/InspectorPanel';
 import { Viewport3D, type BodyResizePatch, type LidView, type PreviewTarget } from './components/Viewport3D';
 import { useLiveGeometry } from './csg/useLiveGeometry';
 import { buildFeatureFromTemplate } from './state/featureFactory';
+import { runDesignChecks } from './state/designChecks';
 import { useAutosave } from './state/useAutosave';
 import { useProjectStore } from './state/projectStore';
 import type { Face } from './types/project';
@@ -35,6 +36,14 @@ function App() {
   // Align/mirror hover-preview target (see AlignMirrorAxisRow in InspectorPanel.tsx) -- also
   // view-only, same non-persisted precedent as lidView.
   const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
+
+  // Advisory design checks (state/designChecks.ts) -- computed once here and shared by the
+  // inspector's Checks card and the viewport's flagged markers, so the two can't disagree.
+  const findings = useMemo(() => runDesignChecks(project), [project]);
+  const flaggedFeatureIds = useMemo(
+    () => new Set(findings.map((f) => f.featureId)),
+    [findings],
+  );
 
   useAutosave(project);
 
@@ -108,6 +117,7 @@ function App() {
           onUpdateFeature={updateFeature}
           onResizeBody={handleResizeBody}
           previewTarget={previewTarget}
+          flaggedFeatureIds={flaggedFeatureIds}
         />
         {error && (
           <div className="viewport-error" role="alert">
@@ -132,6 +142,7 @@ function App() {
         onToggleShowGrid={setShowGrid}
         showGhosts={showGhosts}
         onToggleShowGhosts={setShowGhosts}
+        findings={findings}
         showMarkers={showMarkers}
         onToggleShowMarkers={setShowMarkers}
         onSelectFeature={setSelectedFeatureId}

@@ -3,6 +3,8 @@ import { findConnector } from '../connectors/library';
 import { useProjectStore } from '../state/projectStore';
 import { displayStep, displayToMm, mmToDisplay, roundForDisplay, unitLabel } from '../state/units';
 import { cornerHolePattern } from '../state/featureFactory';
+import { planOverhangSupport } from '../state/boardSupport';
+import type { DesignCheckFinding } from '../state/designChecks';
 import { alignedPosition, cloneFeatureAt, mirroredPosition, type Axis, type AxisTarget } from '../state/alignMirror';
 import { bodyGeometry, faceSize } from '../csg/faceFrame';
 import { effectiveSplitHeight } from '../csg/lidSplit';
@@ -14,6 +16,7 @@ import type {
   BodyShape,
   ConnectorLibraryEntry,
   CornerStyleType,
+  EnclosureBody,
   Face,
   Feature,
   ExternalMountSpec,
@@ -271,13 +274,20 @@ function BoardMountFields({
   feature,
   board,
   units,
+  body,
   onUpdateFeature,
+  onAddFeature,
+  onSelectFeature,
 }: {
   feature: Feature;
   board: BoardMountSpec;
   units: Units;
+  body: EnclosureBody;
   onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
+  onAddFeature: (feature: Feature) => void;
+  onSelectFeature: (id: string | null) => void;
 }) {
+  const support = planOverhangSupport(board, feature, body);
   const setBoard = (patch: Partial<BoardMountSpec>) =>
     onUpdateFeature(feature.id, { board: { ...board, ...patch } });
   const setHole = (index: number, patch: Partial<{ x: number; y: number }>) =>
@@ -364,6 +374,30 @@ function BoardMountFields({
           4-corner pattern
         </button>
       </div>
+      {support ? (
+        <>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              onAddFeature(support.feature);
+              onSelectFeature(support.feature.id);
+            }}
+          >
+            Prop up the {support.edge} edge
+          </button>
+          <p className="field-hint">
+            That edge is {support.unsupportedMm.toFixed(0)}mm from its nearest mounting hole, so it
+            hangs over open air. Adds a row of {support.feature.pad?.count ?? 1} support pads just
+            inside it, at the board's own standoff height.
+          </p>
+        </>
+      ) : (
+        <p className="field-hint">
+          Every edge of this board is close to a mounting hole, so there's no overhang worth
+          propping up.
+        </p>
+      )}
     </div>
   );
 }
@@ -758,10 +792,41 @@ function SupportPadFields({
           minMm={0.5}
           onChangeMm={(v) => setPad({ height: v })}
         />
+        <NumberField
+          label="Repeat count"
+          value={pad.count ?? 1}
+          min={1}
+          max={24}
+          step={1}
+          onChange={(v) => setPad({ count: Math.max(Math.round(v), 1) })}
+        />
+        {(pad.count ?? 1) > 1 && (
+          <UnitNumberField
+            label="Row pitch"
+            valueMm={pad.pitch ?? 20}
+            units={units}
+            minMm={1}
+            onChangeMm={(v) => setPad({ pitch: v })}
+          />
+        )}
+        {(pad.count ?? 1) > 1 && (
+          <label className="field">
+            <span>Row runs along</span>
+            <select
+              value={pad.axis ?? 'u'}
+              onChange={(e) => setPad({ axis: e.target.value as SupportPadSpec['axis'] })}
+            >
+              <option value="u">U (length)</option>
+              <option value="v">V (width)</option>
+            </select>
+          </label>
+        )}
       </FieldsGrid2Col>
       <p className="field-hint">
         Set the height to the board's standoff height so the pad meets the underside without lifting
-        it. No screw hole -- it props, it doesn't fasten.
+        it. No screw hole -- it props, it doesn't fasten. A count above 1 makes an evenly spaced row
+        centred on this position; for pads that have to dodge components underneath, place them
+        individually instead.
       </p>
     </div>
   );
@@ -841,8 +906,20 @@ function AlignMirrorAxisRow({
   );
 }
 
-function SidebarSectionIcon({ type }: { type: 'viewport' | 'body' | 'fasteners' | 'layers' | 'inspector' }) {
+function SidebarSectionIcon({
+  type,
+}: {
+  type: 'viewport' | 'body' | 'fasteners' | 'layers' | 'inspector' | 'checks';
+}) {
   const iconStyle = { width: 14, height: 14, strokeWidth: 2 };
+  if (type === 'checks') {
+    return (
+      <svg className="card-section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" style={iconStyle}>
+        <path d="M12 3l9 16H3l9-16z" />
+        <path d="M12 10v4M12 17h.01" />
+      </svg>
+    );
+  }
   switch (type) {
     case 'viewport':
       return (
@@ -947,6 +1024,7 @@ interface InspectorPanelProps {
   showGrid: boolean;
   onToggleShowGrid: (show: boolean) => void;
   showGhosts: boolean;
+  findings: DesignCheckFinding[];
   onToggleShowGhosts: (show: boolean) => void;
   showMarkers: boolean;
   onToggleShowMarkers: (show: boolean) => void;
@@ -966,6 +1044,7 @@ export function InspectorPanel({
   showGrid,
   onToggleShowGrid,
   showGhosts,
+  findings,
   onToggleShowGhosts,
   showMarkers,
   onToggleShowMarkers,
@@ -1417,6 +1496,30 @@ export function InspectorPanel({
         )}
       </SectionCard>
 
+      <SectionCard
+        title="Checks"
+        icon={<SidebarSectionIcon type="checks" />}
+        badge={findings.length}
+      >
+        {findings.length === 0 ? (
+          <p className="feature-list-empty">Nothing to flag.</p>
+        ) : (
+          <div className="check-list">
+            {findings.map((finding) => (
+              <button
+                key={finding.id}
+                type="button"
+                className="check-item"
+                onClick={() => onSelectFeature(finding.featureId)}
+              >
+                <span className="check-title">{finding.title}</span>
+                <span className="check-detail">{finding.detail}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </SectionCard>
+
       <SectionCard title="Feature Layers" icon={<SidebarSectionIcon type="layers" />} badge={project.features.length}>
         {project.features.length === 0 ? (
           <p className="feature-list-empty">None placed yet — pick one from the palette, then click a face.</p>
@@ -1651,7 +1754,10 @@ export function InspectorPanel({
               feature={selectedFeature}
               board={selectedFeature.board}
               units={units}
+              body={body}
               onUpdateFeature={onUpdateFeature}
+              onAddFeature={onAddFeature}
+              onSelectFeature={onSelectFeature}
             />
           )}
 
