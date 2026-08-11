@@ -619,6 +619,50 @@ Second round on the same request, filling the gaps the CM4 port exposed.
   with the floor clear beneath them; the CM4 preset re-applies (23 features now the fan is one
   feature instead of five) and survives a reload. No console errors.
 
+## Support pads + ghost fan bodies (2026-08-11 session, third round)
+
+The two items the CM4 port had left on the table.
+
+### Support pads (`support-pad` feature)
+
+- A blind pillar on the interior floor with **no screw hole** — something for an unsupported board
+  edge to rest on. Carrier boards whose mounting holes are all down one side cantilever the
+  opposite edge over open air, and pushing a cable into a connector on that edge flexes the PCB.
+  Rectangular or round, sized in plan, height set to match the board's standoffs so it meets the
+  underside without lifting it.
+- Floor-only, exactly like a standoff and a board mount: `featurePart` routes it to the base and
+  `App`'s placement guard ignores clicks on any other face (verified — a click on an interior wall
+  leaves the palette armed rather than placing something in the wrong plane).
+- **The CM4 preset ships the source design's four bands** (6mm across, 5.1/4.1/2/2mm deep, 4mm
+  tall) under the right edge that carries the HDMI/USB/Ethernet stack. They ride the same
+  board-relative `io` list as everything else, on the `bottom` face via `alongMm`/`acrossMm`.
+
+### Ghost fan bodies
+
+- `FanMountSpec.bodyDepth` records the fan's own thickness (40x40x**10**), defaulted per size from
+  `FAN_PRESETS`. Nothing is cut or printed from it — the viewport draws the fan's envelope as a
+  translucent volume hanging off the inside of its face, at the end of the same wall + boss stack
+  the CSG builds through, so you can see whether it fouls a HAT or a heatsink under it.
+- Orientation is by quaternion from local +Z onto the face's outward normal, then a spin about that
+  axis for `rotationDeg` — a square fan's envelope really does change when it's turned. Works on
+  any face, including a cylinder's curved side.
+- **The "Show Ghost Boards" toggle became "Show Ghost Parts"** and now covers both ghosts (prop
+  `showGhostBoards` → `showGhosts`, `ghostBoardGroupRef` → `ghostGroupRef`). One concept, one
+  switch: display-only hardware you're designing around. Hidden features are excluded from both
+  ghosts now, which the board ghost wasn't doing before.
+
+### Verification
+
+- 93 vitest tests passing (was 89). Pad coverage is probe-based: it stands on the floor, stops at
+  its stated height, has **no** bore through the middle (the thing that distinguishes it from a
+  standoff), is the size it claims in both axes, and meets the underside of a board sitting on
+  standoffs of the same height. The CM4 preset test asserts all four pads route to the base, sit
+  under the board's right edge, and match the board-mount's standoff height.
+- Playwright: the CM4 preset places four pads with the source design's dimensions; a hand-placed
+  pad lands on the interior floor and a click on a wall is correctly ignored; the ghost fan body
+  renders inside the case for both a lid-mounted fan (CM4) and a wall-mounted one, and disappears
+  with the Show Ghost Parts toggle. No console errors.
+
 ## Next steps (suggested order)
 
 All phases in DESIGN.md §13 (0 through 5) are implemented and verified, plus the 2026-07-12
@@ -633,9 +677,10 @@ board mounts). Remaining ideas, roughly by value for radio projects:
 - Panels: no per-panel thickness/groove override yet (one `PanelSpec` covers every selected face),
   and a panel can't yet be split by the lid seam — a face is either a plate up to the split or it
   isn't. Neither blocked anything so far.
-- Fans: no finger-guard-only mode (grille without screw holes), no rectangular blower support, and
-  the fan's own body isn't drawn as a ghost the way a board-mount's PCB is — clearance to a HAT or
-  heatsink under it still has to be judged from the numbers.
+- Fans: no finger-guard-only mode (grille without screw holes) and no rectangular blower support.
+  The fan's body *is* now drawn as a ghost (2026-08-11), so clearance under it can be judged by eye.
+- Support pads are hand-placed one at a time; there's no "pad along this edge every N mm" helper,
+  and no check that a pad actually lands under a ghost board rather than beside it.
 - Battery features: 18650 holder pocket, LiPo tray with strap slots.
 - Printability: chamfered hole edges, thin-wall/feature-collision warnings, snap-fit wedge
   profile upgrade (see Phase 5 notes), 3MF export alongside STL.
@@ -969,3 +1014,12 @@ editing old entries, so this stays a readable history. -->
   tests, each of which produced watertight-but-wrong geometry: a spoke-filled fan hub, bosses
   measured from the wrong face, and a counterbore cutting through the lid into the cavity.
   89 tests passing (was 73); browser-verified end to end.
+
+- **2026-08-11**: Closed the two follow-ups flagged at the end of the previous round, per user
+  request — see the "Support pads + ghost fan bodies" section above. (1) New `support-pad` feature:
+  a blind floor pillar (no screw hole) for propping an unsupported/cantilevered board edge, with
+  the CM4 source design's four bands added to that preset. (2) `FanMountSpec.bodyDepth` plus a
+  translucent ghost of the fan's body inside the case, so clearance to a HAT or heatsink under it
+  is visible; the "Show Ghost Boards" toggle became "Show Ghost Parts" and now covers both ghosts.
+  93 tests passing (was 89); browser-verified, including that a pad click on a wall is ignored the
+  same way a standoff's is.

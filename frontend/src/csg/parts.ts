@@ -97,16 +97,18 @@ export function isPanelFace(face: Face, metrics: PanelMetrics | null): face is P
 /**
  * Which printed part a feature's geometry belongs to -- the routing rule the CSG pipeline uses to
  * pick its boolean target, and the viewport uses to know which mesh a marker rides on. Additive
- * interior features (standoffs, board mounts) always mount to the base floor. Everything else goes
- * by where the feature physically sits: a panel face claims it only over the plate's own Z span,
- * so a cutout down in the floor slab or up in the lid still lands on the piece that has material
- * there.
+ * interior features (standoffs, board mounts, support pads) always mount to the base floor.
+ * Everything else goes by where the feature physically sits: a panel face claims it only over the
+ * plate's own Z span, so a cutout down in the floor slab or up in the lid still lands on the piece
+ * that has material there.
  */
 export function featurePart(
   feature: Pick<Feature, 'type' | 'face' | 'u' | 'v' | 'mount'>,
   body: EnclosureBody,
 ): PartId {
-  if (feature.type === 'standoff' || feature.type === 'board-mount') return 'base';
+  if (feature.type === 'standoff' || feature.type === 'board-mount' || feature.type === 'support-pad') {
+    return 'base';
+  }
   if (feature.face === 'top') return 'lid';
   if (feature.face === 'bottom') return 'base';
 

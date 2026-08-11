@@ -299,6 +299,32 @@ export function buildFanMount(
   return { add: orientOutward(spun, feature.face, feature.u).translate(x, y, z), cut };
 }
 
+/**
+ * Builds a support pad: a blind pillar standing on the interior floor, with no bore through it.
+ * Always mounts to the floor regardless of which face the feature nominally carries, same rule as
+ * a standoff.
+ */
+export function buildSupportPad(
+  wasm: ManifoldToplevel,
+  feature: Feature,
+  geom: BodyGeometry,
+  wallThickness: number,
+): Manifold {
+  const spec = feature.pad;
+  if (!spec) throw new Error('support-pad feature is missing its pad spec');
+  const height = Math.max(spec.height, 0.5);
+  const [x, y] = faceFrame('bottom', geom).toWorld(feature.u, feature.v);
+
+  if (spec.shape === 'round') {
+    return cylinderZ(wasm, Math.max(spec.width, 1), height, wallThickness).translate(x, y, 0);
+  }
+  const cross = wasm.CrossSection.square(
+    [Math.max(spec.width, 1), Math.max(spec.depth, 1)],
+    true,
+  ).rotate(feature.rotationDeg);
+  return cross.extrude(height).translate(x, y, wallThickness);
+}
+
 /** One floor-standing standoff solid (boss + screw pilot bore) centered at world (x, y). */
 function standoffAt(
   wasm: ManifoldToplevel,

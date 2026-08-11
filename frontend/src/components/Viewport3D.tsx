@@ -67,7 +67,7 @@ interface Viewport3DProps {
   lidView: LidView;
   showHandles?: boolean;
   showGrid?: boolean;
-  showGhostBoards?: boolean;
+  showGhosts?: boolean;
   showMarkers?: boolean;
   placementArmed: boolean;
   onPlaceFeature: (face: Face, u: number, v: number) => void;
@@ -100,7 +100,7 @@ export function Viewport3D({
   lidView,
   showHandles = true,
   showGrid = true,
-  showGhostBoards = true,
+  showGhosts = true,
   showMarkers = true,
   placementArmed,
   onPlaceFeature,
@@ -121,7 +121,7 @@ export function Viewport3D({
     new Map<PartId, THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>>(),
   );
   const markerGroupRef = useRef<THREE.Group | null>(null);
-  const ghostBoardGroupRef = useRef<THREE.Group | null>(null);
+  const ghostGroupRef = useRef<THREE.Group | null>(null);
   const handleGroupRef = useRef<THREE.Group | null>(null);
   const highlightMeshRef = useRef<THREE.Mesh | null>(null);
   const previewMarkerRef = useRef<THREE.Mesh | null>(null);
@@ -280,7 +280,7 @@ export function Viewport3D({
 
     const ghostBoardGroup = new THREE.Group();
     scene.add(ghostBoardGroup);
-    ghostBoardGroupRef.current = ghostBoardGroup;
+    ghostGroupRef.current = ghostBoardGroup;
 
     const handleGroup = new THREE.Group();
     scene.add(handleGroup);
@@ -727,7 +727,7 @@ export function Viewport3D({
       cameraRef.current = null;
       rendererRef.current = null;
       markerGroupRef.current = null;
-      ghostBoardGroupRef.current = null;
+      ghostGroupRef.current = null;
       handleGroupRef.current = null;
       highlightMeshRef.current = null;
       previewMarkerRef.current = null;
@@ -741,8 +741,8 @@ export function Viewport3D({
     if (gridGroupRef.current) gridGroupRef.current.visible = showGrid;
   }, [showGrid]);
   useEffect(() => {
-    if (ghostBoardGroupRef.current) ghostBoardGroupRef.current.visible = showGhostBoards;
-  }, [showGhostBoards]);
+    if (ghostGroupRef.current) ghostGroupRef.current.visible = showGhosts;
+  }, [showGhosts]);
   useEffect(() => {
     if (markerGroupRef.current) markerGroupRef.current.visible = showMarkers;
     showMarkersRef.current = showMarkers;
@@ -833,6 +833,8 @@ export function Viewport3D({
 
       if (feature.type === 'standoff' && feature.standoff) {
         markerZ = body.wallThickness + feature.standoff.height + 1.2;
+      } else if (feature.type === 'support-pad' && feature.pad) {
+        markerZ = body.wallThickness + feature.pad.height + 1.2;
       } else if (feature.type === 'board-mount' && feature.board) {
         markerZ = body.wallThickness + feature.board.standoff.height + 1.2;
       } else if (feature.type === 'external-mount' && feature.mount) {
@@ -886,40 +888,73 @@ export function Viewport3D({
     marker.visible = true;
   }, [previewTarget, body]);
 
-  // Ghost boards: a translucent PCB volume floating on its standoffs for every board-mount
-  // feature. Display-only -- never part of the raycast targets or the exported geometry -- so
-  // clearance to walls, lid, and connectors can be judged by eye before printing.
+  // Ghost parts: the hardware the case is built around, drawn as translucent volumes -- a PCB
+  // floating on its standoffs for every board-mount, and the body of every fan hanging off the
+  // inside of its face. Display-only (never raycast, never exported), so clearance between the
+  // board, the fan, the walls and the lid can be judged by eye before printing.
   useEffect(() => {
-    const group = ghostBoardGroupRef.current;
+    const group = ghostGroupRef.current;
     if (!group) return;
 
     for (const child of [...group.children]) group.remove(child);
 
-    const boards = features.filter((f) => f.type === 'board-mount' && f.board);
-    if (boards.length === 0) return;
+    const boards = features.filter((f) => f.type === 'board-mount' && f.board && !f.hidden);
+    const fans = features.filter((f) => f.type === 'fan-mount' && f.fan && !f.hidden);
+    if (boards.length === 0 && fans.length === 0) return;
 
     const geom = bodyGeometry(body);
-    const material = new THREE.MeshStandardMaterial({
+    const boardMaterial = new THREE.MeshStandardMaterial({
       color: 0x1f7a3d,
       roughness: 0.5,
       metalness: 0.1,
       transparent: true,
       opacity: 0.55,
     });
+    const fanMaterial = new THREE.MeshStandardMaterial({
+      color: 0x5b6472,
+      roughness: 0.6,
+      metalness: 0.1,
+      transparent: true,
+      opacity: 0.45,
+    });
     const geometries: THREE.BufferGeometry[] = [];
+
     for (const feature of boards) {
       const board = feature.board!;
       const [x, y] = faceFrame('bottom', geom).toWorld(feature.u, feature.v);
       const boxGeom = new THREE.BoxGeometry(board.boardWidth, board.boardDepth, board.boardThickness);
       geometries.push(boxGeom);
-      const mesh = new THREE.Mesh(boxGeom, material);
+      const mesh = new THREE.Mesh(boxGeom, boardMaterial);
       mesh.position.set(x, y, body.wallThickness + board.standoff.height + board.boardThickness / 2);
       mesh.rotation.z = (feature.rotationDeg * Math.PI) / 180;
       group.add(mesh);
     }
 
+    for (const feature of fans) {
+      const fan = feature.fan!;
+      const frame = faceFrame(feature.face, geom);
+      const [x, y, z] = frame.toWorld(feature.u, feature.v);
+      const [nx, ny, nz] = frame.normalAt(feature.u, feature.v);
+      const boxGeom = new THREE.BoxGeometry(fan.size, fan.size, fan.bodyDepth);
+      geometries.push(boxGeom);
+      const mesh = new THREE.Mesh(boxGeom, fanMaterial);
+      // The fan sits against the inside of the wall (or on top of its mounting bosses), so its
+      // body runs inward from there -- the same stack the CSG builds the bosses through.
+      const inset = body.wallThickness + Math.max(fan.bossHeight, 0) + fan.bodyDepth / 2;
+      mesh.position.set(x - nx * inset, y - ny * inset, z - nz * inset);
+      // Box local +Z onto the face's outward normal, then spin about that axis for rotationDeg --
+      // a square fan's envelope really does change when it's turned.
+      mesh.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 0, 1),
+        new THREE.Vector3(nx, ny, nz).normalize(),
+      );
+      mesh.rotateOnAxis(new THREE.Vector3(0, 0, 1), (feature.rotationDeg * Math.PI) / 180);
+      group.add(mesh);
+    }
+
     return () => {
-      material.dispose();
+      boardMaterial.dispose();
+      fanMaterial.dispose();
       for (const g of geometries) g.dispose();
     };
   }, [features, body]);

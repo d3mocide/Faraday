@@ -30,7 +30,7 @@ function App() {
   const [lidView, setLidView] = useState<LidView>('assembled');
   const [showHandles, setShowHandles] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
-  const [showGhostBoards, setShowGhostBoards] = useState(true);
+  const [showGhosts, setShowGhosts] = useState(true);
   const [showMarkers, setShowMarkers] = useState(true);
   // Align/mirror hover-preview target (see AlignMirrorAxisRow in InspectorPanel.tsx) -- also
   // view-only, same non-persisted precedent as lidView.
@@ -65,7 +65,12 @@ function App() {
     if (!armed) return;
     // Standoffs and board mounts always sit on the base floor -- ignore clicks elsewhere rather
     // than reinterpret (u,v) from the wrong face, which would misplace them.
-    if ((armed.type === 'standoff' || armed.type === 'board-mount') && face !== 'bottom') return;
+    if (
+      (armed.type === 'standoff' || armed.type === 'board-mount' || armed.type === 'support-pad') &&
+      face !== 'bottom'
+    ) {
+      return;
+    }
     addFeature(buildFeatureFromTemplate(armed, face, u, v, project));
     setArmed(null);
   };
@@ -94,7 +99,7 @@ function App() {
           lidView={lidView}
           showHandles={showHandles}
           showGrid={showGrid}
-          showGhostBoards={showGhostBoards}
+          showGhosts={showGhosts}
           showMarkers={showMarkers}
           placementArmed={armed !== null}
           onPlaceFeature={handlePlaceFeature}
@@ -125,8 +130,8 @@ function App() {
         onToggleShowHandles={setShowHandles}
         showGrid={showGrid}
         onToggleShowGrid={setShowGrid}
-        showGhostBoards={showGhostBoards}
-        onToggleShowGhostBoards={setShowGhostBoards}
+        showGhosts={showGhosts}
+        onToggleShowGhosts={setShowGhosts}
         showMarkers={showMarkers}
         onToggleShowMarkers={setShowMarkers}
         onSelectFeature={setSelectedFeatureId}

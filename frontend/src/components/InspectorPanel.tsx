@@ -26,6 +26,7 @@ import type {
   ScrewHeadStyle,
   ScrewPlacement,
   ScrewSize,
+  SupportPadSpec,
   Units,
   VentSpec,
 } from '../types/project';
@@ -39,6 +40,7 @@ function featureLabel(feature: Feature): string {
     return feature.mount?.style === 'boss' ? 'External boss' : 'Mounting flange';
   }
   if (feature.type === 'fan-mount') return `${feature.fan?.size ?? ''}mm fan`;
+  if (feature.type === 'support-pad') return 'Support pad';
   if (feature.type === 'connector-cutout' && feature.connectorId) {
     return findConnector(feature.connectorId)?.label ?? feature.connectorId;
   }
@@ -158,6 +160,14 @@ function FeatureTypeIcon({ type }: { type: Feature['type'] }) {
         <svg className="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <rect x="3" y="3" width="18" height="18" rx="2" />
           <path d="M7 8h10M7 12h10M7 16h10" />
+        </svg>
+      );
+    case 'support-pad':
+      return (
+        <svg className="feat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M4 20h16" />
+          <rect x="8" y="9" width="8" height="11" />
+          <path d="M4 6h16" />
         </svg>
       );
     case 'fan-mount':
@@ -618,6 +628,13 @@ function FanMountFields({
           </select>
         </label>
         <UnitNumberField
+          label="Fan body depth"
+          valueMm={fan.bodyDepth}
+          units={units}
+          minMm={1}
+          onChangeMm={(v) => setFan({ bodyDepth: v })}
+        />
+        <UnitNumberField
           label="Screw pitch"
           valueMm={fan.holePitch}
           units={units}
@@ -681,7 +698,70 @@ function FanMountFields({
       </FieldsGrid2Col>
       <p className="field-hint">
         Screw holes sit on the fan's own {fan.holePitch}mm bolt circle. Bosses (if any) stand on the
-        inside face, so the fan pulls against a pad instead of the bare wall.
+        inside face, so the fan pulls against a pad instead of the bare wall. Body depth is only
+        drawn as a ghost inside the case (nothing is printed from it) -- it's there to check the fan
+        clears whatever sits under it.
+      </p>
+    </div>
+  );
+}
+
+/** Editor for a support pad: a blind floor pillar propping up an unsupported board edge. */
+function SupportPadFields({
+  feature,
+  pad,
+  units,
+  onUpdateFeature,
+}: {
+  feature: Feature;
+  pad: SupportPadSpec;
+  units: Units;
+  onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
+}) {
+  const setPad = (patch: Partial<SupportPadSpec>) =>
+    onUpdateFeature(feature.id, { pad: { ...pad, ...patch } });
+
+  return (
+    <div className="inspector-subgroup">
+      <div className="subgroup-title">Support Pad</div>
+      <FieldsGrid2Col>
+        <label className="field">
+          <span>Shape</span>
+          <select
+            value={pad.shape}
+            onChange={(e) => setPad({ shape: e.target.value as SupportPadSpec['shape'] })}
+          >
+            <option value="rect">Rectangular</option>
+            <option value="round">Round</option>
+          </select>
+        </label>
+        <UnitNumberField
+          label={pad.shape === 'round' ? 'Diameter' : 'Width (U)'}
+          valueMm={pad.width}
+          units={units}
+          minMm={1}
+          onChangeMm={(v) => setPad({ width: v })}
+        />
+        {pad.shape === 'rect' && (
+          <UnitNumberField
+            label="Depth (V)"
+            valueMm={pad.depth}
+            units={units}
+            minMm={1}
+            onChangeMm={(v) => setPad({ depth: v })}
+          />
+        )}
+        <UnitNumberField
+          label="Height"
+          valueMm={pad.height}
+          units={units}
+          minMm={0.5}
+          onChangeMm={(v) => setPad({ height: v })}
+        />
+      </FieldsGrid2Col>
+      <p className="field-hint">
+        Set the height to the board's standoff height so the pad meets the underside without lifting
+        it. No screw hole -- it props, it doesn't fasten.
       </p>
     </div>
   );
@@ -866,8 +946,8 @@ interface InspectorPanelProps {
   onToggleShowHandles: (show: boolean) => void;
   showGrid: boolean;
   onToggleShowGrid: (show: boolean) => void;
-  showGhostBoards: boolean;
-  onToggleShowGhostBoards: (show: boolean) => void;
+  showGhosts: boolean;
+  onToggleShowGhosts: (show: boolean) => void;
   showMarkers: boolean;
   onToggleShowMarkers: (show: boolean) => void;
   onSelectFeature: (id: string | null) => void;
@@ -885,8 +965,8 @@ export function InspectorPanel({
   onToggleShowHandles,
   showGrid,
   onToggleShowGrid,
-  showGhostBoards,
-  onToggleShowGhostBoards,
+  showGhosts,
+  onToggleShowGhosts,
   showMarkers,
   onToggleShowMarkers,
   onSelectFeature,
@@ -962,10 +1042,10 @@ export function InspectorPanel({
         <label className="field field-checkbox">
           <input
             type="checkbox"
-            checked={showGhostBoards}
-            onChange={(e) => onToggleShowGhostBoards(e.target.checked)}
+            checked={showGhosts}
+            onChange={(e) => onToggleShowGhosts(e.target.checked)}
           />
-          <span>Show Ghost Boards</span>
+          <span>Show Ghost Parts</span>
         </label>
         <label className="field field-checkbox">
           <input
@@ -1583,6 +1663,15 @@ export function InspectorPanel({
               isBox={body.shape === 'box'}
               onUpdateFeature={onUpdateFeature}
               onAddFeature={onAddFeature}
+            />
+          )}
+
+          {selectedFeature.type === 'support-pad' && selectedFeature.pad && (
+            <SupportPadFields
+              feature={selectedFeature}
+              pad={selectedFeature.pad}
+              units={units}
+              onUpdateFeature={onUpdateFeature}
             />
           )}
 

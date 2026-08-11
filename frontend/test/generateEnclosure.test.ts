@@ -600,3 +600,60 @@ describe('screw column variations', () => {
     }
   });
 });
+
+describe('support pads', () => {
+  const pad = (over: Partial<NonNullable<Feature['pad']>> = {}): Feature => ({
+    id: 'pad',
+    type: 'support-pad',
+    face: 'bottom',
+    u: 0.75,
+    v: 0.5,
+    rotationDeg: 0,
+    pad: { shape: 'rect', width: 8, depth: 5, height: 6, ...over },
+  });
+
+  for (const shape of ['rect', 'round'] as const) {
+    it(`${shape} pad keeps both pieces watertight`, () => {
+      const { base, lid } = generateMeshes(makeBox({ features: [pad({ shape })] }));
+      expect(isWatertight(base), 'base watertight').toBe(true);
+      expect(isWatertight(lid), 'lid watertight').toBe(true);
+    });
+  }
+
+  it('stands on the floor, stops at its height, and has no bore through it', () => {
+    const solids = generateSolids(makeBox({ features: [pad()] }));
+    // u=0.75 on an 80mm-long floor -> x = 20; wall 2 -> pad spans z 2..8.
+    expect(solidAt(solids.base, [20, 0, 3]), 'material at the base of the pad').toBe(true);
+    expect(solidAt(solids.base, [20, 0, 7]), 'material at the top of the pad').toBe(true);
+    // Solid through the middle: a pad props, it doesn't fasten, so there's no screw hole.
+    expect(solidAt(solids.base, [20, 0, 5], 0.4), 'no bore through the pad').toBe(true);
+    expect(solidAt(solids.base, [20, 0, 9]), 'nothing above the pad').toBe(false);
+    // ...and it's the size it says it is: 8 x 5 means nothing 3mm off-axis along v.
+    expect(solidAt(solids.base, [20, 3.6, 5], 0.4), 'clear beyond the pad depth').toBe(false);
+    expect(solidAt(solids.base, [23.5, 0, 5], 0.4), 'material within the pad width').toBe(true);
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('meets the underside of a board sitting on standoffs of the same height', () => {
+    const board: Feature = {
+      id: 'b',
+      type: 'board-mount',
+      face: 'bottom',
+      u: 0.5,
+      v: 0.5,
+      rotationDeg: 0,
+      board: {
+        boardWidth: 50,
+        boardDepth: 40,
+        boardThickness: 1.6,
+        holes: [{ x: -21.5, y: -16.5 }, { x: 21.5, y: 16.5 }],
+        standoff: { outerDiameter: 6, screwHoleDiameter: 2.2, height: 4 },
+      },
+    };
+    const solids = generateSolids(makeBox({ features: [board, pad({ height: 4 })] }));
+    // Board underside sits at wallThickness + standoff height = 6; the pad tops out there too.
+    expect(solidAt(solids.base, [20, 0, 5.5], 0.4), 'pad material just under the board').toBe(true);
+    expect(solidAt(solids.base, [20, 0, 6.6], 0.4), 'nothing where the board itself is').toBe(false);
+    for (const part of Object.values(solids)) part.delete();
+  });
+});

@@ -71,6 +71,7 @@ export function buildPresetFeatures(preset: BoardPreset): Feature[] {
       custom: port.custom ? structuredClone(port.custom) : undefined,
       vent: port.vent ? structuredClone(port.vent) : undefined,
       fan: port.fan ? structuredClone(port.fan) : undefined,
+      pad: port.pad ? structuredClone(port.pad) : undefined,
       mount: port.mount ? structuredClone(port.mount) : undefined,
     });
   }
@@ -78,6 +79,7 @@ export function buildPresetFeatures(preset: BoardPreset): Feature[] {
 }
 
 function presetFeatureType(port: BoardIoCutout): FeatureType {
+  if (port.pad) return 'support-pad';
   if (port.fan) return 'fan-mount';
   if (port.mount) return 'external-mount';
   if (port.vent) return 'vent';
@@ -176,6 +178,20 @@ export function buildFeatureFromTemplate(
               holeDiameter: 4.5,
               slotLength: 9,
             },
+    };
+  }
+
+  if (template.type === 'support-pad') {
+    // Sized to match the default board-mount standoff height, so a pad dropped next to a board
+    // meets its underside instead of holding it up or falling short.
+    return {
+      id,
+      type: 'support-pad',
+      face: 'bottom',
+      u,
+      v,
+      rotationDeg: 0,
+      pad: { shape: 'rect', width: 8, depth: 5, height: Math.min(defaultStandoffHeight(project), 4) },
     };
   }
 

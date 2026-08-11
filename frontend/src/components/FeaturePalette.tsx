@@ -11,7 +11,8 @@ export type ArmedFeatureTemplate =
   | { type: 'vent'; label: string }
   | { type: 'custom-hole'; label: string }
   | { type: 'external-mount'; label: string; mountStyle: 'flange' | 'boss' }
-  | { type: 'fan-mount'; label: string; fanSize: number };
+  | { type: 'fan-mount'; label: string; fanSize: number }
+  | { type: 'support-pad'; label: string };
 
 interface FeaturePaletteProps {
   armed: ArmedFeatureTemplate | null;
@@ -160,7 +161,8 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
     (matchesQuery('Standoff (PCB mount)', 'PCB mount standoffs', 'M2.2/M3') ||
       matchesQuery('Board Mount', 'outline + mounting holes', 'PCB Grid') ||
       matchesQuery('Mounting Flange', 'external wall mount tab ear slot keyhole', 'Wall Tab') ||
-      matchesQuery('External Boss', 'external standoff post foot spacer outside', 'Post'));
+      matchesQuery('External Boss', 'external standoff post foot spacer outside', 'Post') ||
+      matchesQuery('Support Pad', 'blind pillar prop unsupported cantilever board edge', 'Prop'));
 
   const filteredBoardPresets =
     activeCategory === 'all' || activeCategory === 'mounting'
@@ -187,7 +189,7 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
     <div className="feature-palette">
       <div className="palette-header">
         <h3>Features</h3>
-        <span className="palette-count">{CONNECTOR_LIBRARY.length + BOARD_MOUNT_PRESETS.length + FAN_PRESETS.length + 6} parts</span>
+        <span className="palette-count">{CONNECTOR_LIBRARY.length + BOARD_MOUNT_PRESETS.length + FAN_PRESETS.length + 7} parts</span>
       </div>
 
       <div className="palette-search">
@@ -252,7 +254,7 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
           </div>
           <p className="armed-desc">
             Click target face in viewport to place.
-            {(armed.type === 'standoff' || armed.type === 'board-mount') &&
+            {(armed.type === 'standoff' || armed.type === 'board-mount' || armed.type === 'support-pad') &&
               ' Mounts to interior floor.'}
           </p>
           <button type="button" className="disarm-button" onClick={onDisarm}>
@@ -290,6 +292,17 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
                   <span className="dim-badge">4-Hole Grid</span>
                 </div>
                 <span className="card-note">PCB outline + 4 corner standoffs</span>
+              </button>
+              <button
+                type="button"
+                className={armed?.type === 'support-pad' ? 'palette-card armed' : 'palette-card'}
+                onClick={() => onArm({ type: 'support-pad', label: 'Support Pad' })}
+              >
+                <div className="card-top">
+                  <span className="card-name">Support Pad</span>
+                  <span className="dim-badge">Prop</span>
+                </div>
+                <span className="card-note">Blind floor pillar under an unsupported board edge</span>
               </button>
               <button
                 type="button"

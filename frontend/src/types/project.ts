@@ -182,6 +182,10 @@ export type FanGrilleStyle = 'concentric' | 'honeycomb' | 'open';
 export interface FanMountSpec {
   /** Nominal fan size in mm -- the fan's square footprint (40 = a 40x40mm fan). */
   size: number;
+  /** How deep the fan's own body is (40x40x10 -> 10). Nothing is cut or printed from this: it
+   * drives the translucent ghost the viewport draws inside the case, which is how you check the
+   * fan won't foul a HAT or heatsink under it. */
+  bodyDepth: number;
   /** Screw hole spacing, center to center. */
   holePitch: number;
   screwHoleDiameter: number;
@@ -198,9 +202,27 @@ export interface FanMountSpec {
   bossHeight: number;
 }
 
+/**
+ * A blind pillar on the interior floor with no screw hole -- something for an unsupported board
+ * edge to rest on. Carrier boards whose mounting holes are all down one side (the Waveshare CM4
+ * base among them) cantilever the opposite edge over open air, and a connector pushed into that
+ * edge flexes the PCB; a pad under it takes the load instead. Sized in plan and stopped just under
+ * the board, so it supports without fighting the standoffs for the board's height.
+ */
+export interface SupportPadSpec {
+  shape: 'rect' | 'round';
+  /** rect: extent along the floor's u axis. round: diameter. */
+  width: number;
+  /** rect: extent along the floor's v axis. Ignored for a round pad. */
+  depth: number;
+  /** Height above the interior floor -- normally the same as the board's standoff height. */
+  height: number;
+}
+
 export type FeatureType =
   | 'connector-cutout'
   | 'standoff'
+  | 'support-pad'
   | 'vent'
   | 'custom-hole'
   | 'board-mount'
@@ -230,6 +252,7 @@ export interface Feature {
   board?: BoardMountSpec; // for 'board-mount'
   mount?: ExternalMountSpec; // for 'external-mount'
   fan?: FanMountSpec; // for 'fan-mount'
+  pad?: SupportPadSpec; // for 'support-pad'
   hidden?: boolean; // when true, feature is hidden from CSG generation and 3D preview
   locked?: boolean; // when true, feature is locked against 3D drag gestures
 }

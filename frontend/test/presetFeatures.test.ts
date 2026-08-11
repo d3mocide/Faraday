@@ -62,7 +62,7 @@ describe('board preset IO layouts', () => {
           expect(findConnector(port.connectorId), `${preset.id}: ${port.connectorId}`).toBeDefined();
         }
         expect(
-          port.connectorId || port.custom || port.vent || port.mount || port.fan,
+          port.connectorId || port.custom || port.vent || port.mount || port.fan || port.pad,
           `${preset.id}: wall feature needs a shape`,
         ).toBeTruthy();
       }
@@ -183,6 +183,16 @@ describe('waveshare CM4 dual-ETH preset: the multi-part case', () => {
     expect(lidFeatures[0].type).toBe('fan-mount');
     expect(lidFeatures[0].fan?.size).toBe(40);
     expect(featurePart(lidFeatures[0], project.body)).toBe('lid');
+
+    const pads = project.features.filter((f) => f.type === 'support-pad');
+    expect(pads).toHaveLength(4);
+    for (const pad of pads) {
+      expect(featurePart(pad, project.body)).toBe('base');
+      // All four sit under the board's cantilevered right edge, and stop level with the standoffs.
+      const x = pad.u * preset.body.outer.length - preset.body.outer.length / 2;
+      expect(x).toBeGreaterThan(35);
+      expect(pad.pad?.height).toBe(preset.boardMount!.standoff.height);
+    }
 
     const tabs = project.features.filter((f) => f.type === 'external-mount');
     expect(tabs).toHaveLength(4);

@@ -10,19 +10,22 @@ export interface FanPreset {
   size: number; // mm, the fan's square footprint
   pitch: number; // mm, screw hole spacing
   screw: string; // typical screw, for the label only
+  /** The most common body depth at this size, for the clearance ghost. Plenty of fans are thicker
+   * (a 40x40x20 is easy to find) -- edit the depth on the placed feature if yours is. */
+  depth: number;
 }
 
 export const FAN_PRESETS: FanPreset[] = [
-  { size: 20, pitch: 16, screw: 'M2' },
-  { size: 25, pitch: 20, screw: 'M2.5' },
-  { size: 30, pitch: 24, screw: 'M3' },
-  { size: 40, pitch: 32, screw: 'M3' },
-  { size: 50, pitch: 40, screw: 'M4' },
-  { size: 60, pitch: 50, screw: 'M4' },
-  { size: 70, pitch: 61.5, screw: 'M4' },
-  { size: 80, pitch: 71.5, screw: 'M4' },
-  { size: 92, pitch: 82.5, screw: 'M4' },
-  { size: 120, pitch: 105, screw: 'M4' },
+  { size: 20, pitch: 16, screw: 'M2', depth: 10 },
+  { size: 25, pitch: 20, screw: 'M2.5', depth: 10 },
+  { size: 30, pitch: 24, screw: 'M3', depth: 10 },
+  { size: 40, pitch: 32, screw: 'M3', depth: 10 },
+  { size: 50, pitch: 40, screw: 'M4', depth: 15 },
+  { size: 60, pitch: 50, screw: 'M4', depth: 25 },
+  { size: 70, pitch: 61.5, screw: 'M4', depth: 25 },
+  { size: 80, pitch: 71.5, screw: 'M4', depth: 25 },
+  { size: 92, pitch: 82.5, screw: 'M4', depth: 25 },
+  { size: 120, pitch: 105, screw: 'M4', depth: 25 },
 ];
 
 export function findFanPreset(size: number): FanPreset | undefined {
@@ -41,6 +44,7 @@ export function fanSpecFor(size: number): FanMountSpec {
   const ringWidth = preset.size <= 25 ? 1.8 : preset.size <= 40 ? 3 : 4;
   return {
     size: preset.size,
+    bodyDepth: preset.depth,
     holePitch: preset.pitch,
     screwHoleDiameter,
     grille: 'concentric',

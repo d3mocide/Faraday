@@ -6,6 +6,7 @@ import type {
   ExternalMountSpec,
   Face,
   FanMountSpec,
+  SupportPadSpec,
   VentSpec,
 } from '../types/project';
 import {
@@ -31,6 +32,15 @@ const CM4_WALL_TAB: ExternalMountSpec = {
   holeDiameter: 5,
   slotLength: 9,
 };
+
+/** Pad under the CM4 base's unsupported right edge: 6mm across (in X), as deep as the gap between
+ * that edge's own components allows, and 4mm tall to meet the board on its standoffs. */
+const CM4_SUPPORT_PAD = (depth: number): SupportPadSpec => ({
+  shape: 'rect',
+  width: 6,
+  depth,
+  height: 4,
+});
 
 /** Louvre band: 8-9 slots stacked along the wall at CM4/HAT-sandwich height, so intake air crosses
  * the module. Built rotated (rotationDeg 90 on the feature) because the slot generator stacks its
@@ -61,6 +71,9 @@ export interface BoardIoCutout {
   vent?: VentSpec;
   /** ...or a fan opening (grille + the fan's screw holes)... */
   fan?: FanMountSpec;
+  /** ...or a floor pad propping up an unsupported board edge (bottom face; alongMm/acrossMm are
+   * its X/Y offsets from the board center)... */
+  pad?: SupportPadSpec;
   /** ...or something that grows outward instead of cutting in (wall-mount ear, external post).
    * Not an "IO port", but positioned board-relative exactly like one, so it rides the same list. */
   mount?: ExternalMountSpec;
@@ -352,7 +365,7 @@ export const BOARD_PRESETS: BoardPreset[] = [
     id: 'waveshare-cm4-dual-eth-wifi6',
     label: 'Waveshare CM4 Dual ETH WiFi6 Base',
     notes:
-      "Complete multi-part case for Waveshare's CM4-DUAL-ETH-WIFI6-BASE carrier: tray + lid + two slide-in end plates carrying all the IO, four wall-mount tabs, intake louvres at CM4/HAT height, and a 40mm exhaust fan grille in the lid. Interior height clears a Pi-HAT stack (e.g. a WM1302 LoRa concentrator) plus the fan plenum -- drop the body height if you're not stacking a HAT. Lid screws use exterior columns because the board fills the interior: there is no floor left for corner bosses. Every dimension here (board outline, hole pattern, port silhouettes) was measured off the vendor's STEP model rather than a published drawing -- Waveshare doesn't dimension one -- so verify against the real board before printing. The fan's own mounting bosses and the microSD finger scallop from the source design are not modelled; the four fan screw holes are.",
+      "Complete multi-part case for Waveshare's CM4-DUAL-ETH-WIFI6-BASE carrier: tray + lid + two slide-in end plates carrying all the IO, four wall-mount tabs, intake louvres at CM4/HAT height, and a 40mm exhaust fan grille in the lid. Interior height clears a Pi-HAT stack (e.g. a WM1302 LoRa concentrator) plus the fan plenum -- drop the body height if you're not stacking a HAT. Lid screws use exterior columns because the board fills the interior: there is no floor left for corner bosses. Every dimension here (board outline, hole pattern, port silhouettes) was measured off the vendor's STEP model rather than a published drawing -- Waveshare doesn't dimension one -- so verify against the real board before printing. Four pads under the board's cantilevered right edge take the load when a cable is pushed into the port stack. The microSD finger scallop from the source design is not modelled.",
     body: {
       outer: { length: 97.4, width: 114.8, height: 45.5 },
       wallThickness: 2.4,
@@ -454,6 +467,14 @@ export const BOARD_PRESETS: BoardPreset[] = [
         acrossMm: 26.225,
         aboveBoardMm: 0,
       },
+      // Support pads under the board's cantilevered right edge: every mounting hole on this board
+      // is down the left/middle, so the right edge -- the one carrying the HDMI, USB and Ethernet
+      // stack -- hangs over open air and flexes when a cable is pushed in. Four pads at the source
+      // design's bands, stopping level with the standoffs so they meet the PCB without lifting it.
+      { pad: CM4_SUPPORT_PAD(5.1), face: 'bottom', alongMm: 41.765, acrossMm: -33.125, aboveBoardMm: 0 },
+      { pad: CM4_SUPPORT_PAD(4.1), face: 'bottom', alongMm: 41.765, acrossMm: -12.325, aboveBoardMm: 0 },
+      { pad: CM4_SUPPORT_PAD(2), face: 'bottom', alongMm: 41.765, acrossMm: -0.875, aboveBoardMm: 0 },
+      { pad: CM4_SUPPORT_PAD(2), face: 'bottom', alongMm: 41.765, acrossMm: 9.525, aboveBoardMm: 0 },
       // Wall-mount tabs, level with the underside of the tray so the case bolts flat to a surface.
       { mount: CM4_WALL_TAB, face: 'front', alongMm: -20.735, aboveBoardMm: -6.5 },
       { mount: CM4_WALL_TAB, face: 'front', alongMm: 20.265, aboveBoardMm: -6.5 },

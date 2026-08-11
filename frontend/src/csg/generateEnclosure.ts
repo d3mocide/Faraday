@@ -9,6 +9,7 @@ import {
   buildExternalMount,
   buildFanMount,
   buildStandoff,
+  buildSupportPad,
   buildVentCutout,
 } from './featurePrimitives';
 import { effectiveSplitHeight } from './lidSplit';
@@ -232,6 +233,10 @@ export function generateEnclosure(
     }
     if (feature.type === 'board-mount' && feature.board) {
       base = base.add(buildBoardMount(wasm, feature, geom, wallThickness));
+      continue;
+    }
+    if (feature.type === 'support-pad' && feature.pad) {
+      base = base.add(buildSupportPad(wasm, feature, geom, wallThickness));
       continue;
     }
     if (feature.type === 'external-mount' && feature.mount) {
