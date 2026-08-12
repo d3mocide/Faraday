@@ -796,6 +796,62 @@ deliberate detail rather than a truncation, and gives the overhang somewhere to 
   and on, shows the webs and the collar; hanging round and square columns render with visible
   tapered feet. No console errors, and the CM4 preset still passes its own design checks.
 
+## Wall-mount alignment fixes (2026-08-12 session, sixth round)
+
+Two defects reported off screenshots of the Waveshare CM4 preset with short exterior screw
+columns: *"the wall edges on the back side are anchoring to the bottom under the printable zone,
+the columns are also just tapering down into empty space and not sitting flush at a slope to the
+wall they are attached to."* Both were geometry bugs in the previous round's own additions, and
+both produced watertight-but-wrong solids, so nothing in the suite could see them.
+
+### Flange braces pointed the wrong way on the back and left walls
+
+`buildExternalMount()` picks a brace side from how much room the owning part has above vs. below
+the mount, then hands that to `flangeSolid()` in the flange's *natural* frame. The previous round
+noted that the face path has to negate the sign because its rotations land natural +Z on world -Z
+— but that is only true on **front/right/side**. `orientOutward()` rotates back and left the other
+way (`rotate(-90, 0, 0)`), which leaves natural +Z on world **+Z**, so those two faces got the
+opposite of the side that was chosen. A CM4 wall tab sits level with the underside of the tray
+(z = 1.5mm), which has no room below it, so the picker correctly chose "brace upward" and the back
+wall's two tabs then braced *downward* — 4mm of gusset hanging below z = 0, under the print bed.
+New `naturalZAlongFace()` in `featurePrimitives.ts` owns the per-face sign in one place.
+
+### The sloped column foot tapered to a point in mid-air
+
+`columnFoot()` was a cone (or a scaled frustum for square columns): it shrank away from **every**
+side at once, including the side welded to the wall. An exterior M3 column's center sits
+`bossRadius - 2` proud of the wall's outer face, so a cone narrowing about its own axis ends as a
+stub floating clear of the wall — the "tapering into empty space" in the report. The interior
+hanging column had the same defect, just smaller (0.6mm of overlap to lose).
+
+The foot is now **one-sided per wall**: the column prism below the seam, intersected with a plane
+per wall that climbs at 45° along the direction the material has to retreat in. That keeps the
+wall side of the column full-section and eats only the free side, so the slope actually lands on
+the wall. The run is no longer an arbitrary 5mm cap — it is `halfExtent + back`, exactly the drop
+that buries the taper in the wall plane, and a corner column intersects both of its walls' planes
+so it tapers into the corner. `FootWalls` (interior/exterior box walls, or a cylinder radius) is
+passed down from `applyScrewBossLid`/`applyScrewBossLidCylinder`, which are the only places that
+know where the walls are.
+
+One gotcha worth keeping: the slope plane starts `FOOT_SLOPE_CLEARANCE` (0.05mm) outboard of the
+column's widest point. Grazing a cylinder exactly along its own tangent line produces a knife edge
+of zero width, and that comes back out of the CSG as a non-manifold sliver — caught by a
+throwaway 232-variation watertightness sweep (placement × shape × screw size × boss count ×
+column height × body shape) run while developing this. The sweep itself is not in the suite — it
+takes longer than the whole of the rest of it — but the exterior-hanging-column case it caught is.
+
+### Verification
+
+- 129 vitest tests passing (was 125). Two of the old column-foot assertions encoded the *buggy*
+  cone behaviour and were rewritten to assert the fixed one: the foot keeps its corner as it
+  descends and gives up the free side. New regressions: a back-wall ear bracing upward, all four
+  vertical faces keeping the base's bounding box on the bed (`min z >= 0`), an exterior column's
+  foot still touching the wall near its tip, and exterior hanging columns staying watertight.
+- Playwright on the CM4 preset with the reported settings (exterior columns, 20.5mm column
+  height): before/after pairs from a below-the-floor camera show the back tabs' wedges disappear
+  from under the bed, and a low three-quarter view shows the column foot meeting the wall instead
+  of ending in a floating point. No console errors; `npm run lint` and `npm run build` clean.
+
 ## Next steps (suggested order)
 
 All phases in DESIGN.md §13 (0 through 5) are implemented and verified, plus the 2026-07-12
@@ -1212,3 +1268,18 @@ editing old entries, so this stays a readable history. -->
   driver) or a conical collar on a boss, on whichever side has room. Plus `columnFoot()`, giving a
   hanging screw column the 45° sloped foot the owner sketched in green instead of a flat face in
   mid-air. 121 tests passing (was 112); browser-verified with the gusset off and on.
+
+- **2026-08-12**: Two wall-mount geometry bugs from the previous round, reported with screenshots
+  of the CM4 preset — see the "Wall-mount alignment fixes" section above. (1) **Flange braces
+  pointed the wrong way on the back and left walls**: the face path negates the brace side to
+  compensate for its rotations, but that compensation is only correct on front/right/side —
+  `orientOutward()` rotates back/left the opposite way, so a tab sitting level with the tray floor
+  braced *downward*, below the print bed. New `naturalZAlongFace()` keeps the per-face sign in one
+  place. (2) **A hanging column's sloped foot tapered to a point in mid-air**: it was a cone
+  shrinking away from every side at once, including the side welded to the wall, so it ended as a
+  stub floating clear of it. The foot is now one-sided per wall — the column prism cut by a 45°
+  plane per wall, run out to exactly the drop that buries it in the wall plane, both walls at a
+  corner. Non-obvious detail: the cut plane has to start a hair outboard of the column's widest
+  point, or the tangency produces a non-manifold sliver (found with a 232-variation watertightness
+  sweep). 129 tests passing (was 125), including two old assertions rewritten because they pinned
+  the buggy cone; browser-verified with before/after screenshots from under the floor plane.

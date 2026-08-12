@@ -173,30 +173,131 @@ function columnSolid(
 }
 
 /**
- * The sloped foot under a column that doesn't reach the floor: a 45-degree taper off its lower end,
- * blending it back into the wall it's welded to instead of leaving it stopping dead in mid-air. It
- * is what makes a shortened column look deliberate, and the slope prints without support. Returns
- * null for a full-height column, which stands on the floor and needs nothing.
+ * The wall planes a set of screw columns lean on, so a hanging column's foot knows which way to
+ * slope. Interior columns sit inside the cavity with the wall outboard of them; exterior ones
+ * straddle the outside of the wall, so their material retreats the other way.
+ */
+export type FootWalls =
+  | { kind: 'box'; halfX: number; halfY: number; side: 'interior' | 'exterior' }
+  | { kind: 'cylinder'; radius: number };
+
+/** One wall a column's foot has to run back into: `dx, dy` is the unit XY direction the foot's
+ * material retreats in as it descends (away from that wall), and `run` the 45-degree drop that
+ * lands the taper flush on the wall plane. */
+interface FootAnchor {
+  dx: number;
+  dy: number;
+  run: number;
+}
+
+/** Half-width of a column's cross-section along a direction -- constant for a round post, but a
+ * square one reaches further along its diagonal than along its faces. */
+function columnHalfExtent(shape: ScrewColumnShape, size: number, dx: number, dy: number): number {
+  return shape === 'square' ? ((Math.abs(dx) + Math.abs(dy)) * size) / 2 : size / 2;
+}
+
+/** The slope plane starts this far outboard of the column's widest point rather than exactly on
+ * it: grazing a cylinder along its own tangent line produces a knife edge of zero width, which
+ * comes back out of the CSG as a non-manifold sliver. */
+const FOOT_SLOPE_CLEARANCE = 0.05;
+
+/** `back` is how far behind the column's center the wall plane sits, measured against `dx, dy`.
+ * Null whenever the column doesn't actually reach that wall -- there is nothing there to slope
+ * into, and a taper toward it would just hang in the air on the other side. */
+function footAnchor(
+  dx: number,
+  dy: number,
+  back: number,
+  shape: ScrewColumnShape,
+  size: number,
+): FootAnchor | null {
+  const extent = columnHalfExtent(shape, size, dx, dy);
+  if (back < 0 || back >= extent) return null;
+  return { dx, dy, run: extent + FOOT_SLOPE_CLEARANCE + back };
+}
+
+function footAnchors(
+  [x, y]: [number, number],
+  walls: FootWalls,
+  shape: ScrewColumnShape,
+  size: number,
+): FootAnchor[] {
+  if (walls.kind === 'cylinder') {
+    const radius = Math.hypot(x, y);
+    if (radius < 1e-6) return [];
+    const anchor = footAnchor(-x / radius, -y / radius, walls.radius - radius, shape, size);
+    return anchor ? [anchor] : [];
+  }
+
+  const anchors: FootAnchor[] = [];
+  for (const [coord, half, axis] of [
+    [x, walls.halfX, 'x'],
+    [y, walls.halfY, 'y'],
+  ] as const) {
+    if (coord === 0) continue;
+    const sign = Math.sign(coord);
+    const inward = walls.side === 'interior';
+    const back = inward ? half - Math.abs(coord) : Math.abs(coord) - half;
+    const dir = inward ? -sign : sign;
+    const anchor = footAnchor(
+      axis === 'x' ? dir : 0,
+      axis === 'x' ? 0 : dir,
+      back,
+      shape,
+      size,
+    );
+    if (anchor) anchors.push(anchor);
+  }
+  return anchors;
+}
+
+/** Everything under a plane that climbs at 45 degrees along `dx, dy`, so that intersecting a
+ * column with it shaves the column's far side away at exactly the rate the column descends. The
+ * plane is positioned to graze the column's outer edge at z = zBottom, which is what makes the
+ * foot start as the full cross-section and lose material only on the way down. */
+function footSlopeSolid(
+  wasm: ManifoldToplevel,
+  extent: number,
+  zBottom: number,
+  anchor: FootAnchor,
+): Manifold {
+  // Keep the half-space `s - z <= extent - zBottom`, where s is distance along the anchor.
+  const offset = extent + FOOT_SLOPE_CLEARANCE - zBottom;
+  const big = 200 + 4 * (extent + zBottom + Math.abs(offset));
+  const yawDeg = (Math.atan2(anchor.dy, anchor.dx) * 180) / Math.PI;
+  return wasm.Manifold.cube([big, big, big], true)
+    .translate(-big / 2, 0, 0)
+    .rotate(0, 45, 0)
+    .translate(offset / 2, 0, -offset / 2)
+    .rotate(0, 0, yawDeg);
+}
+
+/**
+ * The sloped foot under a column that doesn't reach the floor: a 45-degree taper off its lower end
+ * that runs back into the wall the column is welded to, instead of leaving it stopping dead in
+ * mid-air. The taper is one-sided per wall -- it keeps the wall side of the column full and eats
+ * away only the free side, so the slope actually lands on the wall (a cone shrinking away from
+ * every side at once ends in a stub floating clear of it). The slope prints without support.
+ * Returns null for a full-height column, which stands on the floor and needs nothing, or for one
+ * with no wall within reach to slope into.
  */
 function columnFoot(
   wasm: ManifoldToplevel,
   shape: ScrewColumnShape,
   size: number,
   zBottom: number,
+  anchors: FootAnchor[],
 ): Manifold | null {
-  const run = Math.min(size / 2 - 0.8, zBottom, 5);
+  if (anchors.length === 0) return null;
+  const run = Math.min(Math.max(...anchors.map((anchor) => anchor.run)), zBottom);
   if (run < 0.6) return null;
-  if (shape === 'square') {
-    const small = size - 2 * run;
-    return wasm.CrossSection.square([small, small], true)
-      .extrude(run, 0, 0, [size / small, size / small])
-      .translate(0, 0, zBottom - run);
+
+  let foot = columnSolid(wasm, shape, size, run, zBottom - run);
+  for (const anchor of anchors) {
+    const extent = columnHalfExtent(shape, size, anchor.dx, anchor.dy);
+    foot = foot.intersect(footSlopeSolid(wasm, extent, zBottom, anchor));
   }
-  return wasm.Manifold.cylinder(run, size / 2 - run, size / 2, 0, false).translate(
-    0,
-    0,
-    zBottom - run,
-  );
+  return foot;
 }
 
 /** How much of the base's height a column occupies: the full floor-to-seam span by default, or a
@@ -234,6 +335,7 @@ export function applyScrewBossLidAt(
   screw: ScrewSpec,
   positions: Array<[number, number]>,
   wallThickness: number,
+  walls: FootWalls,
 ): { base: Manifold; lid: Manifold } {
   const spec = SCREW_HOLE_SPECS[screw.size];
   const pilotDiameter =
@@ -250,10 +352,16 @@ export function applyScrewBossLidAt(
 
   let nextBase = base;
   let nextLid = lid;
-  const foot = columnFoot(wasm, shape, outerDiameter, zBottom);
   for (const [x, y] of positions) {
     nextBase = nextBase.add(
       columnSolid(wasm, shape, outerDiameter, height, zBottom).translate(x, y, 0),
+    );
+    const foot = columnFoot(
+      wasm,
+      shape,
+      outerDiameter,
+      zBottom,
+      footAnchors([x, y], walls, shape, outerDiameter),
     );
     if (foot) nextBase = nextBase.add(foot.translate(x, y, 0));
 
@@ -306,6 +414,7 @@ function applyExteriorScrewBossLidAt(
   outerHeight: number,
   screw: ScrewSpec,
   positions: Array<[number, number]>,
+  walls: FootWalls,
 ): { base: Manifold; lid: Manifold } {
   const spec = SCREW_HOLE_SPECS[screw.size];
   const pilotDiameter =
@@ -324,9 +433,15 @@ function applyExteriorScrewBossLidAt(
 
   let nextBase = base;
   let nextLid = lid;
-  const foot = columnFoot(wasm, shape, outerDiameter, zBottom);
   for (const [x, y] of positions) {
     const column = columnSolid(wasm, shape, outerDiameter, height, zBottom).translate(x, y, 0);
+    const foot = columnFoot(
+      wasm,
+      shape,
+      outerDiameter,
+      zBottom,
+      footAnchors([x, y], walls, shape, outerDiameter),
+    );
     nextBase = nextBase
       .add(foot ? column.add(foot.translate(x, y, 0)) : column)
       .subtract(
@@ -371,6 +486,7 @@ export function applyScrewBossLid(
       outerHeight,
       screw,
       exteriorBossPositions(screw.count, outerLength / 2, outerWidth / 2, bossRadiusFor(screw)),
+      { kind: 'box', halfX: outerLength / 2, halfY: outerWidth / 2, side: 'exterior' },
     );
   }
   const bossRadius = bossRadiusFor(screw);
@@ -383,6 +499,7 @@ export function applyScrewBossLid(
     screw,
     bossPositions(screw.count, innerLength / 2, innerWidth / 2, bossRadius, hangingInset(screw, bossRadius)),
     wallThickness,
+    { kind: 'box', halfX: innerLength / 2, halfY: innerWidth / 2, side: 'interior' },
   );
 }
 
@@ -418,7 +535,10 @@ export function applyScrewBossLidCylinder(
     bossRadius,
     hangingInset(screw, bossRadius),
   );
-  return applyScrewBossLidAt(wasm, base, lid, splitHeight, outerHeight, screw, positions, wallThickness);
+  return applyScrewBossLidAt(wasm, base, lid, splitHeight, outerHeight, screw, positions, wallThickness, {
+    kind: 'cylinder',
+    radius: innerDiameter / 2,
+  });
 }
 
 interface FrictionLipParams {

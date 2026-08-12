@@ -351,6 +351,24 @@ describe('external mounts', () => {
     for (const part of Object.values(solids)) part.delete();
   });
 
+  it('a back-wall ear braces upward like a front-wall one, not down past the floor', () => {
+    const solids = generateSolids(makeBox({ corner: 'sharp', features: [cases[1].feature] }));
+    // Same ear as the front-face case, on the opposite wall: plate at z=3, no room underneath.
+    const wall = 25 + 1; // 1mm out from the back wall
+    expect(solidAt(solids.base, [6.24, wall, 5.2], 0.5), 'web above the ear').toBe(true);
+    expect(solidAt(solids.base, [6.24, wall, 0.8], 0.5), 'nothing braced below it').toBe(false);
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('a wall ear never reaches below the print bed, whichever wall it is on', () => {
+    for (const face of ['front', 'back', 'left', 'right'] as const) {
+      const { base } = generateMeshes(
+        makeBox({ features: [{ ...cases[0].feature, id: `ear-${face}`, face }] }),
+      );
+      expect(boundingBox(base).min[2], `${face} ear stays on the bed`).toBeGreaterThan(-0.01);
+    }
+  });
+
   it('the brace can be turned off', () => {
     const braced = generateSolids(makeBox({ corner: 'sharp', features: [cases[0].feature] }));
     const bare = generateSolids(
@@ -728,22 +746,47 @@ describe('screw column variations', () => {
     const y = 50 / 2 - 2 - (bossRadius - 0.6);
     // Below the 5mm heat-set bore but still inside the 8mm column.
     expect(solidAt(solids.base, [x, y, 24 - 6.5]), 'column material near the seam').toBe(true);
-    expect(solidAt(solids.base, [x, y, 24 - 12]), 'clear below the column').toBe(false);
+    // Column bottom is 16, and its foot slopes back into the corner over the 8.2mm below that.
+    expect(solidAt(solids.base, [x, y, 6]), 'clear below the column and its foot').toBe(false);
     expect(solidAt(solids.base, [x, y, 3]), 'clear down at the floor').toBe(false);
     for (const part of Object.values(solids)) part.delete();
   });
 
-  it('a shortened column gets a sloped foot instead of stopping dead in mid-air', () => {
+  it('a shortened column gets a sloped foot that stays welded to the wall all the way down', () => {
     const solids = generateSolids(screwBox({ columnHeight: 8 }));
     const bossRadius = bossRadiusFor({ size: 'M3', insertType: 'heat-set', count: 4 });
     const x = 80 / 2 - 2 - (bossRadius - 0.6);
     const y = 50 / 2 - 2 - (bossRadius - 0.6);
-    // Column bottom is at 24 - 8 = 16; the foot tapers away below that over ~3.6mm.
+    // Column bottom is at 24 - 8 = 16; the foot slopes off it at 45 degrees back into the corner.
     expect(solidAt(solids.base, [x, y, 15], 0.4), 'foot material just under the column').toBe(true);
-    expect(solidAt(solids.base, [x, y, 11], 0.4), 'nothing left below the foot').toBe(false);
-    // ...and it really is a taper: 3mm off the axis there is already nothing at the foot's waist.
-    expect(solidAt(solids.base, [x + 3, y, 13], 0.4), 'the foot narrows as it descends').toBe(false);
+    expect(solidAt(solids.base, [x, y, 6], 0.4), 'nothing left below the foot').toBe(false);
+    // It is a one-sided taper: it keeps its corner (the walls are at x=38, y=23) and gives up the
+    // free side, so the slope lands on the wall instead of shrinking to a stub floating off it.
+    expect(solidAt(solids.base, [37, 22, 9], 0.4), 'still on the wall near the foot tip').toBe(true);
+    expect(solidAt(solids.base, [x - 3, y, 13], 0.4), 'the free side is gone by then').toBe(false);
     for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('an exterior column slopes back onto the outside of the wall, not into thin air', () => {
+    const solids = generateSolids(screwBox({ placement: 'exterior', columnHeight: 8 }));
+    const bossRadius = bossRadiusFor({ size: 'M3', insertType: 'heat-set', count: 4 });
+    // Exterior bosses straddle the back wall's outer face (y = 25), overlapping it by 2mm.
+    const x = 80 / 2 - bossRadius - 1;
+    const y = 50 / 2 + bossRadius - 2;
+    expect(solidAt(solids.base, [x, y, 15], 0.4), 'foot material just under the column').toBe(true);
+    // Near the bottom of the foot only the strip hugging the wall survives -- that strip is what
+    // the taper has to land on. A cone shrinking toward its own axis leaves nothing here.
+    expect(solidAt(solids.base, [x, 25.9, 10.5], 0.4), 'foot still touching the wall').toBe(true);
+    expect(solidAt(solids.base, [x, y + 2, 11], 0.4), 'outboard side already tapered off').toBe(false);
+    expect(solidAt(solids.base, [x, y, 8], 0.4), 'nothing hanging below the foot').toBe(false);
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('exterior hanging columns keep both pieces watertight', () => {
+    const parts = generateParts(screwBox({ placement: 'exterior', columnHeight: 8 }));
+    for (const [id, mesh] of Object.entries(parts)) {
+      expect(isWatertight(mesh), `${id} watertight`).toBe(true);
+    }
   });
 
   it('a counterbore sinks the head below the lid surface without holing it through', () => {
