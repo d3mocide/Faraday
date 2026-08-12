@@ -573,6 +573,16 @@ function ExternalMountFields({
             onChangeMm={(v) => setMount({ thickness: v })}
           />
         )}
+        {isFlange && (
+          <UnitNumberField
+            label="Edge radius"
+            valueMm={mount.edgeRadius ?? 0}
+            units={units}
+            minMm={0}
+            maxMm={Math.max(Math.min(mount.width, mount.protrusion + Math.max(mount.thickness, 0.8)) / 2 - 0.1, 0)}
+            onChangeMm={(v) => setMount({ edgeRadius: v > 0 ? v : undefined })}
+          />
+        )}
         {mount.hole !== 'none' && (
           <UnitNumberField
             label="Hole dia"

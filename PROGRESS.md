@@ -1121,6 +1121,35 @@ never-verified Docker build.
     `presetFeatures.test.ts` now 55 passing (up from 44, +11 boss-clearance checks); `tsc -b`,
     `oxlint`, `npm run build` all clean.
 
+- **2026-08-11**: Fixed corner-anchored wall-mount flanges that visually detached at their side
+  edges when placed on a case corner. The root cause was the corner-ear geometry in
+  `csg/featurePrimitives.ts`: its root was a *flat* diagonal strip, which only overlapped the case
+  near the middle of the corner and could leave the ear's two side edges floating instead of
+  actually reaching both walls. Fixed by replacing the corner-flange path with a dedicated
+  V-shaped root profile that drives farther inward toward each wall as it moves across the ear's
+  width, while leaving the nominal corner anchor itself unchanged (`csg/faceFrame.ts`). Updated the
+  viewport marker path to match the restored anchor behavior. Added a regression in
+  `test/generateEnclosure.test.ts` that probes the new root area on a sharp corner so the bug is
+  covered by the geometry suite. Verified with `npx vitest run test/generateEnclosure.test.ts`
+  (61 passing).
+
+- **2026-08-11 (follow-up)**: Tightened the rest of the external-mount flange behavior after user
+  screenshots surfaced two more geometry bugs plus a small usability request. (1) **Wall-flange
+  brace direction now keys off the owning part's Z span, not the whole enclosure's world Z**:
+  lid-side wall mounts used to see the space below the *assembled* box and could droop their
+  gussets down toward the base when the lid itself had no room there. `generateEnclosure.ts` now
+  passes the target part's actual Z span into `buildExternalMount()`, and `featurePrimitives.ts`
+  picks above-vs-below reinforcement from that local span instead. (2) **Top/bottom-face flanges
+  no longer join the body through a pointy, floating-looking center support**: those faces now use
+  full-width reinforcement webs across the tab instead of the side-wall/end-web pattern, so the
+  slope visibly meets the lid/base across the tab width. (3) **External flange tabs now support an
+  optional edge radius** (`ExternalMountSpec.edgeRadius`), exposed in the inspector and given a
+  1.5mm default for new flange placements; implemented by switching the flat tab body from a plain
+  cube to a rounded-rectangle cross-section before extrusion. Added three regressions in
+  `test/generateEnclosure.test.ts` for rounded-edge flanges, lid-side gusset direction, and
+  full-width top-face reinforcement. Verified with `npx vitest run test/generateEnclosure.test.ts`
+  (64 passing), plus `npm run lint` and `npm run build`.
+
 <!-- When you pick this up: append a new dated entry above summarizing what changed, rather than
 editing old entries, so this stays a readable history. -->
 

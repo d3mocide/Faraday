@@ -252,9 +252,16 @@ export function generateEnclosure(
     if (feature.type === 'external-mount' && feature.mount) {
       const cornerRadius =
         body.shape === 'box' && body.cornerStyle.type !== 'sharp' ? body.cornerStyle.radius : 0;
+      const part = featurePart(feature, body);
+      const zSpan =
+        part === 'base'
+          ? { min: 0, max: splitHeight }
+          : part === 'lid'
+            ? { min: splitHeight, max: height }
+            : { min: metrics?.plateBottomZ ?? 0, max: metrics?.plateTopZ ?? splitHeight };
       addTo(
-        featurePart(feature, body),
-        buildExternalMount(wasm, feature, geom, wallThickness, cornerRadius),
+        part,
+        buildExternalMount(wasm, feature, geom, wallThickness, cornerRadius, zSpan),
       );
       continue;
     }

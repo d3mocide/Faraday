@@ -171,6 +171,8 @@ export interface ExternalMountSpec {
   protrusion: number; // mm
   /** flange: plate thickness (along the face's v axis). Ignored for a boss. */
   thickness: number; // mm
+  /** flange only: radius on the tab's plan-view corners. 0 or undefined keeps square corners. */
+  edgeRadius?: number; // mm
   hole: ExternalMountHoleStyle;
   holeDiameter: number; // mm
   /** 'slot': total travel of the slot. 'keyhole': center distance between the big and small ends. */

@@ -174,6 +174,7 @@ export function buildFeatureFromTemplate(
               width: 16,
               protrusion: 10,
               thickness: 3,
+              edgeRadius: 1.5,
               hole: 'slot',
               holeDiameter: 4.5,
               slotLength: 9,

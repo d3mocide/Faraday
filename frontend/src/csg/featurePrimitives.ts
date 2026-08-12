@@ -432,6 +432,62 @@ function polygonCcw(wasm: ManifoldToplevel, points: Array<[number, number]>): Cr
   return new wasm.CrossSection(area < 0 ? [...points].reverse() : points);
 }
 
+function roundedRectCrossSection(
+  wasm: ManifoldToplevel,
+  width: number,
+  height: number,
+  radius: number,
+): CrossSection {
+  if (radius <= 0) return wasm.CrossSection.square([width, height], true);
+  return wasm.CrossSection.square([Math.max(width - 2 * radius, 0.01), Math.max(height - 2 * radius, 0.01)], true).offset(
+    radius,
+    'Round',
+  );
+}
+
+function flangeEdgeRadius(spec: ExternalMountSpec, width: number, profileHeight: number): number {
+  const requested = Math.max(spec.edgeRadius ?? 0, 0);
+  return Math.min(requested, Math.max(Math.min(width, profileHeight) / 2 - 0.01, 0));
+}
+
+function flangePlate(
+  wasm: ManifoldToplevel,
+  spec: ExternalMountSpec,
+  embed: number,
+): Manifold {
+  const width = Math.max(spec.width, 1);
+  const protrusion = Math.max(spec.protrusion, 1);
+  const thickness = Math.max(spec.thickness, 0.8);
+  const profileHeight = protrusion + embed;
+  const radius = flangeEdgeRadius(spec, width, profileHeight);
+  return roundedRectCrossSection(wasm, width, profileHeight, radius)
+    .extrude(thickness, undefined, undefined, undefined, true)
+    .translate(0, (protrusion - embed) / 2, 0);
+}
+
+function flangeWeb(
+  wasm: ManifoldToplevel,
+  spec: ExternalMountSpec,
+  embed: number,
+  size: number,
+  side: 1 | -1,
+  webWidth: number,
+): Manifold | null {
+  const halfThickness = Math.max(spec.thickness, 0.8) / 2;
+  if (size < 0.5 || webWidth <= 0.01) return null;
+
+  return polygonCcw(wasm, [
+    [-embed, side * halfThickness],
+    [size, side * halfThickness],
+    [-embed, side * (halfThickness + size)],
+  ])
+    .extrude(webWidth)
+    .translate(0, 0, -webWidth / 2)
+    // Solid (x, y, z) -> natural (z, x, y): the sweep lands on X, the triangle on (Y, Z).
+    .rotate(90, 0, 0)
+    .rotate(0, 0, 90);
+}
+
 /**
  * Triangular webs bracing a flange back into the wall: one at each end of the ear, leaving the
  * middle clear so a screwdriver can still reach the hole. Built in the flange's natural frame
@@ -446,25 +502,26 @@ function flangeWebs(
   side: 1 | -1,
 ): Manifold | null {
   const width = Math.max(spec.width, 1);
-  const halfThickness = Math.max(spec.thickness, 0.8) / 2;
   const webWidth = Math.min(Math.max(width * 0.22, 1.6), 4);
   if (size < 0.5 || webWidth * 2 >= width) return null;
-
-  // Right angle against the wall, hypotenuse running from the plate's face back to the wall at 45
-  // degrees. Extends `embed` into the wall so it welds rather than just touching.
-  const triangle = polygonCcw(wasm, [
-    [-embed, side * halfThickness],
-    [size, side * halfThickness],
-    [-embed, side * (halfThickness + size)],
-  ])
-    .extrude(webWidth)
-    .translate(0, 0, -webWidth / 2)
-    // Solid (x, y, z) -> natural (z, x, y): the sweep lands on X, the triangle on (Y, Z).
-    .rotate(90, 0, 0)
-    .rotate(0, 0, 90);
+  const triangle = flangeWeb(wasm, spec, embed, size, side, webWidth);
+  if (!triangle) return null;
 
   const offset = width / 2 - webWidth / 2;
   return triangle.translate(-offset, 0, 0).add(triangle.translate(offset, 0, 0));
+}
+
+function horizontalFaceFlangeWebs(
+  wasm: ManifoldToplevel,
+  spec: ExternalMountSpec,
+  embed: number,
+  size: number,
+): Manifold | null {
+  const width = Math.max(spec.width, 1);
+  const top = flangeWeb(wasm, spec, embed, size, 1, width);
+  const bottom = flangeWeb(wasm, spec, embed, size, -1, width);
+  if (top && bottom) return top.add(bottom);
+  return top ?? bottom;
 }
 
 /** Flat ear standing out from a face (wall-mount tab), built in its own natural frame: X across the
@@ -480,16 +537,11 @@ function flangeSolid(
   gusset: number,
   webSide: 1 | -1,
 ): Manifold {
-  const width = Math.max(spec.width, 1);
   const protrusion = Math.max(spec.protrusion, 1);
   const thickness = Math.max(spec.thickness, 0.8);
   const embed = Math.max(wallThickness, 0.4);
 
-  const plate = wasm.Manifold.cube([width, protrusion + embed, thickness], true).translate(
-    0,
-    (protrusion - embed) / 2,
-    0,
-  );
+  const plate = flangePlate(wasm, spec, embed);
   const hole = flangeHoleCrossSection(wasm, spec, protrusion / 2);
   // Webs are added after the hole is bored, so the bore (which runs a little past both faces)
   // can't take a bite out of them.
@@ -498,6 +550,53 @@ function flangeSolid(
     : plate;
   const webs = flangeWebs(wasm, spec, embed, gusset, webSide);
   return webs ? drilled.add(webs) : drilled;
+}
+
+function horizontalFaceFlangeSolid(
+  wasm: ManifoldToplevel,
+  spec: ExternalMountSpec,
+  wallThickness: number,
+  gusset: number,
+): Manifold {
+  const protrusion = Math.max(spec.protrusion, 1);
+  const thickness = Math.max(spec.thickness, 0.8);
+  const embed = Math.max(wallThickness, 0.4);
+
+  const plate = flangePlate(wasm, spec, embed);
+  const hole = flangeHoleCrossSection(wasm, spec, protrusion / 2);
+  const drilled = hole
+    ? plate.subtract(hole.extrude(thickness + 2, undefined, undefined, undefined, true))
+    : plate;
+  const webs = horizontalFaceFlangeWebs(wasm, spec, embed, gusset);
+  return webs ? drilled.add(webs) : drilled;
+}
+
+/** Corner ears need a V-shaped root, not a flat one: a flat strip only hits the case near the
+ * middle of a diagonal corner mount, leaving its side edges floating away from the two walls.
+ * This profile drives the root farther inward toward each wall as it moves across the ear's width,
+ * so the whole bracket actually welds into both faces. */
+function cornerFlangeSolid(
+  wasm: ManifoldToplevel,
+  spec: ExternalMountSpec,
+  wallThickness: number,
+  cornerInset: number,
+): Manifold {
+  const width = Math.max(spec.width, 1);
+  const protrusion = Math.max(spec.protrusion, 1);
+  const thickness = Math.max(spec.thickness, 0.8);
+  const halfWidth = width / 2;
+  const baseEmbed = Math.max(wallThickness + cornerInset + 0.2, 0.4);
+
+  const plateProfile = polygonCcw(wasm, [
+    [-halfWidth, protrusion],
+    [halfWidth, protrusion],
+    [halfWidth, -(baseEmbed + halfWidth)],
+    [0, -baseEmbed],
+    [-halfWidth, -(baseEmbed + halfWidth)],
+  ]);
+  const hole = flangeHoleCrossSection(wasm, spec, protrusion / 2);
+  const plate = plateProfile.extrude(thickness, undefined, undefined, undefined, true);
+  return hole ? plate.subtract(hole.extrude(thickness + 2, undefined, undefined, undefined, true)) : plate;
 }
 
 /** Cylindrical post along the face's outward normal -- an external standoff: a foot under the base,
@@ -553,30 +652,34 @@ export function buildExternalMount(
   geom: BodyGeometry,
   wallThickness: number,
   cornerRadius = 0,
+  zSpan?: { min: number; max: number },
 ): Manifold {
   const spec = feature.mount;
   if (!spec) throw new Error('external-mount feature is missing its mount spec');
 
   const gusset = gussetSize(spec);
   const [mountX, mountY, mountZ] = faceFrame(feature.face, geom).toWorld(feature.u, feature.v);
-  // Brace below the mount where the case has room, above where it doesn't -- a tab down at the
-  // floor line (the common wall-mount position) has nothing underneath to brace against. This is
-  // in world terms; each path below maps it onto whichever way its own frame points.
-  const roomBelow = mountZ - Math.max(spec.thickness, 0.8) / 2;
-  const webSide: 1 | -1 = roomBelow >= gusset + 0.5 ? -1 : 1;
+  // Vertical-wall flanges should brace into whichever side of their *owning part* has room. Using
+  // world Z alone makes lid-side mounts droop toward the base when the lid is exploded, because it
+  // sees the room below the whole enclosure rather than the room inside the lid piece itself.
+  const halfThickness = Math.max(spec.thickness, 0.8) / 2;
+  const minZ = zSpan?.min ?? 0;
+  const maxZ = zSpan?.max ?? (geom.shape === 'box' ? geom.height : geom.height);
+  const roomBelow = mountZ - minZ - halfThickness;
+  const roomAbove = maxZ - mountZ - halfThickness;
+  const webSide: 1 | -1 = roomBelow >= gusset + 0.5 && roomBelow >= roomAbove ? -1 : 1;
 
   const corner = cornerAnchor(feature, geom);
   if (corner) {
-    // A corner ear is already in the orientation it needs: the natural frame's +Y is "outward" and
-    // +Z is the plate's thickness, so it only has to be yawed to face along the diagonal. Its root
-    // reaches past the nominal corner point by the amount a rounded/chamfered corner cuts away
-    // (r*(sqrt2 - 1) along the diagonal), so it still welds into solid material.
-    const embed = wallThickness + cornerRadius * (Math.SQRT2 - 1) + 0.2;
+    // A corner mount keeps the natural frame's Z as world Z, so only the yaw changes. Flanges use
+    // a V-shaped root because the two-case-wall corner is not a flat plane.
+    const cornerInset = cornerRadius * (Math.SQRT2 - 1);
+    const embed = wallThickness + cornerInset + 0.2;
     // Corner ears keep the natural frame's Z as world Z, so "above" means what it says.
     const solid =
       spec.style === 'boss'
         ? bossSolid(wasm, spec, embed, gusset).rotate(-90, 0, 0)
-        : flangeSolid(wasm, spec, embed, gusset, webSide);
+        : cornerFlangeSolid(wasm, spec, wallThickness, cornerInset);
     const yaw = corner.angleDeg - 90 + (feature.rotationDeg ?? 0);
     return solid.rotate(0, 0, yaw).translate(corner.x, corner.y, corner.z);
   }
@@ -584,8 +687,10 @@ export function buildExternalMount(
   const local =
     spec.style === 'boss'
       ? bossSolid(wasm, spec, wallThickness, gusset)
+      : feature.face === 'top' || feature.face === 'bottom'
+        ? horizontalFaceFlangeSolid(wasm, spec, wallThickness, gusset).rotate(90, 0, 0)
       // The natural->local rotation below puts natural +Z on -v, so the brace side inverts here.
-      : flangeSolid(wasm, spec, wallThickness, gusset, (-webSide) as 1 | -1).rotate(90, 0, 0);
+        : flangeSolid(wasm, spec, wallThickness, gusset, (-webSide) as 1 | -1).rotate(90, 0, 0);
   const spun = feature.rotationDeg ? local.rotate(0, 0, feature.rotationDeg) : local;
   return orientOutward(spun, feature.face, feature.u).translate(mountX, mountY, mountZ);
 }

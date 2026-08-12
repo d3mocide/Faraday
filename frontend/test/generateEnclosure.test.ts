@@ -275,6 +275,24 @@ describe('external mounts', () => {
       },
     },
     {
+      name: 'rounded-edge flange (front)',
+      feature: {
+        ...mountBase,
+        id: 'm-rounded',
+        face: 'front',
+        mount: {
+          style: 'flange',
+          width: 16,
+          protrusion: 10,
+          thickness: 3,
+          edgeRadius: 2,
+          hole: 'round',
+          holeDiameter: 4.5,
+          slotLength: 0,
+        },
+      },
+    },
+    {
       name: 'external boss with a blind hole (right, on the lid half)',
       feature: {
         ...mountBase,
@@ -356,9 +374,66 @@ describe('external mounts', () => {
 
   it('an external boss on a lid-height wall attaches to the lid, not the base', () => {
     const plain = generateMeshes(makeBox({}));
-    const withBoss = generateMeshes(makeBox({ features: [cases[2].feature] }));
+    const withBoss = generateMeshes(makeBox({ features: [cases[3].feature] }));
     expect(boundingBox(withBoss.lid).max[0]).toBeGreaterThan(boundingBox(plain.lid).max[0] + 7);
     expect(boundingBox(withBoss.base).max[0]).toBeCloseTo(boundingBox(plain.base).max[0], 1);
+  });
+
+  it('a lid-side wall flange braces upward into the lid instead of drooping toward the base', () => {
+    const plain = generateMeshes(makeBox({}));
+    const withFlange = generateMeshes(
+      makeBox({
+        features: [
+          {
+            ...mountBase,
+            id: 'lid-flange',
+            face: 'right',
+            v: 0.9,
+            mount: {
+              style: 'flange',
+              width: 16,
+              protrusion: 10,
+              thickness: 3,
+              hole: 'round',
+              holeDiameter: 4.5,
+              slotLength: 0,
+            },
+          },
+        ],
+      }),
+    );
+    const plainBb = boundingBox(plain.lid);
+    const flangeBb = boundingBox(withFlange.lid);
+    expect(flangeBb.min[2]).toBeGreaterThanOrEqual(plainBb.min[2] - 0.5);
+    expect(flangeBb.max[2]).toBeGreaterThan(plainBb.max[2] + 1.5);
+  });
+
+  it('a top-face flange gets full-width slopes into the lid body rather than a center point', () => {
+    const solids = generateSolids(
+      makeBox({
+        features: [
+          {
+            ...mountBase,
+            id: 'top-flange',
+            face: 'top',
+            u: 0.5,
+            v: 0.5,
+            mount: {
+              style: 'flange',
+              width: 16,
+              protrusion: 10,
+              thickness: 3,
+              hole: 'round',
+              holeDiameter: 4.5,
+              slotLength: 0,
+            },
+          },
+        ],
+      }),
+    );
+    expect(solidAt(solids.lid, [0, 1.7, 31], 0.5), 'one side of the root ramp').toBe(true);
+    expect(solidAt(solids.lid, [0, -1.7, 31], 0.5), 'the other side of the root ramp').toBe(true);
+    for (const part of Object.values(solids)) part.delete();
   });
 });
 
@@ -601,6 +676,13 @@ describe('corner-anchored external mounts', () => {
     // Material on the diagonal just outside the corner arc: the ear bridges the gap the radius
     // opened up, so it is not floating.
     expect(solidAt(solids.base, [-40 + 1, -25 + 1, 3], 0.6)).toBe(true);
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('connects the ear edges back into both walls on a sharp corner', () => {
+    const solids = generateSolids(makeBox({ corner: 'sharp', features: [cornerEar] }));
+    expect(solidAt(solids.base, [-40.7, -15.8, 3], 0.6), 'left-wall edge of the ear welds in').toBe(true);
+    expect(solidAt(solids.base, [-30.8, -25.7, 3], 0.6), 'front-wall edge of the ear welds in').toBe(true);
     for (const part of Object.values(solids)) part.delete();
   });
 
