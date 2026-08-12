@@ -635,6 +635,19 @@ function bossSolid(
   return post.subtract(bore);
 }
 
+/**
+ * Which way a vertical-wall flange's natural +Z has to point for its braces to end up on world
+ * `webSide`. The natural frame reaches the wall through two rotations (the `.rotate(90, 0, 0)` at
+ * the call site, then orientOutward's own), and the pair does not compose the same way on every
+ * face: front/right/side land natural +Z on world -Z, while back/left leave it on world +Z. Using
+ * one sign for all of them puts the gussets under a back-wall mount that has no room below it,
+ * which for a mount near the floor means a brace hanging past the bottom of the case.
+ */
+function naturalZAlongFace(face: Face, webSide: 1 | -1): 1 | -1 {
+  const flipped = face === 'front' || face === 'right' || face === 'side';
+  return (flipped ? -webSide : webSide) as 1 | -1;
+}
+
 /** How big the blend where a mount meets the wall should be. Defaults to something proportionate
  * to the mount and always stops short of its tip, so the brace never swallows the whole thing. */
 function gussetSize(spec: ExternalMountSpec): number {
@@ -690,7 +703,7 @@ export function buildExternalMount(
       : feature.face === 'top' || feature.face === 'bottom'
         ? horizontalFaceFlangeSolid(wasm, spec, wallThickness, gusset).rotate(90, 0, 0)
       // The natural->local rotation below puts natural +Z on -v, so the brace side inverts here.
-        : flangeSolid(wasm, spec, wallThickness, gusset, (-webSide) as 1 | -1).rotate(90, 0, 0);
+        : flangeSolid(wasm, spec, wallThickness, gusset, naturalZAlongFace(feature.face, webSide)).rotate(90, 0, 0);
   const spun = feature.rotationDeg ? local.rotate(0, 0, feature.rotationDeg) : local;
   return orientOutward(spun, feature.face, feature.u).translate(mountX, mountY, mountZ);
 }
