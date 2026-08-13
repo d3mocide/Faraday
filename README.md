@@ -46,8 +46,19 @@ npm run build
 
 ## Docker
 
+**Self-hosting (pulls the published image):**
+
 ```bash
-docker compose up --build
+docker compose up
 ```
 
-Serves the static build on `http://localhost:8090`.
+Pulls `ghcr.io/d3mocide/faraday` (built for `linux/amd64` and `linux/arm64`) and serves it on
+`http://localhost:8090`. Faraday is currently in beta — `docker-compose.yml` tracks the `beta` tag;
+pin an exact version (e.g. `ghcr.io/d3mocide/faraday:0.1.0-beta.1`) for a reproducible deploy. See
+[`CHANGELOG.md`](./CHANGELOG.md) for what's in each release.
+
+**Local development (builds `./frontend` from source):**
+
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```

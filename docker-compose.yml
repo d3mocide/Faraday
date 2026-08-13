@@ -1,7 +1,13 @@
-# docker-compose.yml — one service, no volumes, no env vars needed
+# docker-compose.yml — pulls the published Faraday image from GHCR. This is what self-hosters
+# should use. For local development (build ./frontend from source instead), see
+# docker-compose.dev.yml.
+#
+# Faraday is currently in beta: no stable release exists yet, so this tracks the `beta` tag (the
+# newest published pre-release) rather than `latest`. Switch to `:latest` once a stable release
+# ships, or pin an exact version (e.g. `:0.1.0-beta.1`) for a reproducible deploy.
 services:
   faraday:
-    build: ./frontend
+    image: ghcr.io/d3mocide/faraday:beta
     ports:
       - "8090:80"
     restart: unless-stopped
