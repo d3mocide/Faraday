@@ -29,6 +29,10 @@ import {
   applySnapFitLidCylinder,
   boxShell,
   cylinderShell,
+  hexagonShell,
+  octagonShell,
+  stadiumShell,
+  wedgeShell,
   shrinkCornerStyle,
 } from './primitives';
 
@@ -69,13 +73,21 @@ export function generateEnclosure(
   wasm.setCircularSegments(quality === 'export' ? exportSegs : liveSegs);
 
   const { body } = project;
-  const height = body.outer.height;
+  const height =
+    body.shape === 'wedge'
+      ? body.outer.heightBack
+      : body.shape === 'hexagon' || body.shape === 'octagon'
+      ? body.outer.height
+      : body.outer.height;
   const wallThickness = Math.max(body.wallThickness, 0.4);
   const geom = bodyGeometry(body);
 
   let outerShape: Manifold;
   let innerShape: Manifold;
-  let innerCornerStyle = body.shape === 'box' ? shrinkCornerStyle(body.cornerStyle, wallThickness) : undefined;
+  let innerCornerStyle =
+    body.shape === 'box' || body.shape === 'stadium' || body.shape === 'wedge'
+      ? shrinkCornerStyle(body.cornerStyle, wallThickness)
+      : undefined;
   let innerLength = 0;
   let innerWidth = 0;
   let innerDiameter = 0;
@@ -96,6 +108,41 @@ export function generateEnclosure(
     innerWidth = Math.max(width - 2 * wallThickness, 1);
     const innerHeight = Math.max(height - 2 * wallThickness, 1);
     innerShape = boxShell(wasm, innerLength, innerWidth, innerHeight, innerCornerStyle!).translate(
+      0,
+      0,
+      wallThickness,
+    );
+  } else if (body.shape === 'hexagon') {
+    const { radius } = body.outer;
+    outerShape = hexagonShell(wasm, radius, height);
+    const rInner = Math.max(radius - wallThickness / Math.cos(Math.PI / 6), 1);
+    const innerHeight = Math.max(height - 2 * wallThickness, 1);
+    innerShape = hexagonShell(wasm, rInner, innerHeight).translate(0, 0, wallThickness);
+  } else if (body.shape === 'octagon') {
+    const { radius } = body.outer;
+    outerShape = octagonShell(wasm, radius, height);
+    const rInner = Math.max(radius - wallThickness / Math.cos(Math.PI / 8), 1);
+    const innerHeight = Math.max(height - 2 * wallThickness, 1);
+    innerShape = octagonShell(wasm, rInner, innerHeight).translate(0, 0, wallThickness);
+  } else if (body.shape === 'stadium') {
+    const { length, width } = body.outer;
+    outerShape = stadiumShell(wasm, length, width, height);
+    innerLength = Math.max(length - 2 * wallThickness, 1);
+    innerWidth = Math.max(width - 2 * wallThickness, 1);
+    const innerHeight = Math.max(height - 2 * wallThickness, 1);
+    innerShape = stadiumShell(wasm, innerLength, innerWidth, innerHeight).translate(
+      0,
+      0,
+      wallThickness,
+    );
+  } else if (body.shape === 'wedge') {
+    const { length, width, heightFront, heightBack } = body.outer;
+    outerShape = wedgeShell(wasm, length, width, heightFront, heightBack, body.cornerStyle);
+    innerLength = Math.max(length - 2 * wallThickness, 1);
+    innerWidth = Math.max(width - 2 * wallThickness, 1);
+    const inHf = Math.max(heightFront - 2 * wallThickness, 1);
+    const inHb = Math.max(heightBack - 2 * wallThickness, 1);
+    innerShape = wedgeShell(wasm, innerLength, innerWidth, inHf, inHb, innerCornerStyle!).translate(
       0,
       0,
       wallThickness,
@@ -194,7 +241,7 @@ export function generateEnclosure(
         splitHeight,
         gasket: body.lid.gasket,
       });
-    } else {
+    } else if (body.shape === 'cylinder') {
       base = applyGasketChannelCylinder(wasm, base, {
         diameter: body.outer.diameter,
         wallThickness,

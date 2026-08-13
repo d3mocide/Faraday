@@ -17,15 +17,22 @@ export function calculatePrintabilityStats(project: EnclosureProject): Printabil
   let outerVolCm3 = 0;
   let innerVolCm3 = 0;
 
-  if (body.shape === 'box') {
+  if (body.shape === 'box' || body.shape === 'stadium' || body.shape === 'wedge') {
     const outerL = body.outer.length;
     const outerW = body.outer.width;
-    const outerH = body.outer.height;
+    const outerH = body.shape === 'wedge' ? body.outer.heightBack : body.outer.height;
     outerVolCm3 = (outerL * outerW * outerH) / 1000;
     const innerL = Math.max(0, outerL - wall * 2);
     const innerW = Math.max(0, outerW - wall * 2);
     const innerH = Math.max(0, outerH - wall * 2);
     innerVolCm3 = (innerL * innerW * innerH) / 1000;
+  } else if (body.shape === 'hexagon' || body.shape === 'octagon') {
+    const rOuter = body.outer.radius;
+    const hOuter = body.outer.height;
+    outerVolCm3 = (Math.PI * rOuter * rOuter * hOuter) / 1000;
+    const rInner = Math.max(0, rOuter - wall);
+    const hInner = Math.max(0, hOuter - wall * 2);
+    innerVolCm3 = (Math.PI * rInner * rInner * hInner) / 1000;
   } else {
     const rOuter = body.outer.diameter / 2;
     const hOuter = body.outer.height;
@@ -54,7 +61,12 @@ export function calculatePrintabilityStats(project: EnclosureProject): Printabil
   }
 
   if (lid.gasket) {
-    const perimeterMm = body.shape === 'box' ? (body.outer.length + body.outer.width) * 2 : Math.PI * body.outer.diameter;
+    const perimeterMm =
+      body.shape === 'box' || body.shape === 'stadium' || body.shape === 'wedge'
+        ? (body.outer.length + body.outer.width) * 2
+        : body.shape === 'hexagon' || body.shape === 'octagon'
+        ? Math.PI * 2 * body.outer.radius
+        : Math.PI * body.outer.diameter;
     fastenersBom.push({ name: `${lid.gasket.width}mm Silicone O-Ring Cord`, quantity: Math.ceil(perimeterMm) });
   }
 

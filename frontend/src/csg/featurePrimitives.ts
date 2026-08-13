@@ -81,6 +81,8 @@ function orientAlongFace(solid: Manifold, face: Face, u: number): Manifold {
       const thetaDeg = u * 360;
       return solid.rotate(90, 0, 0).rotate(0, 0, 90 + thetaDeg);
     }
+    default:
+      return solid.rotate(90, 0, 0);
   }
 }
 
@@ -386,6 +388,8 @@ function orientOutward(solid: Manifold, face: Face, u: number): Manifold {
       return solid.rotate(-90, 0, 0).rotate(0, 0, 90);
     case 'side':
       return solid.rotate(90, 0, 0).rotate(0, 0, 90 + u * 360);
+    default:
+      return solid.rotate(90, 0, 0);
   }
 }
 
@@ -677,7 +681,7 @@ export function buildExternalMount(
   // sees the room below the whole enclosure rather than the room inside the lid piece itself.
   const halfThickness = Math.max(spec.thickness, 0.8) / 2;
   const minZ = zSpan?.min ?? 0;
-  const maxZ = zSpan?.max ?? (geom.shape === 'box' ? geom.height : geom.height);
+  const maxZ = zSpan?.max ?? (geom.shape === 'wedge' ? geom.heightBack : geom.height);
   const roomBelow = mountZ - minZ - halfThickness;
   const roomAbove = maxZ - mountZ - halfThickness;
   const webSide: 1 | -1 = roomBelow >= gusset + 0.5 && roomBelow >= roomAbove ? -1 : 1;

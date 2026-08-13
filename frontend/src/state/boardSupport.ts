@@ -64,8 +64,16 @@ export function planOverhangSupport(
   const worldY = boardY + localX * Math.sin(theta) + localY * Math.cos(theta);
 
   const [faceWidth, faceDepth] = [
-    geom.shape === 'box' ? geom.length : geom.diameter,
-    geom.shape === 'box' ? geom.width : geom.diameter,
+    geom.shape === 'box' || geom.shape === 'stadium' || geom.shape === 'wedge'
+      ? geom.length
+      : geom.shape === 'hexagon' || geom.shape === 'octagon'
+      ? geom.radius * 2
+      : geom.diameter,
+    geom.shape === 'box' || geom.shape === 'stadium' || geom.shape === 'wedge'
+      ? geom.width
+      : geom.shape === 'hexagon' || geom.shape === 'octagon'
+      ? geom.radius * 2
+      : geom.diameter,
   ];
 
   return {

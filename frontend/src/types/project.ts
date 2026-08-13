@@ -1,4 +1,23 @@
-export type Face = 'top' | 'bottom' | 'front' | 'back' | 'left' | 'right' | 'side';
+export type PolygonFaceHex = 'f1' | 'f2' | 'f3' | 'f4' | 'f5' | 'f6';
+export type PolygonFaceOct = 'f1' | 'f2' | 'f3' | 'f4' | 'f5' | 'f6' | 'f7' | 'f8';
+
+export type Face =
+  | 'top'
+  | 'bottom'
+  | 'front'
+  | 'back'
+  | 'left'
+  | 'right'
+  | 'side'
+  | 'f1'
+  | 'f2'
+  | 'f3'
+  | 'f4'
+  | 'f5'
+  | 'f6'
+  | 'f7'
+  | 'f8'
+  | 'slanted-top';
 
 export type Units = 'mm' | 'in';
 
@@ -25,9 +44,8 @@ export type ScrewSize = 'M2' | 'M2.5' | 'M3' | 'M4';
 export type ScrewInsertType = 'heat-set' | 'self-tap';
 export type ScrewCount = 4 | 6 | 8;
 
-/** Column cross-section. A square column is stiffer for the same footprint and gives a flat face
- * to blend into a wall; a round one wastes less interior space. */
-export type ScrewColumnShape = 'round' | 'square';
+/** Column cross-section shape. 'round' and 'square' are classic; 'hex', 'octagon', and 'rounded-square' offer elegant CAD mounting options. */
+export type ScrewColumnShape = 'round' | 'square' | 'hex' | 'octagon' | 'rounded-square';
 
 /** 'flush' leaves the screw head proud of the lid. 'counterbore' sinks it into a pocket so the
  * head sits below the surface -- concealed, and pluggable with a printed cap if you want the lid
@@ -80,7 +98,7 @@ export interface LidSpec {
   gasket?: GasketSpec; // present = channel cut, absent = no gasket channel
 }
 
-export type BodyShape = 'box' | 'cylinder';
+export type BodyShape = 'box' | 'cylinder' | 'hexagon' | 'octagon' | 'stadium' | 'wedge';
 
 /** The four box walls that can be swapped for a separately-printed slide-in panel. */
 export type PanelFace = 'front' | 'back' | 'left' | 'right';
@@ -134,7 +152,45 @@ export interface CylinderBody {
   lid: LidSpec;
 }
 
-export type EnclosureBody = BoxBody | CylinderBody;
+export interface HexagonBody {
+  shape: 'hexagon';
+  outer: { radius: number; height: number }; // mm outer vertex radius
+  wallThickness: number; // mm
+  topEdgeBevel?: EdgeBevelSpec;
+  bottomEdgeBevel?: EdgeBevelSpec;
+  lid: LidSpec;
+}
+
+export interface OctagonBody {
+  shape: 'octagon';
+  outer: { radius: number; height: number }; // mm outer vertex radius
+  wallThickness: number; // mm
+  topEdgeBevel?: EdgeBevelSpec;
+  bottomEdgeBevel?: EdgeBevelSpec;
+  lid: LidSpec;
+}
+
+export interface StadiumBody {
+  shape: 'stadium';
+  outer: { length: number; width: number; height: number }; // mm (width = diameter of semicircular ends)
+  wallThickness: number; // mm
+  cornerStyle: CornerStyle;
+  topEdgeBevel?: EdgeBevelSpec;
+  bottomEdgeBevel?: EdgeBevelSpec;
+  lid: LidSpec;
+}
+
+export interface WedgeBody {
+  shape: 'wedge';
+  outer: { length: number; width: number; heightFront: number; heightBack: number }; // mm
+  wallThickness: number; // mm
+  cornerStyle: CornerStyle;
+  topEdgeBevel?: EdgeBevelSpec;
+  bottomEdgeBevel?: EdgeBevelSpec;
+  lid: LidSpec;
+}
+
+export type EnclosureBody = BoxBody | CylinderBody | HexagonBody | OctagonBody | StadiumBody | WedgeBody;
 
 export interface StandoffSpec {
   outerDiameter: number; // mm

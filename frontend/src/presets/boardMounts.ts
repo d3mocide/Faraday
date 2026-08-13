@@ -172,7 +172,29 @@ export const WAVESHARE_CM4_DUAL_ETH_MOUNT: BoardMountSpec = {
   standoff: { outerDiameter: 6, screwHoleDiameter: 2.1, height: 4 },
 };
 
+/** ESP32 Cheap Yellow Display (CYD 2.8" ESP32-2432S028): 91.5x52mm board, four M3 mounting holes
+ * inset 3.5mm from corners (84.5x45mm pitch grid). */
+export const CYD_MOUNT: BoardMountSpec = {
+  boardWidth: 91.5,
+  boardDepth: 52,
+  boardThickness: 1.6,
+  holes: [
+    { x: -42.25, y: -22.5 },
+    { x: 42.25, y: -22.5 },
+    { x: -42.25, y: 22.5 },
+    { x: 42.25, y: 22.5 },
+  ],
+  standoff: { outerDiameter: 6.5, screwHoleDiameter: 2.7, height: 4 },
+};
+
 export const BOARD_MOUNT_PRESETS: BoardMountPreset[] = [
+  {
+    id: 'cyd-esp32-2432s028',
+    label: 'ESP32 Cheap Yellow Display (CYD 2.8")',
+    badge: '91.5×52mm',
+    notes: 'Official 84.5×45mm M3 4-corner pattern for the ESP32-2432S028 2.8" LCD touch display board.',
+    mount: CYD_MOUNT,
+  },
   {
     id: 'pi-full-size',
     label: 'Raspberry Pi 3B/4B/5',

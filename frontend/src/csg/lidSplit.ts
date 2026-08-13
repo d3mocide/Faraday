@@ -9,7 +9,8 @@ function clamp(value: number, min: number, max: number): number {
  * and Viewport3D (main-thread side) so view logic can't drift from the geometry. */
 export function effectiveSplitHeight(body: EnclosureBody): number {
   const wallThickness = Math.max(body.wallThickness, 0.4);
-  return clamp(body.lid.splitHeight, wallThickness + 1, body.outer.height - wallThickness - 1);
+  const outerH = body.shape === 'wedge' ? body.outer.heightBack : body.outer.height;
+  return clamp(body.lid.splitHeight, wallThickness + 1, outerH - wallThickness - 1);
 }
 
 // Which piece a given feature lands on used to live here as featureOnLid(); it moved to

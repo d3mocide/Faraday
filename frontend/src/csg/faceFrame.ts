@@ -13,27 +13,31 @@ export interface FaceFrame {
  */
 export type BodyGeometry =
   | { shape: 'box'; length: number; width: number; height: number }
-  | { shape: 'cylinder'; diameter: number; height: number };
+  | { shape: 'cylinder'; diameter: number; height: number }
+  | { shape: 'hexagon'; radius: number; height: number }
+  | { shape: 'octagon'; radius: number; height: number }
+  | { shape: 'stadium'; length: number; width: number; height: number }
+  | { shape: 'wedge'; length: number; width: number; heightFront: number; heightBack: number };
 
 export function bodyGeometry(body: EnclosureBody): BodyGeometry {
-  return body.shape === 'box'
-    ? { shape: 'box', length: body.outer.length, width: body.outer.width, height: body.outer.height }
-    : { shape: 'cylinder', diameter: body.outer.diameter, height: body.outer.height };
+  if (body.shape === 'box') {
+    return { shape: 'box', length: body.outer.length, width: body.outer.width, height: body.outer.height };
+  }
+  if (body.shape === 'cylinder') {
+    return { shape: 'cylinder', diameter: body.outer.diameter, height: body.outer.height };
+  }
+  if (body.shape === 'hexagon') {
+    return { shape: 'hexagon', radius: body.outer.radius, height: body.outer.height };
+  }
+  if (body.shape === 'octagon') {
+    return { shape: 'octagon', radius: body.outer.radius, height: body.outer.height };
+  }
+  if (body.shape === 'stadium') {
+    return { shape: 'stadium', length: body.outer.length, width: body.outer.width, height: body.outer.height };
+  }
+  return { shape: 'wedge', length: body.outer.length, width: body.outer.width, heightFront: body.outer.heightFront, heightBack: body.outer.heightBack };
 }
 
-/**
- * Face/axis convention (matches boxShell/generateEnclosure): length is X, width is Y, height is
- * Z. front/back split on Y, left/right split on X, top/bottom split on Z. For the four side
- * faces, u runs along the horizontal axis and v runs bottom (0) to top (1) along Z; for top/bottom,
- * u/v run along X/Y respectively. This is an internal convention, not specified in DESIGN.md.
- *
- * For a cylinder body, 'top'/'bottom' are the circular caps (u/v map onto a diameter x diameter
- * square the same way a box's top/bottom do -- some (u,v) near the corners fall outside the
- * physical disc, same "placement isn't fenced to the solid material" latitude a box already has
- * near its own footprint). 'side' is the curved lateral wall: u is the angle around Z (0 -> 0deg,
- * 1 -> 360deg, wrapping), v is 0 (bottom) to 1 (top) along Z, matching the box side faces' v
- * convention.
- */
 export function faceFrame(face: Face, geom: BodyGeometry): FaceFrame {
   if (geom.shape === 'cylinder') {
     const { diameter, height } = geom;
@@ -61,7 +65,97 @@ export function faceFrame(face: Face, geom: BodyGeometry): FaceFrame {
           },
         };
       default:
-        throw new Error(`face '${face}' does not exist on a cylinder body`);
+        return {
+          toWorld: (u, v) => [(u - 0.5) * diameter, (v - 0.5) * diameter, height],
+          normalAt: () => [0, 0, 1],
+        };
+    }
+  }
+
+  if (geom.shape === 'hexagon') {
+    const { radius: r, height: h } = geom;
+    const rFlat = r * Math.cos(Math.PI / 6);
+    const faceW = r;
+    if (face === 'top') {
+      return { toWorld: (u, v) => [(u - 0.5) * 2 * r, (v - 0.5) * 2 * r, h], normalAt: () => [0, 0, 1] };
+    }
+    if (face === 'bottom') {
+      return { toWorld: (u, v) => [(u - 0.5) * 2 * r, (v - 0.5) * 2 * r, 0], normalAt: () => [0, 0, -1] };
+    }
+    const idx = Math.max(0, ['f1', 'f2', 'f3', 'f4', 'f5', 'f6'].indexOf(face));
+    const angle = (Math.PI / 3) * idx + Math.PI / 6;
+    const nx = Math.cos(angle);
+    const ny = Math.sin(angle);
+    const ux = -ny;
+    const uy = nx;
+    return {
+      toWorld: (u, v) => [
+        nx * rFlat + ux * (u - 0.5) * faceW,
+        ny * rFlat + uy * (u - 0.5) * faceW,
+        v * h,
+      ],
+      normalAt: () => [nx, ny, 0],
+    };
+  }
+
+  if (geom.shape === 'octagon') {
+    const { radius: r, height: h } = geom;
+    const rFlat = r * Math.cos(Math.PI / 8);
+    const faceW = 2 * r * Math.sin(Math.PI / 8);
+    if (face === 'top') {
+      return { toWorld: (u, v) => [(u - 0.5) * 2 * r, (v - 0.5) * 2 * r, h], normalAt: () => [0, 0, 1] };
+    }
+    if (face === 'bottom') {
+      return { toWorld: (u, v) => [(u - 0.5) * 2 * r, (v - 0.5) * 2 * r, 0], normalAt: () => [0, 0, -1] };
+    }
+    const idx = Math.max(0, ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'].indexOf(face));
+    const angle = (Math.PI / 4) * idx;
+    const nx = Math.cos(angle);
+    const ny = Math.sin(angle);
+    const ux = -ny;
+    const uy = nx;
+    return {
+      toWorld: (u, v) => [
+        nx * rFlat + ux * (u - 0.5) * faceW,
+        ny * rFlat + uy * (u - 0.5) * faceW,
+        v * h,
+      ],
+      normalAt: () => [nx, ny, 0],
+    };
+  }
+
+  if (geom.shape === 'stadium' || geom.shape === 'wedge') {
+    const l = geom.length;
+    const w = geom.width;
+    const h = geom.shape === 'wedge' ? geom.heightBack : geom.height;
+    switch (face) {
+      case 'slanted-top': {
+        if (geom.shape === 'wedge') {
+          const { heightFront: hF, heightBack: hB } = geom;
+          const dy = w;
+          const dz = hB - hF;
+          const len = Math.hypot(dy, dz);
+          return {
+            toWorld: (u, v) => [(u - 0.5) * l, (v - 0.5) * w, hF + v * dz],
+            normalAt: () => [0, -dz / len, dy / len],
+          };
+        }
+        return { toWorld: (u, v) => [(u - 0.5) * l, (v - 0.5) * w, h], normalAt: () => [0, 0, 1] };
+      }
+      case 'top':
+        return { toWorld: (u, v) => [(u - 0.5) * l, (v - 0.5) * w, h], normalAt: () => [0, 0, 1] };
+      case 'bottom':
+        return { toWorld: (u, v) => [(u - 0.5) * l, (v - 0.5) * w, 0], normalAt: () => [0, 0, -1] };
+      case 'front':
+        return { toWorld: (u, v) => [(u - 0.5) * l, -w / 2, v * h], normalAt: () => [0, -1, 0] };
+      case 'back':
+        return { toWorld: (u, v) => [(u - 0.5) * l, w / 2, v * h], normalAt: () => [0, 1, 0] };
+      case 'left':
+        return { toWorld: (u, v) => [-l / 2, (u - 0.5) * w, v * h], normalAt: () => [-1, 0, 0] };
+      case 'right':
+        return { toWorld: (u, v) => [l / 2, (u - 0.5) * w, v * h], normalAt: () => [1, 0, 0] };
+      default:
+        return { toWorld: (u, v) => [(u - 0.5) * l, (v - 0.5) * w, h], normalAt: () => [0, 0, 1] };
     }
   }
 
@@ -81,12 +175,11 @@ export function faceFrame(face: Face, geom: BodyGeometry): FaceFrame {
       return { toWorld: (u, v) => [l / 2, (u - 0.5) * w, v * h], normalAt: () => [1, 0, 0] };
     case 'side':
       throw new Error("face 'side' does not exist on a box body");
+    default:
+      return { toWorld: (u, v) => [(u - 0.5) * l, (v - 0.5) * w, h], normalAt: () => [0, 0, 1] };
   }
 }
 
-/** Physical size [uExtent, vExtent] in mm of a face's two in-plane axes. For a cylinder's 'side'
- * face, uExtent is the circumference (u wraps, not a flat extent, but this is still the right
- * denominator for converting an mm snapping/drag threshold to a fraction of u). */
 export function faceSize(face: Face, geom: BodyGeometry): [number, number] {
   if (geom.shape === 'cylinder') {
     const { diameter, height } = geom;
@@ -97,8 +190,26 @@ export function faceSize(face: Face, geom: BodyGeometry): [number, number] {
       case 'side':
         return [Math.PI * diameter, height];
       default:
-        throw new Error(`face '${face}' does not exist on a cylinder body`);
+        return [diameter, diameter];
     }
+  }
+
+  if (geom.shape === 'hexagon') {
+    const { radius: r, height: h } = geom;
+    return face === 'top' || face === 'bottom' ? [2 * r, 2 * r] : [r, h];
+  }
+
+  if (geom.shape === 'octagon') {
+    const { radius: r, height: h } = geom;
+    const faceW = 2 * r * Math.sin(Math.PI / 8);
+    return face === 'top' || face === 'bottom' ? [2 * r, 2 * r] : [faceW, h];
+  }
+
+  if (geom.shape === 'stadium' || geom.shape === 'wedge') {
+    const l = geom.length;
+    const w = geom.width;
+    const h = geom.shape === 'wedge' ? geom.heightBack : geom.height;
+    return face === 'top' || face === 'bottom' || face === 'slanted-top' ? [l, w] : face === 'front' || face === 'back' ? [l, h] : [w, h];
   }
 
   const { length: l, width: w, height: h } = geom;
@@ -112,12 +223,11 @@ export function faceSize(face: Face, geom: BodyGeometry): [number, number] {
     case 'left':
     case 'right':
       return [w, h];
-    case 'side':
-      throw new Error("face 'side' does not exist on a box body");
+    default:
+      return [l, w];
   }
 }
 
-/** Inverse of faceFrame().toWorld — recovers normalized (u,v), not clamped to [0,1] (u wraps for a cylinder's 'side' face). */
 export function faceFromWorld(
   face: Face,
   geom: BodyGeometry,
@@ -137,8 +247,25 @@ export function faceFromWorld(
         return [u, z / height];
       }
       default:
-        throw new Error(`face '${face}' does not exist on a cylinder body`);
+        return [x / diameter + 0.5, y / diameter + 0.5];
     }
+  }
+
+  if (geom.shape === 'hexagon' || geom.shape === 'octagon') {
+    const r = geom.radius;
+    const h = geom.height;
+    return face === 'top' || face === 'bottom' ? [x / (2 * r) + 0.5, y / (2 * r) + 0.5] : [0.5, z / h];
+  }
+
+  if (geom.shape === 'stadium' || geom.shape === 'wedge') {
+    const l = geom.length;
+    const w = geom.width;
+    const h = geom.shape === 'wedge' ? geom.heightBack : geom.height;
+    return face === 'top' || face === 'bottom' || face === 'slanted-top'
+      ? [x / l + 0.5, y / w + 0.5]
+      : face === 'front' || face === 'back'
+      ? [x / l + 0.5, z / h]
+      : [y / w + 0.5, z / h];
   }
 
   const { length: l, width: w, height: h } = geom;
@@ -152,8 +279,8 @@ export function faceFromWorld(
     case 'left':
     case 'right':
       return [y / w + 0.5, z / h];
-    case 'side':
-      throw new Error("face 'side' does not exist on a box body");
+    default:
+      return [x / l + 0.5, y / w + 0.5];
   }
 }
 
@@ -166,9 +293,7 @@ const CANONICAL_BOX_FACE_NORMALS: Array<[Face, [number, number, number]]> = [
   ['right', [1, 0, 0]],
 ];
 
-/** Finds which face of the body a (possibly fillet-blended, or continuously-varying for a
- * cylinder) surface normal most closely matches. */
-export function closestFace(normal: [number, number, number], shape: 'box' | 'cylinder'): Face {
+export function closestFace(normal: [number, number, number], shape: string): Face {
   if (shape === 'cylinder') {
     const [nx, ny, nz] = normal;
     const radial = Math.hypot(nx, ny);

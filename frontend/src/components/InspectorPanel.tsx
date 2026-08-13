@@ -1200,11 +1200,23 @@ export function InspectorPanel({
   const { body, units } = project;
   const { lid } = body;
   const selectedFeature = project.features.find((f) => f.id === selectedFeatureId) ?? null;
-  const minPlanDimension = body.shape === 'box' ? Math.min(body.outer.length, body.outer.width) : body.outer.diameter;
+  const minPlanDimension =
+    body.shape === 'box' || body.shape === 'stadium' || body.shape === 'wedge'
+      ? Math.min(body.outer.length, body.outer.width)
+      : body.shape === 'hexagon' || body.shape === 'octagon'
+      ? body.outer.radius * 2
+      : body.outer.diameter;
 
-  const FACES_ORDER: Face[] = body.shape === 'box'
-    ? ['bottom', 'front', 'back', 'left', 'right', 'top']
-    : ['bottom', 'side', 'top'];
+  const FACES_ORDER: Face[] =
+    body.shape === 'hexagon'
+      ? ['bottom', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'top']
+      : body.shape === 'octagon'
+      ? ['bottom', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'top']
+      : body.shape === 'wedge'
+      ? ['bottom', 'front', 'back', 'left', 'right', 'slanted-top']
+      : body.shape === 'box' || body.shape === 'stadium'
+      ? ['bottom', 'front', 'back', 'left', 'right', 'top']
+      : ['bottom', 'side', 'top'];
 
   return (
     <div className="inspector-panel">
@@ -1233,6 +1245,8 @@ export function InspectorPanel({
           <span>Studio</span>
         </button>
       </div>
+
+      <div className="inspector-tab-content">
 
       {/* Advisory Design Checks Alert Banner if findings exist */}
       {findings.length > 0 && (
@@ -1567,9 +1581,13 @@ export function InspectorPanel({
               <select value={body.shape} onChange={(e) => setBodyShape(e.target.value as BodyShape)}>
                 <option value="box">Box</option>
                 <option value="cylinder">Cylinder</option>
+                <option value="hexagon">Hexagon</option>
+                <option value="octagon">Octagon</option>
+                <option value="stadium">Stadium (Pill)</option>
+                <option value="wedge">Desktop Console (Wedge)</option>
               </select>
             </label>
-            {body.shape === 'box' ? (
+            {body.shape === 'box' || body.shape === 'stadium' ? (
               <FieldsGrid2Col>
                 <UnitNumberField
                   label="Length"
@@ -1586,6 +1604,45 @@ export function InspectorPanel({
                   onChangeMm={(v) => setBodyDimension('width', v)}
                 />
               </FieldsGrid2Col>
+            ) : body.shape === 'wedge' ? (
+              <FieldsGrid2Col>
+                <UnitNumberField
+                  label="Length"
+                  valueMm={body.outer.length}
+                  units={units}
+                  minMm={5}
+                  onChangeMm={(v) => setBodyDimension('length', v)}
+                />
+                <UnitNumberField
+                  label="Width"
+                  valueMm={body.outer.width}
+                  units={units}
+                  minMm={5}
+                  onChangeMm={(v) => setBodyDimension('width', v)}
+                />
+                <UnitNumberField
+                  label="Front Height"
+                  valueMm={body.outer.heightFront}
+                  units={units}
+                  minMm={2}
+                  onChangeMm={(v) => setBodyDimension('heightFront', v)}
+                />
+                <UnitNumberField
+                  label="Back Height"
+                  valueMm={body.outer.heightBack}
+                  units={units}
+                  minMm={5}
+                  onChangeMm={(v) => setBodyDimension('heightBack', v)}
+                />
+              </FieldsGrid2Col>
+            ) : body.shape === 'hexagon' || body.shape === 'octagon' ? (
+              <UnitNumberField
+                label="Outer Radius"
+                valueMm={body.outer.radius}
+                units={units}
+                minMm={5}
+                onChangeMm={(v) => setBodyDimension('radius', v)}
+              />
             ) : (
               <UnitNumberField
                 label="Diameter"
@@ -1595,23 +1652,56 @@ export function InspectorPanel({
                 onChangeMm={(v) => setBodyDimension('diameter', v)}
               />
             )}
-            <FieldsGrid2Col>
-              <UnitNumberField
-                label="Height"
-                valueMm={body.outer.height}
-                units={units}
-                minMm={5}
-                onChangeMm={(v) => setBodyDimension('height', v)}
-              />
-              <UnitNumberField
-                label="Wall thickness"
-                valueMm={body.wallThickness}
-                units={units}
-                minMm={0.8}
-                maxMm={minPlanDimension / 2 - 0.5}
-                onChangeMm={setWallThickness}
-              />
-            </FieldsGrid2Col>
+            {body.shape !== 'wedge' && body.shape !== 'hexagon' && body.shape !== 'octagon' && (
+              <FieldsGrid2Col>
+                <UnitNumberField
+                  label="Height"
+                  valueMm={body.outer.height}
+                  units={units}
+                  minMm={5}
+                  onChangeMm={(v) => setBodyDimension('height', v)}
+                />
+                <UnitNumberField
+                  label="Wall thickness"
+                  valueMm={body.wallThickness}
+                  units={units}
+                  minMm={0.8}
+                  maxMm={minPlanDimension / 2 - 0.5}
+                  onChangeMm={setWallThickness}
+                />
+              </FieldsGrid2Col>
+            )}
+            {(body.shape === 'hexagon' || body.shape === 'octagon') && (
+              <FieldsGrid2Col>
+                <UnitNumberField
+                  label="Height"
+                  valueMm={body.outer.height}
+                  units={units}
+                  minMm={5}
+                  onChangeMm={(v) => setBodyDimension('height', v)}
+                />
+                <UnitNumberField
+                  label="Wall thickness"
+                  valueMm={body.wallThickness}
+                  units={units}
+                  minMm={0.8}
+                  maxMm={minPlanDimension / 2 - 0.5}
+                  onChangeMm={setWallThickness}
+                />
+              </FieldsGrid2Col>
+            )}
+            {body.shape === 'wedge' && (
+              <FieldsGrid2Col>
+                <UnitNumberField
+                  label="Wall thickness"
+                  valueMm={body.wallThickness}
+                  units={units}
+                  minMm={0.8}
+                  maxMm={minPlanDimension / 2 - 0.5}
+                  onChangeMm={setWallThickness}
+                />
+              </FieldsGrid2Col>
+            )}
 
             {body.shape === 'box' && (
               <div className="inspector-subgroup">
@@ -1663,7 +1753,7 @@ export function InspectorPanel({
                     valueMm={body.topEdgeBevel.size}
                     units={units}
                     minMm={0.5}
-                    maxMm={Math.min(body.outer.height / 3, 10)}
+                    maxMm={Math.min((body.shape === 'wedge' ? body.outer.heightBack : body.outer.height) / 3, 10)}
                     stepMm={0.5}
                     onChangeMm={(v) => setTopEdgeBevel({ type: 'chamfer', size: v })}
                   />
@@ -1686,7 +1776,7 @@ export function InspectorPanel({
                     valueMm={body.bottomEdgeBevel.size}
                     units={units}
                     minMm={0.5}
-                    maxMm={Math.min(body.outer.height / 3, 10)}
+                    maxMm={Math.min((body.shape === 'wedge' ? body.outer.heightBack : body.outer.height) / 3, 10)}
                     stepMm={0.5}
                     onChangeMm={(v) => setBottomEdgeBevel({ type: 'chamfer', size: v })}
                   />
@@ -1705,7 +1795,7 @@ export function InspectorPanel({
               </select>
             </label>
             {(() => {
-              const outerH = body.outer.height;
+              const outerH = body.shape === 'wedge' ? body.outer.heightBack : body.outer.height;
               const minSplit = body.wallThickness + 1;
               const maxSplit = outerH - body.wallThickness - 1;
               const pct = Math.round((lid.splitHeight / outerH) * 100);
@@ -1739,7 +1829,7 @@ export function InspectorPanel({
                 valueMm={lid.splitHeight}
                 units={units}
                 minMm={body.wallThickness + 1}
-                maxMm={body.outer.height - body.wallThickness - 1}
+                maxMm={(body.shape === 'wedge' ? body.outer.heightBack : body.outer.height) - body.wallThickness - 1}
                 onChangeMm={setSplitHeight}
               />
               <UnitNumberField
@@ -1808,6 +1898,9 @@ export function InspectorPanel({
                   >
                     <option value="round">Round</option>
                     <option value="square">Square</option>
+                    <option value="hex">Hexagonal</option>
+                    <option value="octagon">Octagonal</option>
+                    <option value="rounded-square">Rounded Square</option>
                   </select>
                 </label>
                 <label className="field">
@@ -1867,14 +1960,17 @@ export function InspectorPanel({
                       <span>Sloped foot (towards wall)</span>
                     </label>
                     {(lid.screw.footEnabled ?? true) && (
-                      <NumberField
-                        label="Foot angle (deg)"
-                        value={lid.screw.footAngleDeg ?? 45}
-                        min={15}
-                        max={75}
-                        step={1}
-                        onChange={setScrewFootAngleDeg}
-                      />
+                      <label className="field">
+                        <span>Foot angle</span>
+                        <select
+                          value={lid.screw.footAngleDeg ?? 45}
+                          onChange={(e) => setScrewFootAngleDeg(Number(e.target.value))}
+                        >
+                          <option value={40}>40° (Gentle slope)</option>
+                          <option value={45}>45° (Standard 1:1)</option>
+                          <option value={50}>50° (Steep slope)</option>
+                        </select>
+                      </label>
                     )}
                   </>
                 )}
@@ -2249,6 +2345,7 @@ export function InspectorPanel({
           </SectionCard>
         </>
       )}
+      </div>
     </div>
   );
 }

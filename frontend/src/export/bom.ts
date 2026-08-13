@@ -23,8 +23,9 @@ function csvEscape(value: string): string {
  */
 function screwLengthMm(project: EnclosureProject, screw: ScrewSpec): number {
   const { body } = project;
+  const outerH = body.shape === 'wedge' ? body.outer.heightBack : body.outer.height;
   const splitHeight = effectiveSplitHeight(body);
-  const lidThickness = Math.max(body.outer.height - splitHeight, 0.5);
+  const lidThickness = Math.max(outerH - splitHeight, 0.5);
   // Interior columns sit under the lid's top slab; exterior ones are solid to the top.
   const solidTop =
     screw.placement === 'exterior' ? lidThickness : Math.min(lidThickness, body.wallThickness);
@@ -39,7 +40,13 @@ function screwLengthMm(project: EnclosureProject, screw: ScrewSpec): number {
 
 function perimeterMm(project: EnclosureProject): number {
   const { body } = project;
-  return body.shape === 'box' ? 2 * (body.outer.length + body.outer.width) : Math.PI * body.outer.diameter;
+  if (body.shape === 'box' || body.shape === 'stadium' || body.shape === 'wedge') {
+    return 2 * (body.outer.length + body.outer.width);
+  }
+  if (body.shape === 'hexagon' || body.shape === 'octagon') {
+    return 2 * Math.PI * body.outer.radius;
+  }
+  return Math.PI * body.outer.diameter;
 }
 
 /**

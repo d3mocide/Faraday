@@ -1318,5 +1318,29 @@ editing old entries, so this stays a readable history. -->
 
 - **2026-08-13**: Screw Boss Column Foot Taper Fix & Custom Angle Controls:
   - Integrated `FootWalls` one-sided wall plane cuts (`primitives.ts`) with custom angle controls so foot renders cleanly as a wall-facing bracket slope on non-full-height columns.
-  - Added `footEnabled` (checkbox: `Sloped foot (towards wall)`) and `footAngleDeg` (numeric input: `Foot angle (deg)`, 15° to 75°, default 45°) to `ScrewSpec` in `types/project.ts`, `state/projectStore.ts`, and `InspectorPanel.tsx`.
-  - Oxlint clean (0 errors); `npm run build` verified.
+  - Added `footEnabled` (checkbox: `Sloped foot (towards wall)`) and `footAngleDeg` to `ScrewSpec` in `types/project.ts`, `state/projectStore.ts`, and `InspectorPanel.tsx`.
+  - Upgraded foot angle controls to clean, deterministic CAD presets: `40° (Gentle slope)`, `45° (Standard 1:1)`, and `50° (Steep slope)`.
+  - Expanded `ScrewColumnShape` with 3 new industrial CAD mounting profiles: `Hexagonal` (`hex`), `Octagonal` (`octagon`), and `Rounded Square` (`rounded-square`).
+  - 134 vitest tests passing; oxlint clean (0 errors); `npm run build` verified.
+
+- **2026-08-13**: 4 New Parametric Body Shapes (`Hexagon`, `Octagon`, `Stadium`, `Wedge` / Desktop Console):
+  - Added 4 new parametric body types to `BodyShape` discriminated union: `hexagon`, `octagon`, `stadium` (pill), and `wedge` (desktop console with slanted top lid).
+  - Expanded `Face` type with `f1`..`f6` (for Hexagon), `f1`..`f8` (for Octagon), and `slanted-top` (for Wedge).
+  - Implemented 2D offset shell primitives (`hexagonShell`, `octagonShell`, `stadiumShell`, `wedgeShell`) and polygon boss positioning functions (`hexagonBossPositions`, `octagonBossPositions`, `stadiumBossPositions`) in `csg/primitives.ts`.
+  - Corrected plane normal in `wedgeShell` (`-dz / len`) so the wedge sits flat on the ground plane (Z=0) with the slanted surface at the top console face.
+  - Implemented 3D face frame mapping (`toWorld`, `normalAt`, `faceSize`, `faceFromWorld`, `closestFace`) in `csg/faceFrame.ts` for all 6 enclosure body shapes.
+  - Wired full CSG shell extrusion and inner cavity hollowing in `csg/generateEnclosure.ts`.
+  - Updated UI dimension inputs and shape selection controls in `InspectorPanel.tsx`, `Viewport3D.tsx`, `printability.ts`, `boardSupport.ts`, `bom.ts`, and `lidSplit.ts`.
+  - 134 vitest unit tests passing; oxlint clean (0 errors); `npm run build` verified (2.03s).
+
+- **2026-08-13**: Micro Board Preset Sizing & Friction-Lip Lid Enhancements (`Seeed Studio XIAO`, `Heltec LoRa32`, `RTL-SDR`):
+  - Fixed micro-enclosure preset sizing in `presets/boards.ts` (`seeed-xiao`, `seeed-xiao-esp32`, `heltec-lora32-v3`, `rtl-sdr-dongle`):
+    - Enlarged outer enclosure dimensions ($42 \times 34 \times 16 \text{ mm}$ for XIAO) to accommodate board clearance, pin headers, and wiring.
+    - Set default `lidType: 'friction-lip'` for micro-controller presets to eliminate interior M3 corner screw boss overlap in small cavities.
+  - Added automated unit test assertion in `test/presetFeatures.test.ts` verifying that all presets maintain $\ge 10\text{ mm}$ of clear inner cavity span between corner bosses.
+  - 135 vitest unit tests passing; oxlint clean (0 errors); `npm run build` verified (618ms).
+
+- **2026-08-13**: ESP32 Cheap Yellow Display (`CYD 2.8" ESP32-2432S028`) Board & Case Preset:
+  - Added `CYD_MOUNT` ($91.5 \times 52\text{ mm}$ PCB outline, 4-corner $84.5 \times 45\text{ mm}$ pitch M3 standoff pattern) in `presets/boardMounts.ts`.
+  - Added `cyd-esp32-2432s028` preset in `presets/boards.ts` complete with top lid $60 \times 46\text{ mm}$ TFT touchscreen display bezel cutout, USB-C power port, MicroSD card slot, 3.5mm audio jack opening, and rear cooling vents.
+  - 137 vitest unit tests passing; oxlint clean (0 errors); `npm run build` verified (635ms).

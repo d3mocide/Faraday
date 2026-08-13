@@ -50,7 +50,10 @@ interface ProjectStore {
   setProjectName: (name: string) => void;
   setUnits: (units: Units) => void;
   setBodyShape: (shape: BodyShape) => void;
-  setBodyDimension: (key: 'length' | 'width' | 'height' | 'diameter', value: number) => void;
+  setBodyDimension: (
+    key: 'length' | 'width' | 'height' | 'diameter' | 'radius' | 'heightFront' | 'heightBack',
+    value: number,
+  ) => void;
   setWallThickness: (value: number) => void;
   setCornerStyleType: (type: CornerStyleType) => void;
   setCornerRadius: (radius: number) => void;
@@ -134,31 +137,38 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
     setBodyShape: (shape) =>
       mutate((p) => {
         const current = p.body;
-        if (shape === current.shape) return p;
-        const { wallThickness, lid } = current;
-        const height = current.outer.height;
-        const body: EnclosureBody =
-          shape === 'cylinder'
-            ? {
-                shape: 'cylinder',
-                outer: {
-                  diameter: current.shape === 'box' ? Math.min(current.outer.length, current.outer.width) : 50,
-                  height,
-                },
-                wallThickness,
-                lid,
-              }
-            : {
-                shape: 'box',
-                outer: {
-                  length: current.shape === 'cylinder' ? current.outer.diameter : 50,
-                  width: current.shape === 'cylinder' ? current.outer.diameter : 50,
-                  height,
-                },
-                wallThickness,
-                cornerStyle: { type: 'rounded', radius: 3 },
-                lid,
-              };
+        const height =
+          current.shape === 'wedge'
+            ? current.outer.heightBack
+            : current.shape === 'hexagon' || current.shape === 'octagon' || current.shape === 'cylinder'
+            ? current.outer.height
+            : current.outer.height;
+        const wallThickness = current.wallThickness;
+        const lid = current.lid;
+
+        let body: EnclosureBody;
+        if (shape === 'cylinder') {
+          const d = current.shape === 'box' || current.shape === 'stadium' || current.shape === 'wedge' ? Math.min(current.outer.length, current.outer.width) : (current.shape === 'hexagon' || current.shape === 'octagon' ? current.outer.radius * 2 : 50);
+          body = { shape: 'cylinder', outer: { diameter: d, height }, wallThickness, lid };
+        } else if (shape === 'hexagon') {
+          const r = current.shape === 'box' || current.shape === 'stadium' || current.shape === 'wedge' ? Math.min(current.outer.length, current.outer.width) / 2 : (current.shape === 'cylinder' ? current.outer.diameter / 2 : 30);
+          body = { shape: 'hexagon', outer: { radius: r, height }, wallThickness, lid };
+        } else if (shape === 'octagon') {
+          const r = current.shape === 'box' || current.shape === 'stadium' || current.shape === 'wedge' ? Math.min(current.outer.length, current.outer.width) / 2 : (current.shape === 'cylinder' ? current.outer.diameter / 2 : 30);
+          body = { shape: 'octagon', outer: { radius: r, height }, wallThickness, lid };
+        } else if (shape === 'stadium') {
+          const len = current.shape === 'box' || current.shape === 'wedge' ? current.outer.length : 80;
+          const wid = current.shape === 'box' || current.shape === 'wedge' ? current.outer.width : 40;
+          body = { shape: 'stadium', outer: { length: len, width: wid, height }, wallThickness, cornerStyle: { type: 'rounded', radius: 3 }, lid };
+        } else if (shape === 'wedge') {
+          const len = current.shape === 'box' || current.shape === 'stadium' ? current.outer.length : 70;
+          const wid = current.shape === 'box' || current.shape === 'stadium' ? current.outer.width : 50;
+          body = { shape: 'wedge', outer: { length: len, width: wid, heightFront: Math.max(height * 0.4, 15), heightBack: height }, wallThickness, cornerStyle: { type: 'rounded', radius: 3 }, lid };
+        } else {
+          const len = current.shape === 'stadium' || current.shape === 'wedge' ? current.outer.length : 60;
+          const wid = current.shape === 'stadium' || current.shape === 'wedge' ? current.outer.width : 60;
+          body = { shape: 'box', outer: { length: len, width: wid, height }, wallThickness, cornerStyle: { type: 'rounded', radius: 3 }, lid };
+        }
         return { ...p, body, features: [] };
       }),
 

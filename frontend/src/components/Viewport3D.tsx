@@ -39,11 +39,19 @@ function partDisplayOffset(
   body: EnclosureBody,
 ): [number, number, number] {
   if (lidView !== 'exploded') return [0, 0, 0];
-  if (id === 'lid') return [0, 0, explodeOffset(lidView, body.outer.height)];
+  if (id === 'lid')
+    return [0, 0, explodeOffset(lidView, body.shape === 'wedge' ? body.outer.heightBack : body.outer.height)];
   if (!face) return [0, 0, 0];
   const geom = bodyGeometry(body);
   const [nx, ny, nz] = faceFrame(face, geom).normalAt(0.5, 0.5);
-  const distance = Math.max(12, (geom.shape === 'box' ? Math.max(geom.length, geom.width) : geom.diameter) * 0.25);
+  const distance = Math.max(
+    12,
+    (geom.shape === 'box' || geom.shape === 'stadium' || geom.shape === 'wedge'
+      ? Math.max(geom.length, geom.width)
+      : geom.shape === 'hexagon' || geom.shape === 'octagon'
+      ? geom.radius * 2
+      : geom.diameter) * 0.25,
+  );
   return [nx * distance, ny * distance, nz * distance];
 }
 
@@ -498,7 +506,7 @@ export function Viewport3D({
       highlightMesh.visible = true;
       highlightMesh.geometry.dispose();
 
-      const outerHeight = geom.height;
+      const outerHeight = body.shape === 'wedge' ? body.outer.heightBack : body.outer.height;
       const isExploded = lidViewRef.current === 'exploded';
       const explodeZ = explodeOffset(lidViewRef.current, outerHeight);
       const split = effectiveSplitHeight(bodyRef.current);
@@ -534,20 +542,16 @@ export function Viewport3D({
         return;
       }
 
-      if (face === 'top' || face === 'bottom') {
-        const { length, width } = geom;
-        const z = face === 'top' ? outerHeight + 0.2 + explodeZ : -0.2;
+      if (face === 'top' || face === 'bottom' || face === 'slanted-top') {
+        const [length, width] = faceSize(face, geom);
+        const z = face === 'top' || face === 'slanted-top' ? outerHeight + 0.2 + explodeZ : -0.2;
         highlightMesh.position.set(0, 0, z);
         highlightMesh.geometry = new THREE.PlaneGeometry(length, width);
         highlightMesh.rotation.set(...(HIGHLIGHT_ROTATION[face] ?? [0, 0, 0]));
         return;
       }
 
-      // Side faces (front, back, left, right)
-      // Small vertical inset (EDGE_INSET on each end) keeps the plane's bottom/top edges from
-      // being exactly coplanar with Z=0 (the grid) and Z=outerHeight (the enclosure top face),
-      // which prevents a polygon-offset depth artifact that makes the bottom appear to dip below
-      // the floor from shallow viewing angles.
+      // Side faces
       const EDGE_INSET = 0.5;
       const sideH = isExploded ? (hitOnLid ? outerHeight - split : split) : outerHeight;
       const sv = Math.max(1, sideH - EDGE_INSET * 2);
@@ -557,7 +561,7 @@ export function Viewport3D({
           : EDGE_INSET + sv / 2
         : EDGE_INSET + sv / 2;
 
-      const su = face === 'front' || face === 'back' ? geom.length : geom.width;
+      const [su] = faceSize(face, geom);
       highlightMesh.geometry = new THREE.PlaneGeometry(su, sv);
 
       const frame = faceFrame(face, geom);
@@ -641,9 +645,10 @@ export function Viewport3D({
       if (dragState.current.type === 'corner') {
         raycaster.setFromCamera(pointer, camera);
         const geom = bodyGeometry(bodyRef.current);
+        const geomH = geom.shape === 'wedge' ? geom.heightBack : geom.height;
         groundPlane.setFromNormalAndCoplanarPoint(
           new THREE.Vector3(0, 0, 1),
-          new THREE.Vector3(0, 0, geom.height),
+          new THREE.Vector3(0, 0, geomH),
         );
         if (raycaster.ray.intersectPlane(groundPlane, scratchVec)) {
           if (geom.shape === 'cylinder') {
@@ -671,7 +676,7 @@ export function Viewport3D({
         raycaster.setFromCamera(pointer, camera);
         if (raycaster.ray.intersectPlane(heightDragPlane(), scratchVec)) {
           const body = bodyRef.current;
-          const outerH = body.shape === 'box' ? body.outer.height : body.outer.height;
+          const outerH = body.shape === 'wedge' ? body.outer.heightBack : body.outer.height;
           // Keep split within [wallThickness+1, outerHeight-wallThickness-1] so both lid and
           // body retain at least 1mm of interior room.
           const minSplit = body.wallThickness + 1;
@@ -1133,15 +1138,21 @@ export function Viewport3D({
     const cornerGeometry = new THREE.BoxGeometry(3, 3, 3);
     const cornerMaterial = new THREE.MeshStandardMaterial({ color: HANDLE_COLOR });
     const split = effectiveSplitHeight(body);
-    const effectiveHeight = lidView === 'hidden' ? split : body.outer.height;
+    const outerH = body.shape === 'wedge' ? body.outer.heightBack : body.outer.height;
+    const effectiveHeight = lidView === 'hidden' ? split : outerH;
 
     const positions: Array<[number, number]> =
-      body.shape === 'box'
+      body.shape === 'box' || body.shape === 'stadium' || body.shape === 'wedge'
         ? [
             [body.outer.length / 2, body.outer.width / 2],
             [body.outer.length / 2, -body.outer.width / 2],
             [-body.outer.length / 2, body.outer.width / 2],
             [-body.outer.length / 2, -body.outer.width / 2],
+          ]
+        : body.shape === 'hexagon' || body.shape === 'octagon'
+        ? [
+            [body.outer.radius, 0],
+            [-body.outer.radius, 0],
           ]
         : [[body.outer.diameter / 2, 0]];
 
@@ -1169,8 +1180,16 @@ export function Viewport3D({
       const splitMat = new THREE.MeshStandardMaterial({ color: SPLIT_COLOR });
       const splitHandle = new THREE.Mesh(splitGeo, splitMat);
       // Place it at the right-front corner of the footprint so it's always visible and reachable.
-      const edgeX = body.shape === 'box' ? body.outer.length / 2 + 3 : body.outer.diameter / 2 + 3;
-      const edgeY = body.shape === 'box' ? -body.outer.width / 2 : 0;
+      const edgeX =
+        body.shape === 'box' || body.shape === 'stadium' || body.shape === 'wedge'
+          ? body.outer.length / 2 + 3
+          : body.shape === 'hexagon' || body.shape === 'octagon'
+          ? body.outer.radius + 3
+          : body.outer.diameter / 2 + 3;
+      const edgeY =
+        body.shape === 'box' || body.shape === 'stadium' || body.shape === 'wedge'
+          ? -body.outer.width / 2
+          : 0;
       splitHandle.position.set(edgeX, edgeY, split);
       splitHandle.userData.handleType = 'split';
       group.add(splitHandle);

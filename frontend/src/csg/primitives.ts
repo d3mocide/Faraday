@@ -124,6 +124,92 @@ export function cylinderZ(
   return wasm.Manifold.cylinder(height, r, r).translate(0, 0, zBottom);
 }
 
+export function hexagonShell(wasm: ManifoldToplevel, radius: number, height: number): Manifold {
+  return wasm.CrossSection.circle(radius, 6).extrude(height);
+}
+
+export function octagonShell(wasm: ManifoldToplevel, radius: number, height: number): Manifold {
+  return wasm.CrossSection.circle(radius, 8).extrude(height);
+}
+
+export function stadiumShell(
+  wasm: ManifoldToplevel,
+  length: number,
+  width: number,
+  height: number,
+): Manifold {
+  const r = width / 2;
+  const innerLen = Math.max(length - width, 0.1);
+  const baseCross = wasm.CrossSection.square([innerLen, 0.01], true).offset(r, 'Round');
+  return baseCross.extrude(height);
+}
+
+export function wedgeShell(
+  wasm: ManifoldToplevel,
+  length: number,
+  width: number,
+  heightFront: number,
+  heightBack: number,
+  cornerStyle: CornerStyle,
+): Manifold {
+  const box = boxShell(wasm, length, width, heightBack + 10, cornerStyle);
+  const dy = width;
+  const dz = heightBack - heightFront;
+  const len = Math.hypot(dy, dz);
+  const ny = -dz / len;
+  const nz = dy / len;
+  const offset = ny * (-width / 2) + nz * heightFront;
+  const [wedge] = box.splitByPlane([0, ny, nz], offset);
+  return wedge;
+}
+
+export function hexagonBossPositions(
+  radius: number,
+  bossRadius: number,
+  insetOverride?: number,
+): Array<[number, number]> {
+  const inset = Math.max(insetOverride ?? bossRadius + 1, 0);
+  const r = Math.max(radius - inset, 1);
+  const positions: Array<[number, number]> = [];
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI / 3) * i;
+    positions.push([r * Math.cos(angle), r * Math.sin(angle)]);
+  }
+  return positions;
+}
+
+export function octagonBossPositions(
+  radius: number,
+  bossRadius: number,
+  insetOverride?: number,
+): Array<[number, number]> {
+  const inset = Math.max(insetOverride ?? bossRadius + 1, 0);
+  const r = Math.max(radius - inset, 1);
+  const positions: Array<[number, number]> = [];
+  for (let i = 0; i < 8; i++) {
+    const angle = (Math.PI / 4) * i + Math.PI / 8;
+    positions.push([r * Math.cos(angle), r * Math.sin(angle)]);
+  }
+  return positions;
+}
+
+export function stadiumBossPositions(
+  length: number,
+  width: number,
+  bossRadius: number,
+  insetOverride?: number,
+): Array<[number, number]> {
+  const inset = Math.max(insetOverride ?? bossRadius + 1, 0);
+  const halfLen = Math.max(length / 2 - inset, 0);
+  const halfWid = Math.max(width / 2 - inset, 0);
+  return [
+    [halfLen, halfWid],
+    [halfLen, -halfWid],
+    [-halfLen, halfWid],
+    [-halfLen, -halfWid],
+  ];
+}
+
 interface ScrewBossLidParams {
   innerLength: number; // footprint of the base cavity (length - 2*wallThickness)
   innerWidth: number;
@@ -206,7 +292,7 @@ function bossPositionsCircular(
   return positions;
 }
 
-/** A screw column: a round or square post spanning [zBottom, zBottom + height] on the Z axis. */
+/** A screw column: a round, square, hex, octagon, or rounded-square post spanning [zBottom, zBottom + height] on the Z axis. */
 function columnSolid(
   wasm: ManifoldToplevel,
   shape: ScrewColumnShape,
@@ -214,9 +300,25 @@ function columnSolid(
   height: number,
   zBottom: number,
 ): Manifold {
-  return shape === 'square'
-    ? wasm.Manifold.cube([size, size, height], false).translate(-size / 2, -size / 2, zBottom)
-    : cylinderZ(wasm, size, height, zBottom);
+  const radius = size / 2;
+  if (shape === 'square') {
+    return wasm.Manifold.cube([size, size, height], false).translate(-radius, -radius, zBottom);
+  }
+  if (shape === 'rounded-square') {
+    const r = radius * 0.35;
+    const inner = Math.max(size - 2 * r, 0.1);
+    return wasm.CrossSection.square([inner, inner], true)
+      .offset(r, 'Round')
+      .extrude(height)
+      .translate(0, 0, zBottom);
+  }
+  if (shape === 'hex') {
+    return wasm.CrossSection.circle(radius, 6).extrude(height).translate(0, 0, zBottom);
+  }
+  if (shape === 'octagon') {
+    return wasm.CrossSection.circle(radius, 8).extrude(height).translate(0, 0, zBottom);
+  }
+  return cylinderZ(wasm, size, height, zBottom);
 }
 
 
@@ -310,14 +412,15 @@ function footSlopeSolid(
   screw: ScrewSpec,
 ): Manifold {
   const angleDeg = Math.min(Math.max(screw.footAngleDeg ?? 45, 15), 75);
-  // Keep the half-space `s - z <= extent - zBottom`, where s is distance along the anchor.
-  const offset = extent + FOOT_SLOPE_CLEARANCE - zBottom;
+  const rad = (angleDeg * Math.PI) / 180;
+  const k = Math.tan(rad);
+  const offset = extent + FOOT_SLOPE_CLEARANCE - zBottom / k;
   const big = 200 + 4 * (extent + zBottom + Math.abs(offset));
   const yawDeg = (Math.atan2(anchor.dy, anchor.dx) * 180) / Math.PI;
   return wasm.Manifold.cube([big, big, big], true)
     .translate(-big / 2, 0, 0)
     .rotate(0, angleDeg, 0)
-    .translate(offset / 2, 0, -offset / 2)
+    .translate(offset / 2, 0, (-offset * k) / 2)
     .rotate(0, 0, yawDeg);
 }
 

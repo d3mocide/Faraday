@@ -154,6 +154,19 @@ describe('board preset IO layouts', () => {
     });
   }
 
+  it('all board presets have non-overlapping corner bosses and printable inner cavities', () => {
+    for (const preset of BOARD_PRESETS) {
+      const { outer, wallThickness } = preset.body;
+      const innerLength = outer.length - 2 * wallThickness;
+      const innerWidth = outer.width - 2 * wallThickness;
+      const bossDiameter = 6;
+      if ((preset.body.lidType ?? 'screw-boss') === 'screw-boss' && preset.body.screwPlacement !== 'exterior') {
+        expect(innerLength - 2 * bossDiameter, `${preset.id} clear inner length`).toBeGreaterThanOrEqual(10);
+        expect(innerWidth - 2 * bossDiameter, `${preset.id} clear inner width`).toBeGreaterThanOrEqual(10);
+      }
+    }
+  });
+
   for (const preset of BOARD_PRESETS.filter((p) => p.boardMount || (p.io && p.io.length > 0))) {
     it(`${preset.id}: full preset generates watertight parts`, () => {
       const result = generateEnclosure(wasm, projectFromPreset(preset), 'export');

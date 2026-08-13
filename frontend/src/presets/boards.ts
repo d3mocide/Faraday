@@ -14,6 +14,7 @@ import {
   ARDUINO_UNO_MOUNT,
   BEAGLEBONE_BLACK_MOUNT,
   CM4_IO_MOUNT,
+  CYD_MOUNT,
   FEATHER_MOUNT,
   PI_FULL_SIZE_MOUNT,
   PI_ZERO_MOUNT,
@@ -122,13 +123,13 @@ export const BOARD_PRESETS: BoardPreset[] = [
     id: 'rtl-sdr-dongle',
     label: 'RTL-SDR Dongle',
     notes: 'Fits a bare RTL-SDR V3-style PCB with room for the USB connector and an SMA bulkhead.',
-    body: { outer: { length: 70, width: 35, height: 20 }, wallThickness: 2, splitHeight: 12 },
+    body: { outer: { length: 85, width: 46, height: 22 }, wallThickness: 2, splitHeight: 14 },
   },
   {
     id: 'heltec-lora32-v3',
     label: 'Heltec WiFi LoRa 32 V3',
     notes: 'Fits the board plus its OLED; leaves room for a USB-C cutout and an antenna passthrough.',
-    body: { outer: { length: 56, width: 34, height: 16 }, wallThickness: 2, splitHeight: 10 },
+    body: { outer: { length: 70, width: 44, height: 18 }, wallThickness: 2, splitHeight: 11, lidType: 'friction-lip' },
   },
   {
     id: 'lilygo-t-beam',
@@ -157,16 +158,47 @@ export const BOARD_PRESETS: BoardPreset[] = [
     id: 'seeed-xiao',
     label: 'Seeed Studio XIAO (SAMD21/RP2040/nRF52840)',
     notes:
-      'These XIAO variants share the same ~20x17.5mm board footprint; fits any of them with room for the USB-C port and a couple of pin headers. No mounting holes on any XIAO board -- the family is designed to plug into shields via edge-castellated pins, not to be screwed down.',
-    body: { outer: { length: 30, width: 24, height: 14 }, wallThickness: 2, splitHeight: 9 },
+      'These XIAO variants share the same ~20x17.5mm board footprint; sized with room for the USB-C port, wiring, and pin headers, using a friction-lip lid so corner screw bosses do not crush the micro cavity.',
+    body: { outer: { length: 42, width: 34, height: 16 }, wallThickness: 2, splitHeight: 10, lidType: 'friction-lip' },
   },
   {
     id: 'seeed-xiao-esp32',
     label: 'Seeed Studio XIAO ESP32 (C3/S3/C6)',
     notes:
-      "All three XIAO ESP32 variants share the same ~21x17.8mm footprint and a USB-C port centered on a short edge (position confirmed from Seeed's official pinout diagrams; exact centerline isn't dimensioned in a published drawing, so it's placed centered as a safe default). Like every XIAO board, there are no mounting holes -- dimension + USB-C cutout only. All three variants also carry an external U.FL/IPEX WiFi/BT antenna connector on the board (position not officially dimensioned) -- not cut here since routing it outside the case is optional and user-specific; add a small passthrough by hand if you need one.",
-    body: { outer: { length: 30, width: 24, height: 15 }, wallThickness: 2, splitHeight: 9 },
+      "All three XIAO ESP32 variants share the same ~21x17.8mm footprint and a USB-C port centered on a short edge. Sized with ample clearance for pin headers and wiring, using a friction-lip lid so screw bosses do not crowd the micro cavity.",
+    body: { outer: { length: 42, width: 34, height: 16 }, wallThickness: 2, splitHeight: 10, lidType: 'friction-lip' },
     io: [{ connectorId: 'usb-c-panel', face: 'left', alongMm: 0, aboveBoardMm: 2.5 }],
+  },
+  {
+    id: 'cyd-esp32-2432s028',
+    label: 'ESP32 Cheap Yellow Display (CYD 2.8")',
+    notes:
+      'Complete enclosure for the ESP32-2432S028 (Cheap Yellow Display): includes official 91.5x52mm M3 4-corner board mount, top lid touchscreen display window (60x46mm) for the 2.8" LCD, USB-C power cutout, microSD card slot, 3.5mm audio jack, and rear cooling vents.',
+    body: {
+      outer: { length: 118, width: 78, height: 26 },
+      wallThickness: 2.4,
+      splitHeight: 18,
+      lidType: 'screw-boss',
+    },
+    boardMount: CYD_MOUNT,
+    io: [
+      {
+        custom: { shape: 'rect', width: 60, height: 46 },
+        face: 'top',
+        alongMm: -4,
+        acrossMm: 0,
+        aboveBoardMm: 0,
+      },
+      { connectorId: 'usb-c-panel', face: 'left', alongMm: -12, aboveBoardMm: 2.0 },
+      { connectorId: 'microsd-slot', face: 'left', alongMm: 14, aboveBoardMm: 1.0 },
+      { connectorId: 'audio-trs-3.5mm', face: 'right', alongMm: -10, aboveBoardMm: 3.0 },
+      {
+        vent: { pattern: 'slots', areaWidth: 40, areaHeight: 8, slotWidth: 3, slotSpacing: 6 },
+        face: 'back',
+        alongMm: 0,
+        aboveBoardMm: 6.0,
+      },
+    ],
   },
   {
     id: 'raspberry-pi-3',
