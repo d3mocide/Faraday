@@ -2,11 +2,23 @@ export type Face = 'top' | 'bottom' | 'front' | 'back' | 'left' | 'right' | 'sid
 
 export type Units = 'mm' | 'in';
 
-export type CornerStyleType = 'sharp' | 'rounded' | 'chamfered';
+export type CornerStyleType = 'sharp' | 'rounded' | 'chamfered' | 'faceted' | 'double-chamfer';
 
 export interface CornerStyle {
   type: CornerStyleType;
   radius: number; // mm, ignored if 'sharp'
+}
+
+export type EdgeBevelType = 'none' | 'chamfer';
+
+export interface EdgeBevelSpec {
+  type: EdgeBevelType;
+  size: number; // mm depth/width of the 45-degree rim chamfer
+}
+
+export interface TessellationSpec {
+  liveSegments: number; // e.g. 16..128, default 32
+  exportSegments: number; // e.g. 32..256, default 64
 }
 
 export type ScrewSize = 'M2' | 'M2.5' | 'M3' | 'M4';
@@ -45,6 +57,10 @@ export interface ScrewSpec {
    * csg/primitives.ts. Lower values pull bosses toward the case's outer edge, which is also the
    * lever for keeping them clear of a board-mount sitting in the middle of the cavity. */
   edgeInset?: number;
+  /** Controls whether a shortened column has a 45° (or custom angle) sloped foot towards the wall. Default: true. */
+  footEnabled?: boolean;
+  /** Angle of the sloped foot in degrees (15..75). Default: 45. */
+  footAngleDeg?: number;
 }
 
 export type LidType = 'friction-lip' | 'screw-boss' | 'snap-fit';
@@ -100,6 +116,8 @@ export interface BoxBody {
   outer: { length: number; width: number; height: number }; // mm
   wallThickness: number; // mm
   cornerStyle: CornerStyle;
+  topEdgeBevel?: EdgeBevelSpec;
+  bottomEdgeBevel?: EdgeBevelSpec;
   lid: LidSpec;
   panels?: PanelSpec; // absent = every wall is part of the base, the original single-piece body
 }
@@ -111,6 +129,8 @@ export interface CylinderBody {
   shape: 'cylinder';
   outer: { diameter: number; height: number }; // mm
   wallThickness: number; // mm
+  topEdgeBevel?: EdgeBevelSpec;
+  bottomEdgeBevel?: EdgeBevelSpec;
   lid: LidSpec;
 }
 
@@ -249,6 +269,15 @@ export interface SupportPadSpec {
   axis?: 'u' | 'v';
 }
 
+export interface GripRibsSpec {
+  count: number; // e.g. 5 parallel slots
+  depth: number; // mm cut into wall
+  width: number; // mm slot width
+  spacing: number; // mm pitch between slots
+  orientation: 'horizontal' | 'vertical';
+  span: number; // mm length of each slot along face
+}
+
 export type FeatureType =
   | 'connector-cutout'
   | 'standoff'
@@ -257,7 +286,8 @@ export type FeatureType =
   | 'custom-hole'
   | 'board-mount'
   | 'external-mount'
-  | 'fan-mount';
+  | 'fan-mount'
+  | 'grip-ribs';
 
 /** Per-placement size override for a connector cutout. Fields fall back to the library entry,
  * so overriding one dimension doesn't freeze the others. */
@@ -283,6 +313,7 @@ export interface Feature {
   mount?: ExternalMountSpec; // for 'external-mount'
   fan?: FanMountSpec; // for 'fan-mount'
   pad?: SupportPadSpec; // for 'support-pad'
+  ribs?: GripRibsSpec; // for 'grip-ribs'
   hidden?: boolean; // when true, feature is hidden from CSG generation and 3D preview
   locked?: boolean; // when true, feature is locked against 3D drag gestures
 }
@@ -315,6 +346,7 @@ export interface EnclosureProject {
   units: Units; // display preference only, geometry is always canonical mm
   createdAt: string;
   updatedAt: string;
+  tessellation?: TessellationSpec;
   body: EnclosureBody;
   features: Feature[];
 }

@@ -8,6 +8,7 @@ export function createDefaultProject(): EnclosureProject {
     units: 'mm',
     createdAt: now,
     updatedAt: now,
+    tessellation: { liveSegments: 32, exportSegments: 64 },
     body: {
       shape: 'box',
       outer: { length: 80, width: 50, height: 30 },

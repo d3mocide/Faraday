@@ -17,6 +17,7 @@ import { meshDataToBufferGeometry } from '../csg/meshToBufferGeometry';
 import { featurePart, type PartId } from '../csg/parts';
 import { snapValue } from '../csg/snapping';
 import type { EnclosureBody, Face, Feature, PanelFace } from '../types/project';
+import type { CaliperMeasurement } from './CaliperTool';
 
 export type BodyResizePatch = Partial<{ length: number; width: number; height: number; diameter: number; splitHeight: number }>;
 
@@ -46,6 +47,16 @@ function partDisplayOffset(
   return [nx * distance, ny * distance, nz * distance];
 }
 
+export type MaterialPreset = 'default' | 'tactical-black' | 'gunmetal' | 'olive-drab' | 'radio-orange';
+
+export const MATERIAL_PRESET_CONFIGS: Record<MaterialPreset, { base: number; lid: number; panel: number; roughness: number; metalness: number }> = {
+  default: { base: 0x9aa5b1, lid: 0x4fb3a9, panel: 0xc08a3e, roughness: 0.6, metalness: 0.05 },
+  'tactical-black': { base: 0x22252a, lid: 0x343942, panel: 0x484f5c, roughness: 0.8, metalness: 0.1 },
+  gunmetal: { base: 0x4a525d, lid: 0x626c7a, panel: 0x828e9e, roughness: 0.35, metalness: 0.5 },
+  'olive-drab': { base: 0x4b5338, lid: 0x616a49, panel: 0x7c875d, roughness: 0.75, metalness: 0.05 },
+  'radio-orange': { base: 0xe66025, lid: 0x2b2e34, panel: 0xf58142, roughness: 0.45, metalness: 0.1 },
+};
+
 const PART_COLORS: Record<PartKind, number> = {
   base: 0x9aa5b1,
   lid: 0x4fb3a9,
@@ -69,6 +80,9 @@ interface Viewport3DProps {
   showGrid?: boolean;
   showGhosts?: boolean;
   showMarkers?: boolean;
+  showEdgeLines?: boolean;
+  shadingMode?: 'smooth' | 'flat';
+  materialPreset?: MaterialPreset;
   placementArmed: boolean;
   onPlaceFeature: (face: Face, u: number, v: number) => void;
   selectedFeatureId: string | null;
@@ -78,6 +92,9 @@ interface Viewport3DProps {
   previewTarget: PreviewTarget | null;
   /** Features the design checks flagged -- drawn with a warning halo round their marker. */
   flaggedFeatureIds?: ReadonlySet<string>;
+  caliperActive?: boolean;
+  onMeasure?: (measurement: CaliperMeasurement | null) => void;
+  caliperMeasurement?: CaliperMeasurement | null;
 }
 
 const FEATURE_MARKER_COLOR = 0xffb454;
@@ -105,6 +122,9 @@ export function Viewport3D({
   showGrid = true,
   showGhosts = true,
   showMarkers = true,
+  showEdgeLines = true,
+  shadingMode = 'smooth',
+  materialPreset = 'default',
   placementArmed,
   onPlaceFeature,
   selectedFeatureId,
@@ -113,6 +133,9 @@ export function Viewport3D({
   onResizeBody,
   previewTarget,
   flaggedFeatureIds,
+  caliperActive = false,
+  onMeasure,
+  caliperMeasurement,
 }: Viewport3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -138,7 +161,16 @@ export function Viewport3D({
   const lidViewRef = useRef(lidView);
   const showMarkersRef = useRef(showMarkers);
   const placementArmedRef = useRef(placementArmed);
-  const callbacksRef = useRef({ onPlaceFeature, onSelectFeature, onUpdateFeature, onResizeBody });
+  const caliperActiveRef = useRef(caliperActive);
+  const caliperP1Ref = useRef<[number, number, number] | null>(null);
+  const caliperP2Ref = useRef<[number, number, number] | null>(null);
+  const caliperGroupRef = useRef<THREE.Group | null>(null);
+
+  useEffect(() => {
+    caliperActiveRef.current = caliperActive;
+  }, [caliperActive]);
+
+  const callbacksRef = useRef({ onPlaceFeature, onSelectFeature, onUpdateFeature, onResizeBody, onMeasure });
 
   useEffect(() => {
     bodyRef.current = body;
@@ -153,8 +185,8 @@ export function Viewport3D({
     placementArmedRef.current = placementArmed;
   }, [placementArmed]);
   useEffect(() => {
-    callbacksRef.current = { onPlaceFeature, onSelectFeature, onUpdateFeature, onResizeBody };
-  }, [onPlaceFeature, onSelectFeature, onUpdateFeature, onResizeBody]);
+    callbacksRef.current = { onPlaceFeature, onSelectFeature, onUpdateFeature, onResizeBody, onMeasure };
+  }, [onPlaceFeature, onSelectFeature, onUpdateFeature, onResizeBody, onMeasure]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -285,6 +317,10 @@ export function Viewport3D({
     const ghostBoardGroup = new THREE.Group();
     scene.add(ghostBoardGroup);
     ghostGroupRef.current = ghostBoardGroup;
+
+    const caliperGroup = new THREE.Group();
+    scene.add(caliperGroup);
+    caliperGroupRef.current = caliperGroup;
 
     const handleGroup = new THREE.Group();
     scene.add(handleGroup);
@@ -533,6 +569,34 @@ export function Viewport3D({
 
     const handlePointerDown = (event: PointerEvent) => {
       downPos = { x: event.clientX, y: event.clientY };
+
+      if (caliperActiveRef.current) {
+        toNDC(event);
+        raycaster.setFromCamera(pointer, camera);
+        const hit = raycaster.intersectObjects(raycastTargets(), false)[0];
+        if (hit) {
+          const pt: [number, number, number] = [
+            Number(hit.point.x.toFixed(2)),
+            Number(hit.point.y.toFixed(2)),
+            Number(hit.point.z.toFixed(2)),
+          ];
+          if (!caliperP1Ref.current || (caliperP1Ref.current && caliperP2Ref.current)) {
+            caliperP1Ref.current = pt;
+            caliperP2Ref.current = null;
+            callbacksRef.current.onMeasure?.(null);
+          } else {
+            caliperP2Ref.current = pt;
+            const p1 = caliperP1Ref.current;
+            const p2 = pt;
+            const dxMm = Number(Math.abs(p2[0] - p1[0]).toFixed(2));
+            const dyMm = Number(Math.abs(p2[1] - p1[1]).toFixed(2));
+            const dzMm = Number(Math.abs(p2[2] - p1[2]).toFixed(2));
+            const distanceMm = Number(Math.hypot(p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]).toFixed(2));
+            callbacksRef.current.onMeasure?.({ p1, p2, distanceMm, dxMm, dyMm, dzMm });
+          }
+        }
+        return;
+      }
 
       if (placementArmedRef.current) return; // click-to-place is resolved on pointerup, unchanged
 
@@ -808,6 +872,41 @@ export function Viewport3D({
     }
   }, [lidView, body, meshes]);
 
+  // Material preset, shading mode (flat vs smooth) and CAD edge lines overlay effect
+  useEffect(() => {
+    const config = MATERIAL_PRESET_CONFIGS[materialPreset];
+    for (const [id, mesh] of partMeshesRef.current) {
+      const kind: PartKind = id === 'base' ? 'base' : id === 'lid' ? 'lid' : 'panel';
+      const baseColor = kind === 'base' ? config.base : kind === 'lid' ? config.lid : config.panel;
+      mesh.material.color.setHex(baseColor);
+      mesh.material.roughness = config.roughness;
+      mesh.material.metalness = config.metalness;
+      mesh.material.flatShading = shadingMode === 'flat';
+      mesh.material.needsUpdate = true;
+
+      // Handle CAD Edge Lines
+      let line = mesh.getObjectByName('edgeLines') as THREE.LineSegments | undefined;
+      if (!showEdgeLines) {
+        if (line) {
+          mesh.remove(line);
+          line.geometry.dispose();
+          (line.material as THREE.Material).dispose();
+        }
+      } else {
+        if (!line) {
+          const edges = new THREE.EdgesGeometry(mesh.geometry, 25);
+          const lineMat = new THREE.LineBasicMaterial({ color: 0x111317, linewidth: 1.5 });
+          line = new THREE.LineSegments(edges, lineMat);
+          line.name = 'edgeLines';
+          mesh.add(line);
+        } else {
+          line.geometry.dispose();
+          line.geometry = new THREE.EdgesGeometry(mesh.geometry, 25);
+        }
+      }
+    }
+  }, [materialPreset, shadingMode, showEdgeLines, meshes]);
+
   // Markers showing where features are already placed; the selected one is highlighted.
   useEffect(() => {
     const group = markerGroupRef.current;
@@ -911,6 +1010,45 @@ export function Viewport3D({
     marker.position.set(x + nx * 1.5, y + ny * 1.5, z + nz * 1.5);
     marker.visible = true;
   }, [previewTarget, body]);
+
+  // 3D Caliper Measurement Line & Endpoint Spheres Visualizer
+  useEffect(() => {
+    const group = caliperGroupRef.current;
+    if (!group) return;
+    for (const child of [...group.children]) {
+      group.remove(child);
+      if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
+        child.geometry.dispose();
+        if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
+        else child.material.dispose();
+      }
+    }
+
+    if (!caliperActive || !caliperMeasurement) return;
+
+    const { p1, p2 } = caliperMeasurement;
+    const v1 = new THREE.Vector3(...p1);
+    const v2 = new THREE.Vector3(...p2);
+
+    const lineGeo = new THREE.BufferGeometry().setFromPoints([v1, v2]);
+    const lineMat = new THREE.LineBasicMaterial({ color: 0xffd700, linewidth: 3, depthTest: false });
+    const line = new THREE.Line(lineGeo, lineMat);
+    line.renderOrder = 999;
+    group.add(line);
+
+    const sphereGeo = new THREE.SphereGeometry(1.5, 16, 16);
+    const sphereMat = new THREE.MeshBasicMaterial({ color: 0xffd700, depthTest: false });
+
+    const m1 = new THREE.Mesh(sphereGeo, sphereMat);
+    m1.position.copy(v1);
+    m1.renderOrder = 1000;
+    group.add(m1);
+
+    const m2 = new THREE.Mesh(sphereGeo, sphereMat);
+    m2.position.copy(v2);
+    m2.renderOrder = 1000;
+    group.add(m2);
+  }, [caliperActive, caliperMeasurement]);
 
   // Ghost parts: the hardware the case is built around, drawn as translucent volumes -- a PCB
   // floating on its standoffs for every board-mount, and the body of every fan hanging off the

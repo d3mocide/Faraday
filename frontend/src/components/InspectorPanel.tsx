@@ -1,4 +1,5 @@
 import { useState, type ChangeEvent, type ReactNode } from 'react';
+import { PrintabilityCard } from './PrintabilityCard';
 import { findConnector } from '../connectors/library';
 import { useProjectStore } from '../state/projectStore';
 import { displayStep, displayToMm, mmToDisplay, roundForDisplay, unitLabel } from '../state/units';
@@ -10,7 +11,7 @@ import { bodyGeometry, faceSize } from '../csg/faceFrame';
 import { effectiveSplitHeight } from '../csg/lidSplit';
 import { FAN_PRESETS, fanSpecFor } from '../csg/fanLibrary';
 import { bossRadiusFor } from '../csg/primitives';
-import type { LidView, PreviewTarget } from './Viewport3D';
+import type { MaterialPreset, PreviewTarget } from './Viewport3D';
 import type {
   BoardMountSpec,
   BodyShape,
@@ -21,6 +22,7 @@ import type {
   Feature,
   ExternalMountSpec,
   FanMountSpec,
+  GripRibsSpec,
   LidType,
   PanelFace,
   ScrewCount,
@@ -79,8 +81,8 @@ function SectionCard({
   );
 }
 
-function FieldsGrid2Col({ children }: { children: ReactNode }) {
-  return <div className="fields-grid-2col">{children}</div>;
+function FieldsGrid2Col({ children, style }: { children: ReactNode; style?: React.CSSProperties }) {
+  return <div className="fields-grid-2col" style={style}>{children}</div>;
 }
 
 function NumberField({
@@ -856,6 +858,85 @@ function SupportPadFields({
   );
 }
 
+function GripRibsFields({
+  feature,
+  units,
+  onUpdateFeature,
+}: {
+  feature: Feature;
+  units: Units;
+  onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
+}) {
+  const ribs = feature.ribs ?? {
+    count: 5,
+    depth: 1.2,
+    width: 2.0,
+    spacing: 4.0,
+    orientation: 'horizontal',
+    span: 30,
+  };
+  const setRibs = (patch: Partial<GripRibsSpec>) =>
+    onUpdateFeature(feature.id, { ribs: { ...ribs, ...patch } });
+
+  return (
+    <div className="inspector-subgroup">
+      <div className="subgroup-title">Tactical Grip Ribs</div>
+      <FieldsGrid2Col>
+        <NumberField
+          label="Rib count"
+          value={ribs.count}
+          min={1}
+          max={15}
+          step={1}
+          onChange={(v) => setRibs({ count: Math.max(Math.round(v), 1) })}
+        />
+        <label className="field">
+          <span>Orientation</span>
+          <select
+            value={ribs.orientation}
+            onChange={(e) => setRibs({ orientation: e.target.value as GripRibsSpec['orientation'] })}
+          >
+            <option value="horizontal">Horizontal</option>
+            <option value="vertical">Vertical</option>
+          </select>
+        </label>
+        <UnitNumberField
+          label="Slot depth"
+          valueMm={ribs.depth}
+          units={units}
+          minMm={0.4}
+          stepMm={0.1}
+          onChangeMm={(v) => setRibs({ depth: v })}
+        />
+        <UnitNumberField
+          label="Slot width"
+          valueMm={ribs.width}
+          units={units}
+          minMm={0.5}
+          stepMm={0.1}
+          onChangeMm={(v) => setRibs({ width: v })}
+        />
+        <UnitNumberField
+          label="Pitch (spacing)"
+          valueMm={ribs.spacing}
+          units={units}
+          minMm={1}
+          stepMm={0.1}
+          onChangeMm={(v) => setRibs({ spacing: v })}
+        />
+        <UnitNumberField
+          label="Slot length"
+          valueMm={ribs.span}
+          units={units}
+          minMm={5}
+          stepMm={1}
+          onChangeMm={(v) => setRibs({ span: v })}
+        />
+      </FieldsGrid2Col>
+    </div>
+  );
+}
+
 function AlignMirrorAxisRow({
   feature,
   axis,
@@ -1041,17 +1122,11 @@ function SvgTrashIcon() {
 
 interface InspectorPanelProps {
   selectedFeatureId: string | null;
-  lidView: LidView;
-  onSetLidView: (view: LidView) => void;
-  showHandles: boolean;
-  onToggleShowHandles: (show: boolean) => void;
-  showGrid: boolean;
-  onToggleShowGrid: (show: boolean) => void;
-  showGhosts: boolean;
   findings: DesignCheckFinding[];
-  onToggleShowGhosts: (show: boolean) => void;
-  showMarkers: boolean;
-  onToggleShowMarkers: (show: boolean) => void;
+  shadingMode?: 'smooth' | 'flat';
+  onChangeShadingMode?: (mode: 'smooth' | 'flat') => void;
+  materialPreset?: MaterialPreset;
+  onChangeMaterialPreset?: (preset: MaterialPreset) => void;
   onSelectFeature: (id: string | null) => void;
   onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
   onRemoveFeature: (id: string) => void;
@@ -1061,29 +1136,43 @@ interface InspectorPanelProps {
 
 export function InspectorPanel({
   selectedFeatureId,
-  lidView,
-  onSetLidView,
-  showHandles,
-  onToggleShowHandles,
-  showGrid,
-  onToggleShowGrid,
-  showGhosts,
   findings,
-  onToggleShowGhosts,
-  showMarkers,
-  onToggleShowMarkers,
+  shadingMode = 'smooth',
+  onChangeShadingMode,
+  materialPreset = 'default',
+  onChangeMaterialPreset,
   onSelectFeature,
   onUpdateFeature,
   onRemoveFeature,
   onAddFeature,
   onPreviewTarget,
 }: InspectorPanelProps) {
+  const [activeTab, setActiveTab] = useState<'structure' | 'layers' | 'studio'>('structure');
+  const [layerSearch, setLayerSearch] = useState('');
+  const [expandedFaces, setExpandedFaces] = useState<Record<string, boolean>>({
+    bottom: true,
+    front: true,
+    back: true,
+    left: true,
+    right: true,
+    top: true,
+    side: true,
+  });
+
+  const toggleFaceExpanded = (face: string) => {
+    setExpandedFaces((prev: Record<string, boolean>) => ({ ...prev, [face]: !prev[face] }));
+  };
+
   const project = useProjectStore((s) => s.project);
   const setBodyShape = useProjectStore((s) => s.setBodyShape);
   const setBodyDimension = useProjectStore((s) => s.setBodyDimension);
   const setWallThickness = useProjectStore((s) => s.setWallThickness);
   const setCornerStyleType = useProjectStore((s) => s.setCornerStyleType);
   const setCornerRadius = useProjectStore((s) => s.setCornerRadius);
+  const setLiveSegments = useProjectStore((s) => s.setLiveSegments);
+  const setExportSegments = useProjectStore((s) => s.setExportSegments);
+  const setTopEdgeBevel = useProjectStore((s) => s.setTopEdgeBevel);
+  const setBottomEdgeBevel = useProjectStore((s) => s.setBottomEdgeBevel);
   const setLidType = useProjectStore((s) => s.setLidType);
   const setSplitHeight = useProjectStore((s) => s.setSplitHeight);
   const setWallGap = useProjectStore((s) => s.setWallGap);
@@ -1095,6 +1184,8 @@ export function InspectorPanel({
   const setScrewColumnShape = useProjectStore((s) => s.setScrewColumnShape);
   const setScrewHeadStyle = useProjectStore((s) => s.setScrewHeadStyle);
   const setScrewColumnHeight = useProjectStore((s) => s.setScrewColumnHeight);
+  const setScrewFootEnabled = useProjectStore((s) => s.setScrewFootEnabled);
+  const setScrewFootAngleDeg = useProjectStore((s) => s.setScrewFootAngleDeg);
   const setGasketEnabled = useProjectStore((s) => s.setGasketEnabled);
   const setGasketWidth = useProjectStore((s) => s.setGasketWidth);
   const setGasketDepth = useProjectStore((s) => s.setGasketDepth);
@@ -1111,435 +1202,46 @@ export function InspectorPanel({
   const selectedFeature = project.features.find((f) => f.id === selectedFeatureId) ?? null;
   const minPlanDimension = body.shape === 'box' ? Math.min(body.outer.length, body.outer.width) : body.outer.diameter;
 
+  const FACES_ORDER: Face[] = body.shape === 'box'
+    ? ['bottom', 'front', 'back', 'left', 'right', 'top']
+    : ['bottom', 'side', 'top'];
+
   return (
     <div className="inspector-panel">
-      <SectionCard title="View" icon={<SidebarSectionIcon type="viewport" />} defaultOpen={true}>
-        <div className="subgroup-title">Lid Presentation Mode</div>
-        <div className="lid-view-buttons">
-          {(['assembled', 'ghost', 'hidden', 'exploded'] as LidView[]).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              className={`btn-lid-mode ${lidView === mode ? 'active' : ''}`}
-              onClick={() => onSetLidView(mode)}
-            >
-              {mode.charAt(0).toUpperCase() + mode.slice(1)}
-            </button>
-          ))}
-        </div>
-        <label className="field field-checkbox" style={{ marginTop: '8px' }}>
-          <input
-            type="checkbox"
-            checked={showHandles}
-            onChange={(e) => onToggleShowHandles(e.target.checked)}
-          />
-          <span>Show 3D Resize Handles</span>
-        </label>
-        <label className="field field-checkbox">
-          <input
-            type="checkbox"
-            checked={showGrid}
-            onChange={(e) => onToggleShowGrid(e.target.checked)}
-          />
-          <span>Show Grid &amp; Floor Axes</span>
-        </label>
-        <label className="field field-checkbox">
-          <input
-            type="checkbox"
-            checked={showGhosts}
-            onChange={(e) => onToggleShowGhosts(e.target.checked)}
-          />
-          <span>Show Ghost Parts</span>
-        </label>
-        <label className="field field-checkbox">
-          <input
-            type="checkbox"
-            checked={showMarkers}
-            onChange={(e) => onToggleShowMarkers(e.target.checked)}
-          />
-          <span>Show Feature Markers</span>
-        </label>
-      </SectionCard>
-      <SectionCard title="Lid & Fasteners" icon={<SidebarSectionIcon type="fasteners" />}>
-        <label className="field">
-          <span>Type</span>
-          <select value={lid.type} onChange={(e) => setLidType(e.target.value as LidType)}>
-            <option value="friction-lip">Friction lip</option>
-            <option value="screw-boss">Screw boss</option>
-            <option value="snap-fit">Snap fit</option>
-          </select>
-        </label>
-        {/* Split-height percentage slider — the main control for lid/body proportions */}
-        {(() => {
-          const outerH = body.outer.height;
-          const minSplit = body.wallThickness + 1;
-          const maxSplit = outerH - body.wallThickness - 1;
-          const pct = Math.round((lid.splitHeight / outerH) * 100);
-          const lidPct = 100 - pct;
-          // fillPct is position of the thumb within [minSplit, maxSplit] — this is what drives
-          // the two-colour track gradient and must be recomputed from the clamped slider range,
-          // not from the raw splitHeight/outerH ratio, or the thumb and fill won't stay in sync.
-          const fillPct = ((lid.splitHeight - minSplit) / (maxSplit - minSplit)) * 100;
-          const trackBg = `linear-gradient(to right, #3a6fa8 0%, #3a6fa8 ${fillPct}%, #2e6e5c ${fillPct}%, #2e6e5c 100%)`;
-          return (
-            <div className="split-slider-row">
-              <div className="split-slider-labels">
-                <span className="split-label-body">Body <strong>{pct}%</strong></span>
-                <span className="split-label-lid">Lid <strong>{lidPct}%</strong></span>
-              </div>
-              <input
-                id="split-height-slider"
-                type="range"
-                className="split-slider"
-                min={minSplit}
-                max={maxSplit}
-                step={0.5}
-                value={lid.splitHeight}
-                style={{ background: trackBg }}
-                onChange={(e) => setSplitHeight(Number(e.target.value))}
-              />
-            </div>
-          );
-        })()}
+      {/* Top Segmented Inspector Tabs */}
+      <div className="inspector-tab-bar">
+        <button
+          type="button"
+          className={`tab-btn ${activeTab === 'structure' ? 'active' : ''}`}
+          onClick={() => setActiveTab('structure')}
+        >
+          <span>Structure</span>
+        </button>
+        <button
+          type="button"
+          className={`tab-btn ${activeTab === 'layers' ? 'active' : ''}`}
+          onClick={() => setActiveTab('layers')}
+        >
+          <span>Layers</span>
+          <span className="tab-badge">{project.features.length}</span>
+        </button>
+        <button
+          type="button"
+          className={`tab-btn ${activeTab === 'studio' ? 'active' : ''}`}
+          onClick={() => setActiveTab('studio')}
+        >
+          <span>Studio</span>
+        </button>
+      </div>
 
-        <FieldsGrid2Col>
-          <UnitNumberField
-            label="Split height"
-            valueMm={lid.splitHeight}
-            units={units}
-            minMm={body.wallThickness + 1}
-            maxMm={body.outer.height - body.wallThickness - 1}
-            onChangeMm={setSplitHeight}
-          />
-          <UnitNumberField
-            label="Wall gap"
-            valueMm={lid.wallGap}
-            units={units}
-            minMm={0}
-            maxMm={1}
-            stepMm={0.05}
-            onChangeMm={setWallGap}
-          />
-        </FieldsGrid2Col>
-
-
-        {lid.type === 'screw-boss' && lid.screw && (
-          <FieldsGrid2Col>
-            <label className="field">
-              <span>Screw size</span>
-              <select
-                value={lid.screw.size}
-                onChange={(e) => setScrewSize(e.target.value as ScrewSize)}
-              >
-                <option value="M2">M2</option>
-                <option value="M2.5">M2.5</option>
-                <option value="M3">M3</option>
-                <option value="M4">M4</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Insert type</span>
-              <select
-                value={lid.screw.insertType}
-                onChange={(e) => setScrewInsertType(e.target.value as ScrewInsertType)}
-              >
-                <option value="heat-set">Heat-set</option>
-                <option value="self-tap">Self-tap</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Boss count</span>
-              <select
-                value={lid.screw.count}
-                onChange={(e) => setScrewCount(Number(e.target.value) as ScrewCount)}
-              >
-                <option value={4}>4</option>
-                <option value={6}>6</option>
-                <option value={8}>8</option>
-              </select>
-            </label>
-            {body.shape === 'box' && (
-              <label className="field">
-                <span>Column placement</span>
-                <select
-                  value={lid.screw.placement ?? 'interior'}
-                  onChange={(e) => setScrewPlacement(e.target.value as ScrewPlacement)}
-                >
-                  <option value="interior">Inside the cavity</option>
-                  <option value="exterior">Outside the walls</option>
-                </select>
-              </label>
-            )}
-            <label className="field">
-              <span>Column shape</span>
-              <select
-                value={lid.screw.shape ?? 'round'}
-                onChange={(e) => setScrewColumnShape(e.target.value as ScrewColumnShape)}
-              >
-                <option value="round">Round</option>
-                <option value="square">Square</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Screw head</span>
-              <select
-                value={lid.screw.headStyle ?? 'flush'}
-                onChange={(e) => setScrewHeadStyle(e.target.value as ScrewHeadStyle)}
-              >
-                <option value="flush">On the surface</option>
-                <option value="counterbore">Concealed (counterbored)</option>
-              </select>
-            </label>
-            {(lid.screw.placement ?? 'interior') === 'interior' && (
-              <UnitNumberField
-                label="Screw edge inset"
-                valueMm={lid.screw.edgeInset ?? bossRadiusFor(lid.screw) + 1}
-                units={units}
-                minMm={0.5}
-                maxMm={Math.max(minPlanDimension / 2 - 2, 0.5)}
-                stepMm={0.1}
-                onChangeMm={setScrewEdgeInset}
-              />
-            )}
-          </FieldsGrid2Col>
-        )}
-        {lid.type === 'screw-boss' && lid.screw && (
-          <>
-            <label className="field field-checkbox">
-              <input
-                type="checkbox"
-                checked={lid.screw.columnHeight === undefined}
-                onChange={(e) =>
-                  setScrewColumnHeight(
-                    e.target.checked ? undefined : Math.max(effectiveSplitHeight(body) / 2, 4),
-                  )
-                }
-              />
-              <span>Columns run the full height</span>
-            </label>
-            {lid.screw.columnHeight !== undefined && (
-              <UnitNumberField
-                label="Column height"
-                valueMm={lid.screw.columnHeight}
-                units={units}
-                minMm={2}
-                maxMm={effectiveSplitHeight(body)}
-                onChangeMm={setScrewColumnHeight}
-              />
-            )}
-            <p className="field-hint">
-              {(lid.screw.placement ?? 'interior') === 'interior'
-                ? 'Distance from the interior wall to each screw boss. Smaller pulls bosses toward the ' +
-                  "case's outer edge -- useful for keeping them clear of a board-mount sitting in the " +
-                  'middle of the cavity. '
-                : 'Exterior columns stand against the outside of the front and back walls -- the option ' +
-                  'for a case whose board leaves no floor space inside. '}
-              A short column hangs from the lid seam instead of standing on the floor, keeping the
-              space underneath clear; it is pushed into the wall far enough to weld to it.
-            </p>
-          </>
-        )}
-
-        <label className="field field-checkbox">
-          <input
-            type="checkbox"
-            checked={lid.gasket !== undefined}
-            onChange={(e) => setGasketEnabled(e.target.checked)}
-          />
-          <span>Gasket channel</span>
-        </label>
-        {lid.gasket && (
-          <FieldsGrid2Col>
-            <UnitNumberField
-              label="Channel width"
-              valueMm={lid.gasket.width}
-              units={units}
-              minMm={0.5}
-              maxMm={Math.max(body.wallThickness - 0.4, 0.5)}
-              stepMm={0.1}
-              onChangeMm={setGasketWidth}
-            />
-            <UnitNumberField
-              label="Channel depth"
-              valueMm={lid.gasket.depth}
-              units={units}
-              minMm={0.2}
-              maxMm={Math.max(lid.splitHeight - 1, 0.2)}
-              stepMm={0.1}
-              onChangeMm={setGasketDepth}
-            />
-          </FieldsGrid2Col>
-        )}
-      </SectionCard>
-
-      <SectionCard title="Body" icon={<SidebarSectionIcon type="body" />}>
-        <label className="field">
-          <span>Shape</span>
-          <select value={body.shape} onChange={(e) => setBodyShape(e.target.value as BodyShape)}>
-            <option value="box">Box</option>
-            <option value="cylinder">Cylinder</option>
-          </select>
-        </label>
-        {body.shape === 'box' ? (
-          <FieldsGrid2Col>
-            <UnitNumberField
-              label="Length"
-              valueMm={body.outer.length}
-              units={units}
-              minMm={5}
-              onChangeMm={(v) => setBodyDimension('length', v)}
-            />
-            <UnitNumberField
-              label="Width"
-              valueMm={body.outer.width}
-              units={units}
-              minMm={5}
-              onChangeMm={(v) => setBodyDimension('width', v)}
-            />
-          </FieldsGrid2Col>
-        ) : (
-          <UnitNumberField
-            label="Diameter"
-            valueMm={body.outer.diameter}
-            units={units}
-            minMm={5}
-            onChangeMm={(v) => setBodyDimension('diameter', v)}
-          />
-        )}
-        <FieldsGrid2Col>
-          <UnitNumberField
-            label="Height"
-            valueMm={body.outer.height}
-            units={units}
-            minMm={5}
-            onChangeMm={(v) => setBodyDimension('height', v)}
-          />
-          <UnitNumberField
-            label="Wall thickness"
-            valueMm={body.wallThickness}
-            units={units}
-            minMm={0.8}
-            maxMm={minPlanDimension / 2 - 0.5}
-            onChangeMm={setWallThickness}
-          />
-        </FieldsGrid2Col>
-        {body.shape === 'box' && (
-          <div className="inspector-subgroup">
-            <div className="subgroup-title">Slide-in Panels</div>
-            <label className="field field-checkbox">
-              <input
-                type="checkbox"
-                checked={body.panels !== undefined}
-                onChange={(e) => setPanelsEnabled(e.target.checked)}
-              />
-              <span>Print selected walls as separate plates</span>
-            </label>
-            {body.panels && (
-              <>
-                <div className="panel-face-buttons">
-                  {(['front', 'back', 'left', 'right'] as PanelFace[]).map((face) => (
-                    <button
-                      key={face}
-                      type="button"
-                      className={`btn-lid-mode ${body.panels!.faces.includes(face) ? 'active' : ''}`}
-                      onClick={() => togglePanelFace(face)}
-                    >
-                      {face.charAt(0).toUpperCase() + face.slice(1)}
-                    </button>
-                  ))}
-                </div>
-                <FieldsGrid2Col>
-                  <UnitNumberField
-                    label="Plate thickness"
-                    valueMm={body.panels.thickness}
-                    units={units}
-                    minMm={0.8}
-                    onChangeMm={setPanelThickness}
-                  />
-                  <UnitNumberField
-                    label="Groove depth"
-                    valueMm={body.panels.grooveDepth}
-                    units={units}
-                    minMm={0.2}
-                    maxMm={Math.max(body.wallThickness - 0.8, 0.2)}
-                    onChangeMm={setPanelGrooveDepth}
-                  />
-                  <UnitNumberField
-                    label="Slide fit gap"
-                    valueMm={body.panels.fitClearance}
-                    units={units}
-                    minMm={0}
-                    maxMm={1.5}
-                    stepMm={0.05}
-                    onChangeMm={setPanelFitClearance}
-                  />
-                  <UnitNumberField
-                    label="Retaining lip"
-                    valueMm={body.panels.retainLip ?? 1}
-                    units={units}
-                    minMm={0}
-                    maxMm={Math.max(body.panels.thickness - 0.8, 0)}
-                    stepMm={0.1}
-                    onChangeMm={setPanelRetainLip}
-                  />
-                </FieldsGrid2Col>
-                <label className="field field-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={body.panels.captureInLid}
-                    onChange={(e) => setPanelCaptureInLid(e.target.checked)}
-                  />
-                  <span>Capture plate top in the lid</span>
-                </label>
-                <p className="field-hint">
-                  Each selected wall becomes its own STL, sliding down into grooves in the
-                  neighbouring walls and the floor. Cutouts placed on that face are cut into the
-                  plate. The retaining lip is what stops the plate falling back out: that much wall
-                  is left standing proud of it at each end, and the plate's ends are rebated to
-                  match. Set it to 0 only if you intend to glue or screw the plate in.
-                </p>
-              </>
-            )}
-          </div>
-        )}
-        {body.shape === 'box' && (
-          <div className="inspector-subgroup">
-            <div className="subgroup-title">Corner Style</div>
-            <FieldsGrid2Col>
-              <label className="field">
-                <span>Style</span>
-                <select
-                  value={body.cornerStyle.type}
-                  onChange={(e) => setCornerStyleType(e.target.value as CornerStyleType)}
-                >
-                  <option value="sharp">Sharp</option>
-                  <option value="rounded">Rounded</option>
-                  <option value="chamfered">Chamfered</option>
-                </select>
-              </label>
-              {body.cornerStyle.type !== 'sharp' && (
-                <UnitNumberField
-                  label="Corner radius"
-                  valueMm={body.cornerStyle.radius}
-                  units={units}
-                  minMm={0.5}
-                  maxMm={minPlanDimension / 2 - 0.5}
-                  onChangeMm={setCornerRadius}
-                />
-              )}
-            </FieldsGrid2Col>
-          </div>
-        )}
-      </SectionCard>
-
-      <SectionCard
-        title="Checks"
-        icon={<SidebarSectionIcon type="checks" />}
-        badge={findings.length}
-      >
-        {findings.length === 0 ? (
-          <p className="feature-list-empty">Nothing to flag.</p>
-        ) : (
+      {/* Advisory Design Checks Alert Banner if findings exist */}
+      {findings.length > 0 && (
+        <SectionCard
+          title="Checks"
+          icon={<SidebarSectionIcon type="checks" />}
+          badge={findings.length}
+          defaultOpen={true}
+        >
           <div className="check-list">
             {findings.map((finding) => (
               <button
@@ -1553,119 +1255,33 @@ export function InspectorPanel({
               </button>
             ))}
           </div>
-        )}
-      </SectionCard>
+        </SectionCard>
+      )}
 
-      <SectionCard title="Feature Layers" icon={<SidebarSectionIcon type="layers" />} badge={project.features.length}>
-        {project.features.length === 0 ? (
-          <p className="feature-list-empty">None placed yet — pick one from the palette, then click a face.</p>
-        ) : (() => {
-          const allHidden = project.features.every((f) => f.hidden);
-          const allLocked = project.features.every((f) => f.locked);
-          const setAll = (patch: Partial<Feature>) => {
-            for (const f of project.features) onUpdateFeature(f.id, patch);
-          };
-          return (
-            <>
-              <div className="layer-bulk-actions">
-                <button type="button" className="btn-secondary" onClick={() => setAll({ hidden: !allHidden })}>
-                  {allHidden ? <SvgEyeIcon /> : <SvgEyeOffIcon />}
-                  <span>{allHidden ? 'Show all' : 'Hide all'}</span>
-                </button>
-                <button type="button" className="btn-secondary" onClick={() => setAll({ locked: !allLocked })}>
-                  {allLocked ? <SvgUnlockIcon /> : <SvgLockIcon />}
-                  <span>{allLocked ? 'Unlock all' : 'Lock all'}</span>
-                </button>
-              </div>
-          <div className="placed-features-list">
-            {project.features.map((feature) => {
-              const isSelected = feature.id === selectedFeatureId;
-              const isHidden = !!feature.hidden;
-              const isLocked = !!feature.locked;
-              return (
-                <div
-                  key={feature.id}
-                  className={`placed-feature-card ${isSelected ? 'selected' : ''} ${isHidden ? 'hidden-layer' : ''} ${isLocked ? 'locked-layer' : ''}`}
-                  onClick={() => onSelectFeature(feature.id)}
-                >
-                  <div className="feat-card-main">
-                    <FeatureTypeIcon type={feature.type} />
-                    <span className="feat-card-name">{featureLabel(feature)}</span>
-                    <span className="face-badge">{feature.face}</span>
-                  </div>
-                  <div className="layer-actions">
-                    <button
-                      type="button"
-                      className={`layer-btn ${isHidden ? 'active-toggle' : ''}`}
-                      title={isHidden ? 'Show feature' : 'Hide feature'}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onUpdateFeature(feature.id, { hidden: !isHidden });
-                      }}
-                    >
-                      {isHidden ? <SvgEyeOffIcon /> : <SvgEyeIcon />}
-                    </button>
-                    <button
-                      type="button"
-                      className={`layer-btn ${isLocked ? 'active-toggle' : ''}`}
-                      title={isLocked ? 'Unlock feature 3D dragging' : 'Lock feature 3D dragging'}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onUpdateFeature(feature.id, { locked: !isLocked });
-                      }}
-                    >
-                      {isLocked ? <SvgLockIcon /> : <SvgUnlockIcon />}
-                    </button>
-                    <button
-                      type="button"
-                      className="layer-btn"
-                      title="Duplicate feature"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const dup = cloneFeatureAt(feature, {
-                          u: Math.min(feature.u + 0.05, 1),
-                          v: feature.v,
-                        });
-                        onAddFeature(dup);
-                        onSelectFeature(dup.id);
-                      }}
-                    >
-                      <SvgCopyIcon />
-                    </button>
-                    <button
-                      type="button"
-                      className="layer-btn layer-del-btn"
-                      title="Delete feature"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRemoveFeature(feature.id);
-                      }}
-                    >
-                      <SvgTrashIcon />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+      {/* Focused Selected Feature Header Drawer when a feature is selected */}
+      {selectedFeature && (
+        <div className="focused-feature-drawer">
+          <div className="focused-drawer-header">
+            <div className="focused-drawer-title">
+              <FeatureTypeIcon type={selectedFeature.type} />
+              <span className="focused-name">{featureLabel(selectedFeature)}</span>
+              <span className="face-badge">{selectedFeature.face}</span>
+            </div>
+            <button
+              type="button"
+              className="btn-done-edit"
+              onClick={() => onSelectFeature(null)}
+              title="Close feature editor"
+            >
+              ✕ Done
+            </button>
           </div>
-            </>
-          );
-        })()}
-      </SectionCard>
 
-      {selectedFeature && (() => {
-        const geom = bodyGeometry(body);
-        const [sizeU, sizeV] = faceSize(selectedFeature.face, geom);
-        const uOffsetMm = (selectedFeature.u - 0.5) * sizeU;
-        const vOffsetMm = (selectedFeature.v - 0.5) * sizeV;
-
-        return (
-          <SectionCard title={`Inspector: ${featureLabel(selectedFeature)}`} icon={<SidebarSectionIcon type="inspector" />} defaultOpen={true}>
-            <>
-              <div className="inspector-subgroup" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>
-              <div className="subgroup-title">Placement & Face</div>
+          <div className="focused-drawer-content">
+            <div className="inspector-subgroup">
+              <div className="subgroup-title">Placement &amp; Position</div>
               <label className="field">
-                <span>Target Face</span>
+                <span>Face</span>
                 <select
                   value={selectedFeature.face}
                   onChange={(e) => onUpdateFeature(selectedFeature.id, { face: e.target.value as Face })}
@@ -1689,73 +1305,83 @@ export function InspectorPanel({
                 </select>
               </label>
 
-              <FieldsGrid2Col>
-                <UnitNumberField
-                  label="U Center Offset"
-                  valueMm={uOffsetMm}
-                  units={units}
-                  onChangeMm={(valMm) => {
-                    const nextU = Math.max(0, Math.min(1, 0.5 + valMm / sizeU));
-                    onUpdateFeature(selectedFeature.id, { u: nextU });
-                  }}
-                />
-                <UnitNumberField
-                  label="V Center Offset"
-                  valueMm={vOffsetMm}
-                  units={units}
-                  onChangeMm={(valMm) => {
-                    const nextV = Math.max(0, Math.min(1, 0.5 + valMm / sizeV));
-                    onUpdateFeature(selectedFeature.id, { v: nextV });
-                  }}
-                />
-              </FieldsGrid2Col>
+              {(() => {
+                const geom = bodyGeometry(body);
+                const [sizeU, sizeV] = faceSize(selectedFeature.face, geom);
+                const uOffsetMm = (selectedFeature.u - 0.5) * sizeU;
+                const vOffsetMm = (selectedFeature.v - 0.5) * sizeV;
+                return (
+                  <>
+                    <FieldsGrid2Col>
+                      <UnitNumberField
+                        label="U Offset"
+                        valueMm={uOffsetMm}
+                        units={units}
+                        onChangeMm={(valMm) => {
+                          const nextU = Math.max(0, Math.min(1, 0.5 + valMm / sizeU));
+                          onUpdateFeature(selectedFeature.id, { u: nextU });
+                        }}
+                      />
+                      <UnitNumberField
+                        label="V Offset"
+                        valueMm={vOffsetMm}
+                        units={units}
+                        onChangeMm={(valMm) => {
+                          const nextV = Math.max(0, Math.min(1, 0.5 + valMm / sizeV));
+                          onUpdateFeature(selectedFeature.id, { v: nextV });
+                        }}
+                      />
+                    </FieldsGrid2Col>
 
-              <FieldsGrid2Col>
-                <NumberField
-                  label="U Ratio (0–1)"
-                  value={roundForDisplay(selectedFeature.u, 'mm')}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  onChange={(v) => onUpdateFeature(selectedFeature.id, { u: Math.max(0, Math.min(1, v)) })}
-                />
-                <NumberField
-                  label="V Ratio (0–1)"
-                  value={roundForDisplay(selectedFeature.v, 'mm')}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  onChange={(v) => onUpdateFeature(selectedFeature.id, { v: Math.max(0, Math.min(1, v)) })}
-                />
-              </FieldsGrid2Col>
+                    <FieldsGrid2Col>
+                      <NumberField
+                        label="U Ratio"
+                        value={roundForDisplay(selectedFeature.u, 'mm')}
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        onChange={(v) => onUpdateFeature(selectedFeature.id, { u: Math.max(0, Math.min(1, v)) })}
+                      />
+                      <NumberField
+                        label="V Ratio"
+                        value={roundForDisplay(selectedFeature.v, 'mm')}
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        onChange={(v) => onUpdateFeature(selectedFeature.id, { v: Math.max(0, Math.min(1, v)) })}
+                      />
+                    </FieldsGrid2Col>
 
-              <FieldsGrid2Col>
-                <NumberField
-                  label="Rotation (deg)"
-                  value={selectedFeature.rotationDeg}
-                  step={5}
-                  onChange={(v) => onUpdateFeature(selectedFeature.id, { rotationDeg: v })}
-                />
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{ marginTop: 'auto', marginBottom: '2px' }}
-                  onClick={() => {
-                    const dup = cloneFeatureAt(selectedFeature, {
-                      u: Math.min(selectedFeature.u + 0.05, 1),
-                      v: selectedFeature.v,
-                    });
-                    onAddFeature(dup);
-                    onSelectFeature(dup.id);
-                  }}
-                >
-                  + Duplicate
-                </button>
-              </FieldsGrid2Col>
+                    <FieldsGrid2Col>
+                      <NumberField
+                        label="Rotation (deg)"
+                        value={selectedFeature.rotationDeg}
+                        step={5}
+                        onChange={(v) => onUpdateFeature(selectedFeature.id, { rotationDeg: v })}
+                      />
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{ marginTop: 'auto', marginBottom: '2px' }}
+                        onClick={() => {
+                          const dup = cloneFeatureAt(selectedFeature, {
+                            u: Math.min(selectedFeature.u + 0.05, 1),
+                            v: selectedFeature.v,
+                          });
+                          onAddFeature(dup);
+                          onSelectFeature(dup.id);
+                        }}
+                      >
+                        + Duplicate
+                      </button>
+                    </FieldsGrid2Col>
+                  </>
+                );
+              })()}
             </div>
 
             <div className="align-mirror">
-              <div className="subgroup-title">Quick Alignment & Mirror</div>
+              <div className="subgroup-title">Quick Alignment &amp; Mirror</div>
               <AlignMirrorAxisRow
                 feature={selectedFeature}
                 axis="u"
@@ -1776,146 +1402,853 @@ export function InspectorPanel({
               />
             </div>
 
-          {selectedFeature.type === 'connector-cutout' && selectedFeature.connectorId && (
-            <ConnectorSizeFields
-              feature={selectedFeature}
-              entry={findConnector(selectedFeature.connectorId)}
-              units={units}
-              onUpdateFeature={onUpdateFeature}
-            />
-          )}
+            {selectedFeature.type === 'connector-cutout' && selectedFeature.connectorId && (
+              <ConnectorSizeFields
+                feature={selectedFeature}
+                entry={findConnector(selectedFeature.connectorId)}
+                units={units}
+                onUpdateFeature={onUpdateFeature}
+              />
+            )}
 
-          {selectedFeature.type === 'board-mount' && selectedFeature.board && (
-            <BoardMountFields
-              feature={selectedFeature}
-              board={selectedFeature.board}
-              units={units}
-              body={body}
-              onUpdateFeature={onUpdateFeature}
-              onAddFeature={onAddFeature}
-              onSelectFeature={onSelectFeature}
-            />
-          )}
+            {selectedFeature.type === 'board-mount' && selectedFeature.board && (
+              <BoardMountFields
+                feature={selectedFeature}
+                board={selectedFeature.board}
+                units={units}
+                body={body}
+                onUpdateFeature={onUpdateFeature}
+                onAddFeature={onAddFeature}
+                onSelectFeature={onSelectFeature}
+              />
+            )}
 
-          {selectedFeature.type === 'external-mount' && selectedFeature.mount && (
-            <ExternalMountFields
-              feature={selectedFeature}
-              mount={selectedFeature.mount}
-              units={units}
-              isBox={body.shape === 'box'}
-              onUpdateFeature={onUpdateFeature}
-              onAddFeature={onAddFeature}
-            />
-          )}
+            {selectedFeature.type === 'external-mount' && selectedFeature.mount && (
+              <ExternalMountFields
+                feature={selectedFeature}
+                mount={selectedFeature.mount}
+                units={units}
+                isBox={body.shape === 'box'}
+                onUpdateFeature={onUpdateFeature}
+                onAddFeature={onAddFeature}
+              />
+            )}
 
-          {selectedFeature.type === 'support-pad' && selectedFeature.pad && (
-            <SupportPadFields
-              feature={selectedFeature}
-              pad={selectedFeature.pad}
-              units={units}
-              onUpdateFeature={onUpdateFeature}
-            />
-          )}
+            {selectedFeature.type === 'support-pad' && selectedFeature.pad && (
+              <SupportPadFields
+                feature={selectedFeature}
+                pad={selectedFeature.pad}
+                units={units}
+                onUpdateFeature={onUpdateFeature}
+              />
+            )}
 
-          {selectedFeature.type === 'fan-mount' && selectedFeature.fan && (
-            <FanMountFields
-              feature={selectedFeature}
-              fan={selectedFeature.fan}
-              units={units}
-              onUpdateFeature={onUpdateFeature}
-            />
-          )}
+            {selectedFeature.type === 'fan-mount' && selectedFeature.fan && (
+              <FanMountFields
+                feature={selectedFeature}
+                fan={selectedFeature.fan}
+                units={units}
+                onUpdateFeature={onUpdateFeature}
+              />
+            )}
 
-          {selectedFeature.type === 'vent' && selectedFeature.vent && (
-            <VentFields feature={selectedFeature} vent={selectedFeature.vent} units={units} onUpdateFeature={onUpdateFeature} />
-          )}
+            {selectedFeature.type === 'vent' && selectedFeature.vent && (
+              <VentFields feature={selectedFeature} vent={selectedFeature.vent} units={units} onUpdateFeature={onUpdateFeature} />
+            )}
 
-          {selectedFeature.type === 'custom-hole' && selectedFeature.custom && (
-            <div className="inspector-subgroup">
-              <div className="subgroup-title">Custom Hole Spec</div>
-              <label className="field">
-                <span>Shape</span>
-                <select
-                  value={selectedFeature.custom.shape}
-                  onChange={(e) =>
-                    onUpdateFeature(selectedFeature.id, {
-                      custom: { ...selectedFeature.custom!, shape: e.target.value as 'circle' | 'rect' },
-                    })
-                  }
-                >
-                  <option value="circle">Circle</option>
-                  <option value="rect">Rectangle</option>
-                </select>
-              </label>
-              <FieldsGrid2Col>
-                <UnitNumberField
-                  label={selectedFeature.custom.shape === 'circle' ? 'Diameter' : 'Width'}
-                  valueMm={selectedFeature.custom.width}
-                  units={units}
-                  minMm={0.5}
-                  onChangeMm={(v) =>
-                    onUpdateFeature(selectedFeature.id, { custom: { ...selectedFeature.custom!, width: v } })
-                  }
-                />
-                {selectedFeature.custom.shape === 'rect' && (
+            {selectedFeature.type === 'grip-ribs' && (
+              <GripRibsFields feature={selectedFeature} units={units} onUpdateFeature={onUpdateFeature} />
+            )}
+
+            {selectedFeature.type === 'custom-hole' && selectedFeature.custom && (
+              <div className="inspector-subgroup">
+                <div className="subgroup-title">Custom Hole Spec</div>
+                <label className="field">
+                  <span>Shape</span>
+                  <select
+                    value={selectedFeature.custom.shape}
+                    onChange={(e) =>
+                      onUpdateFeature(selectedFeature.id, {
+                        custom: { ...selectedFeature.custom!, shape: e.target.value as 'circle' | 'rect' },
+                      })
+                    }
+                  >
+                    <option value="circle">Circle</option>
+                    <option value="rect">Rectangle</option>
+                  </select>
+                </label>
+                <FieldsGrid2Col>
                   <UnitNumberField
-                    label="Height"
-                    valueMm={selectedFeature.custom.height ?? selectedFeature.custom.width}
+                    label={selectedFeature.custom.shape === 'circle' ? 'Diameter' : 'Width'}
+                    valueMm={selectedFeature.custom.width}
                     units={units}
                     minMm={0.5}
                     onChangeMm={(v) =>
-                      onUpdateFeature(selectedFeature.id, { custom: { ...selectedFeature.custom!, height: v } })
+                      onUpdateFeature(selectedFeature.id, { custom: { ...selectedFeature.custom!, width: v } })
                     }
+                  />
+                  {selectedFeature.custom.shape === 'rect' && (
+                    <UnitNumberField
+                      label="Height"
+                      valueMm={selectedFeature.custom.height ?? selectedFeature.custom.width}
+                      units={units}
+                      minMm={0.5}
+                      onChangeMm={(v) =>
+                        onUpdateFeature(selectedFeature.id, { custom: { ...selectedFeature.custom!, height: v } })
+                      }
+                    />
+                  )}
+                </FieldsGrid2Col>
+              </div>
+            )}
+
+            {selectedFeature.type === 'standoff' && selectedFeature.standoff && (
+              <div className="inspector-subgroup">
+                <div className="subgroup-title">Standoff Dimensions</div>
+                <FieldsGrid2Col>
+                  <UnitNumberField
+                    label="Outer OD"
+                    valueMm={selectedFeature.standoff.outerDiameter}
+                    units={units}
+                    minMm={2}
+                    onChangeMm={(v) =>
+                      onUpdateFeature(selectedFeature.id, {
+                        standoff: { ...selectedFeature.standoff!, outerDiameter: v },
+                      })
+                    }
+                  />
+                  <UnitNumberField
+                    label="Hole dia"
+                    valueMm={selectedFeature.standoff.screwHoleDiameter}
+                    units={units}
+                    minMm={0.5}
+                    onChangeMm={(v) =>
+                      onUpdateFeature(selectedFeature.id, {
+                        standoff: { ...selectedFeature.standoff!, screwHoleDiameter: v },
+                      })
+                    }
+                  />
+                </FieldsGrid2Col>
+                <UnitNumberField
+                  label="Height"
+                  valueMm={selectedFeature.standoff.height}
+                  units={units}
+                  minMm={1}
+                  onChangeMm={(v) =>
+                    onUpdateFeature(selectedFeature.id, {
+                      standoff: { ...selectedFeature.standoff!, height: v },
+                    })
+                  }
+                />
+              </div>
+            )}
+            <button
+              type="button"
+              className="btn-danger-outline"
+              style={{ marginTop: '12px', width: '100%' }}
+              onClick={() => onRemoveFeature(selectedFeature.id)}
+            >
+              🗑️ Delete Feature
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 1: STRUCTURE */}
+      {activeTab === 'structure' && (
+        <>
+          <SectionCard title="3D Printability &amp; BOM" icon={<SidebarSectionIcon type="fasteners" />} defaultOpen={true}>
+            <PrintabilityCard />
+          </SectionCard>
+
+          <SectionCard title="Body Dimensions" icon={<SidebarSectionIcon type="body" />} defaultOpen={true}>
+            <label className="field">
+              <span>Shape</span>
+              <select value={body.shape} onChange={(e) => setBodyShape(e.target.value as BodyShape)}>
+                <option value="box">Box</option>
+                <option value="cylinder">Cylinder</option>
+              </select>
+            </label>
+            {body.shape === 'box' ? (
+              <FieldsGrid2Col>
+                <UnitNumberField
+                  label="Length"
+                  valueMm={body.outer.length}
+                  units={units}
+                  minMm={5}
+                  onChangeMm={(v) => setBodyDimension('length', v)}
+                />
+                <UnitNumberField
+                  label="Width"
+                  valueMm={body.outer.width}
+                  units={units}
+                  minMm={5}
+                  onChangeMm={(v) => setBodyDimension('width', v)}
+                />
+              </FieldsGrid2Col>
+            ) : (
+              <UnitNumberField
+                label="Diameter"
+                valueMm={body.outer.diameter}
+                units={units}
+                minMm={5}
+                onChangeMm={(v) => setBodyDimension('diameter', v)}
+              />
+            )}
+            <FieldsGrid2Col>
+              <UnitNumberField
+                label="Height"
+                valueMm={body.outer.height}
+                units={units}
+                minMm={5}
+                onChangeMm={(v) => setBodyDimension('height', v)}
+              />
+              <UnitNumberField
+                label="Wall thickness"
+                valueMm={body.wallThickness}
+                units={units}
+                minMm={0.8}
+                maxMm={minPlanDimension / 2 - 0.5}
+                onChangeMm={setWallThickness}
+              />
+            </FieldsGrid2Col>
+
+            {body.shape === 'box' && (
+              <div className="inspector-subgroup">
+                <div className="subgroup-title">Corner Style</div>
+                <FieldsGrid2Col>
+                  <label className="field">
+                    <span>Style</span>
+                    <select
+                      value={body.cornerStyle.type}
+                      onChange={(e) => setCornerStyleType(e.target.value as CornerStyleType)}
+                    >
+                      <option value="sharp">Sharp</option>
+                      <option value="rounded">Rounded</option>
+                      <option value="chamfered">Chamfered</option>
+                      <option value="faceted">Faceted (Octagonal)</option>
+                      <option value="double-chamfer">Double Chamfer</option>
+                    </select>
+                  </label>
+                  {body.cornerStyle.type !== 'sharp' && (
+                    <UnitNumberField
+                      label="Corner size"
+                      valueMm={body.cornerStyle.radius}
+                      units={units}
+                      minMm={0.5}
+                      maxMm={minPlanDimension / 2 - 0.5}
+                      onChangeMm={setCornerRadius}
+                    />
+                  )}
+                </FieldsGrid2Col>
+              </div>
+            )}
+
+            <div className="inspector-subgroup">
+              <div className="subgroup-title">Rim Edge Chamfers (3D Bevels)</div>
+              <FieldsGrid2Col>
+                <label className="field field-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={body.topEdgeBevel?.type === 'chamfer'}
+                    onChange={(e) =>
+                      setTopEdgeBevel(e.target.checked ? { type: 'chamfer', size: 2.0 } : undefined)
+                    }
+                  />
+                  <span>Top Rim Chamfer</span>
+                </label>
+                {body.topEdgeBevel?.type === 'chamfer' && (
+                  <UnitNumberField
+                    label="Top size"
+                    valueMm={body.topEdgeBevel.size}
+                    units={units}
+                    minMm={0.5}
+                    maxMm={Math.min(body.outer.height / 3, 10)}
+                    stepMm={0.5}
+                    onChangeMm={(v) => setTopEdgeBevel({ type: 'chamfer', size: v })}
+                  />
+                )}
+              </FieldsGrid2Col>
+              <FieldsGrid2Col style={{ marginTop: '6px' }}>
+                <label className="field field-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={body.bottomEdgeBevel?.type === 'chamfer'}
+                    onChange={(e) =>
+                      setBottomEdgeBevel(e.target.checked ? { type: 'chamfer', size: 2.0 } : undefined)
+                    }
+                  />
+                  <span>Bottom Rim Chamfer</span>
+                </label>
+                {body.bottomEdgeBevel?.type === 'chamfer' && (
+                  <UnitNumberField
+                    label="Bottom size"
+                    valueMm={body.bottomEdgeBevel.size}
+                    units={units}
+                    minMm={0.5}
+                    maxMm={Math.min(body.outer.height / 3, 10)}
+                    stepMm={0.5}
+                    onChangeMm={(v) => setBottomEdgeBevel({ type: 'chamfer', size: v })}
                   />
                 )}
               </FieldsGrid2Col>
             </div>
-          )}
+          </SectionCard>
 
-          {selectedFeature.type === 'standoff' && selectedFeature.standoff && (
-            <div className="inspector-subgroup">
-              <div className="subgroup-title">Standoff Dimensions</div>
+          <SectionCard title="Lid &amp; Fasteners" icon={<SidebarSectionIcon type="fasteners" />}>
+            <label className="field">
+              <span>Type</span>
+              <select value={lid.type} onChange={(e) => setLidType(e.target.value as LidType)}>
+                <option value="friction-lip">Friction lip</option>
+                <option value="screw-boss">Screw boss</option>
+                <option value="snap-fit">Snap fit</option>
+              </select>
+            </label>
+            {(() => {
+              const outerH = body.outer.height;
+              const minSplit = body.wallThickness + 1;
+              const maxSplit = outerH - body.wallThickness - 1;
+              const pct = Math.round((lid.splitHeight / outerH) * 100);
+              const lidPct = 100 - pct;
+              const fillPct = ((lid.splitHeight - minSplit) / (maxSplit - minSplit)) * 100;
+              const trackBg = `linear-gradient(to right, #3a6fa8 0%, #3a6fa8 ${fillPct}%, #2e6e5c ${fillPct}%, #2e6e5c 100%)`;
+              return (
+                <div className="split-slider-row">
+                  <div className="split-slider-labels">
+                    <span className="split-label-body">Body <strong>{pct}%</strong></span>
+                    <span className="split-label-lid">Lid <strong>{lidPct}%</strong></span>
+                  </div>
+                  <input
+                    id="split-height-slider"
+                    type="range"
+                    className="split-slider"
+                    min={minSplit}
+                    max={maxSplit}
+                    step={0.5}
+                    value={lid.splitHeight}
+                    style={{ background: trackBg }}
+                    onChange={(e) => setSplitHeight(Number(e.target.value))}
+                  />
+                </div>
+              );
+            })()}
+
+            <FieldsGrid2Col>
+              <UnitNumberField
+                label="Split height"
+                valueMm={lid.splitHeight}
+                units={units}
+                minMm={body.wallThickness + 1}
+                maxMm={body.outer.height - body.wallThickness - 1}
+                onChangeMm={setSplitHeight}
+              />
+              <UnitNumberField
+                label="Wall gap"
+                valueMm={lid.wallGap}
+                units={units}
+                minMm={0}
+                maxMm={1}
+                stepMm={0.05}
+                onChangeMm={setWallGap}
+              />
+            </FieldsGrid2Col>
+
+            {lid.type === 'screw-boss' && lid.screw && (
+              <FieldsGrid2Col>
+                <label className="field">
+                  <span>Screw size</span>
+                  <select
+                    value={lid.screw.size}
+                    onChange={(e) => setScrewSize(e.target.value as ScrewSize)}
+                  >
+                    <option value="M2">M2</option>
+                    <option value="M2.5">M2.5</option>
+                    <option value="M3">M3</option>
+                    <option value="M4">M4</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Insert type</span>
+                  <select
+                    value={lid.screw.insertType}
+                    onChange={(e) => setScrewInsertType(e.target.value as ScrewInsertType)}
+                  >
+                    <option value="heat-set">Heat-set</option>
+                    <option value="self-tap">Self-tap</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Boss count</span>
+                  <select
+                    value={lid.screw.count}
+                    onChange={(e) => setScrewCount(Number(e.target.value) as ScrewCount)}
+                  >
+                    <option value={4}>4</option>
+                    <option value={6}>6</option>
+                    <option value={8}>8</option>
+                  </select>
+                </label>
+                {body.shape === 'box' && (
+                  <label className="field">
+                    <span>Column placement</span>
+                    <select
+                      value={lid.screw.placement ?? 'interior'}
+                      onChange={(e) => setScrewPlacement(e.target.value as ScrewPlacement)}
+                    >
+                      <option value="interior">Inside the cavity</option>
+                      <option value="exterior">Outside the walls</option>
+                    </select>
+                  </label>
+                )}
+                <label className="field">
+                  <span>Column shape</span>
+                  <select
+                    value={lid.screw.shape ?? 'round'}
+                    onChange={(e) => setScrewColumnShape(e.target.value as ScrewColumnShape)}
+                  >
+                    <option value="round">Round</option>
+                    <option value="square">Square</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Screw head</span>
+                  <select
+                    value={lid.screw.headStyle ?? 'flush'}
+                    onChange={(e) => setScrewHeadStyle(e.target.value as ScrewHeadStyle)}
+                  >
+                    <option value="flush">On the surface</option>
+                    <option value="counterbore">Concealed (counterbored)</option>
+                  </select>
+                </label>
+                {(lid.screw.placement ?? 'interior') === 'interior' && (
+                  <UnitNumberField
+                    label="Screw edge inset"
+                    valueMm={lid.screw.edgeInset ?? bossRadiusFor(lid.screw) + 1}
+                    units={units}
+                    minMm={0.5}
+                    maxMm={Math.max(minPlanDimension / 2 - 2, 0.5)}
+                    stepMm={0.1}
+                    onChangeMm={setScrewEdgeInset}
+                  />
+                )}
+              </FieldsGrid2Col>
+            )}
+
+            {lid.type === 'screw-boss' && lid.screw && (
+              <>
+                <label className="field field-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={lid.screw.columnHeight === undefined}
+                    onChange={(e) =>
+                      setScrewColumnHeight(
+                        e.target.checked ? undefined : Math.max(effectiveSplitHeight(body) / 2, 4),
+                      )
+                    }
+                  />
+                  <span>Columns run the full height</span>
+                </label>
+                {lid.screw.columnHeight !== undefined && (
+                  <>
+                    <UnitNumberField
+                      label="Column height"
+                      valueMm={lid.screw.columnHeight}
+                      units={units}
+                      minMm={2}
+                      maxMm={effectiveSplitHeight(body)}
+                      onChangeMm={setScrewColumnHeight}
+                    />
+                    <label className="field field-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={lid.screw.footEnabled ?? true}
+                        onChange={(e) => setScrewFootEnabled(e.target.checked)}
+                      />
+                      <span>Sloped foot (towards wall)</span>
+                    </label>
+                    {(lid.screw.footEnabled ?? true) && (
+                      <NumberField
+                        label="Foot angle (deg)"
+                        value={lid.screw.footAngleDeg ?? 45}
+                        min={15}
+                        max={75}
+                        step={1}
+                        onChange={setScrewFootAngleDeg}
+                      />
+                    )}
+                  </>
+                )}
+              </>
+            )}
+
+            <label className="field field-checkbox">
+              <input
+                type="checkbox"
+                checked={lid.gasket !== undefined}
+                onChange={(e) => setGasketEnabled(e.target.checked)}
+              />
+              <span>Gasket channel</span>
+            </label>
+            {lid.gasket && (
               <FieldsGrid2Col>
                 <UnitNumberField
-                  label="Outer OD"
-                  valueMm={selectedFeature.standoff.outerDiameter}
-                  units={units}
-                  minMm={2}
-                  onChangeMm={(v) =>
-                    onUpdateFeature(selectedFeature.id, {
-                      standoff: { ...selectedFeature.standoff!, outerDiameter: v },
-                    })
-                  }
-                />
-                <UnitNumberField
-                  label="Hole dia"
-                  valueMm={selectedFeature.standoff.screwHoleDiameter}
+                  label="Channel width"
+                  valueMm={lid.gasket.width}
                   units={units}
                   minMm={0.5}
-                  onChangeMm={(v) =>
-                    onUpdateFeature(selectedFeature.id, {
-                      standoff: { ...selectedFeature.standoff!, screwHoleDiameter: v },
-                    })
-                  }
+                  maxMm={Math.max(body.wallThickness - 0.4, 0.5)}
+                  stepMm={0.1}
+                  onChangeMm={setGasketWidth}
+                />
+                <UnitNumberField
+                  label="Channel depth"
+                  valueMm={lid.gasket.depth}
+                  units={units}
+                  minMm={0.2}
+                  maxMm={Math.max(lid.splitHeight - 1, 0.2)}
+                  stepMm={0.1}
+                  onChangeMm={setGasketDepth}
                 />
               </FieldsGrid2Col>
-              <UnitNumberField
-                label="Height"
-                valueMm={selectedFeature.standoff.height}
-                units={units}
-                minMm={1}
-                onChangeMm={(v) =>
-                  onUpdateFeature(selectedFeature.id, {
-                    standoff: { ...selectedFeature.standoff!, height: v },
-                  })
-                }
-              />
-            </div>
+            )}
+          </SectionCard>
+
+          {body.shape === 'box' && (
+            <SectionCard title="Slide-in Panels" icon={<SidebarSectionIcon type="body" />}>
+              <label className="field field-checkbox">
+                <input
+                  type="checkbox"
+                  checked={body.panels !== undefined}
+                  onChange={(e) => setPanelsEnabled(e.target.checked)}
+                />
+                <span>Print selected walls as separate plates</span>
+              </label>
+              {body.panels && (
+                <>
+                  <div className="panel-face-buttons" style={{ marginTop: '10px', marginBottom: '14px', gap: '8px' }}>
+                    {(['front', 'back', 'left', 'right'] as PanelFace[]).map((face) => (
+                      <button
+                        key={face}
+                        type="button"
+                        className={`btn-lid-mode ${body.panels!.faces.includes(face) ? 'active' : ''}`}
+                        onClick={() => togglePanelFace(face)}
+                      >
+                        {face.charAt(0).toUpperCase() + face.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                  <FieldsGrid2Col>
+                    <UnitNumberField
+                      label="Plate thickness"
+                      valueMm={body.panels.thickness}
+                      units={units}
+                      minMm={0.8}
+                      onChangeMm={setPanelThickness}
+                    />
+                    <UnitNumberField
+                      label="Groove depth"
+                      valueMm={body.panels.grooveDepth}
+                      units={units}
+                      minMm={0.2}
+                      maxMm={Math.max(body.wallThickness - 0.8, 0.2)}
+                      onChangeMm={setPanelGrooveDepth}
+                    />
+                    <UnitNumberField
+                      label="Slide fit gap"
+                      valueMm={body.panels.fitClearance}
+                      units={units}
+                      minMm={0}
+                      maxMm={1.5}
+                      stepMm={0.05}
+                      onChangeMm={setPanelFitClearance}
+                    />
+                    <UnitNumberField
+                      label="Retaining lip"
+                      valueMm={body.panels.retainLip ?? 1}
+                      units={units}
+                      minMm={0}
+                      maxMm={Math.max(body.panels.thickness - 0.8, 0)}
+                      stepMm={0.1}
+                      onChangeMm={setPanelRetainLip}
+                    />
+                  </FieldsGrid2Col>
+                  <label className="field field-checkbox" style={{ marginTop: '8px' }}>
+                    <input
+                      type="checkbox"
+                      checked={body.panels.captureInLid}
+                      onChange={(e) => setPanelCaptureInLid(e.target.checked)}
+                    />
+                    <span>Capture plate top in the lid</span>
+                  </label>
+                </>
+              )}
+            </SectionCard>
           )}
         </>
-      </SectionCard>
-      );
-    })()}
+      )}
+
+      {/* TAB 2: LAYERS (FEATURE TREE GROUPED BY FACE) */}
+      {activeTab === 'layers' && (
+        <div className="tab-content-layers">
+          <div className="layer-search-bar">
+            <svg className="search-icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="6.5" cy="6.5" r="4.5" />
+              <path d="M10 10l4 4" />
+            </svg>
+            <input
+              type="text"
+              className="layer-search-input"
+              placeholder={`Search ${project.features.length} features...`}
+              value={layerSearch}
+              onChange={(e) => setLayerSearch(e.target.value)}
+            />
+            {layerSearch && (
+              <button type="button" className="btn-clear-search" onClick={() => setLayerSearch('')}>
+                <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 3l10 10M13 3L3 13" />
+                </svg>
+              </button>
+            )}
+          </div>
+
+          {project.features.length > 0 && (
+            <div className="layer-bulk-actions">
+              {(() => {
+                const allHidden = project.features.every((f) => f.hidden);
+                const allLocked = project.features.every((f) => f.locked);
+                return (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => {
+                        for (const f of project.features) onUpdateFeature(f.id, { hidden: !allHidden });
+                      }}
+                    >
+                      {allHidden ? <SvgEyeIcon /> : <SvgEyeOffIcon />}
+                      <span>{allHidden ? 'Show all' : 'Hide all'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => {
+                        for (const f of project.features) onUpdateFeature(f.id, { locked: !allLocked });
+                      }}
+                    >
+                      {allLocked ? <SvgUnlockIcon /> : <SvgLockIcon />}
+                      <span>{allLocked ? 'Unlock all' : 'Lock all'}</span>
+                    </button>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
+          {project.features.length === 0 ? (
+            <p className="feature-list-empty">None placed yet — pick a feature from the palette, then click a face.</p>
+          ) : (
+            <div className="grouped-face-tree">
+              {FACES_ORDER.map((face) => {
+                const faceFeatures = project.features.filter((f) => {
+                  if (f.face !== face) return false;
+                  if (!layerSearch.trim()) return true;
+                  const q = layerSearch.toLowerCase();
+                  return (
+                    featureLabel(f).toLowerCase().includes(q) ||
+                    f.type.toLowerCase().includes(q) ||
+                    (f.connectorId && f.connectorId.toLowerCase().includes(q))
+                  );
+                });
+
+                if (faceFeatures.length === 0 && layerSearch.trim()) return null;
+                const isExpanded = expandedFaces[face] ?? true;
+                const faceAllHidden = faceFeatures.length > 0 && faceFeatures.every((f) => f.hidden);
+
+                return (
+                  <div key={face} className="face-accordion-card">
+                    <div className="face-accordion-header" onClick={() => toggleFaceExpanded(face)}>
+                      <div className="face-title-group">
+                        <span className="face-chevron">{isExpanded ? '▾' : '▸'}</span>
+                        <span className="face-name-badge">{face.toUpperCase()}</span>
+                        <span className="face-count">({faceFeatures.length})</span>
+                      </div>
+                      {faceFeatures.length > 0 && (
+                        <button
+                          type="button"
+                          className="btn-icon-subtle"
+                          title={faceAllHidden ? `Show all ${face} features` : `Hide all ${face} features`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            for (const f of faceFeatures) onUpdateFeature(f.id, { hidden: !faceAllHidden });
+                          }}
+                        >
+                          {faceAllHidden ? <SvgEyeOffIcon /> : <SvgEyeIcon />}
+                        </button>
+                      )}
+                    </div>
+
+                    {isExpanded && (
+                      <div className="face-accordion-body">
+                        {faceFeatures.length === 0 ? (
+                          <div className="face-empty-text">No features on this face</div>
+                        ) : (
+                          faceFeatures.map((feature) => {
+                            const isSelected = feature.id === selectedFeatureId;
+                            const isHidden = !!feature.hidden;
+                            const isLocked = !!feature.locked;
+                            return (
+                              <div
+                                key={feature.id}
+                                className={`placed-feature-card ${isSelected ? 'selected' : ''} ${
+                                  isHidden ? 'hidden-layer' : ''
+                                } ${isLocked ? 'locked-layer' : ''}`}
+                                onClick={() => onSelectFeature(feature.id)}
+                              >
+                                <div className="feat-card-main">
+                                  <FeatureTypeIcon type={feature.type} />
+                                  <span className="feat-card-name" title={featureLabel(feature)}>
+                                    {featureLabel(feature)}
+                                  </span>
+                                </div>
+                                <div className="layer-actions">
+                                  <button
+                                    type="button"
+                                    className={`layer-btn ${isHidden ? 'active-toggle' : ''}`}
+                                    title={isHidden ? 'Show feature' : 'Hide feature'}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onUpdateFeature(feature.id, { hidden: !isHidden });
+                                    }}
+                                  >
+                                    {isHidden ? <SvgEyeOffIcon /> : <SvgEyeIcon />}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`layer-btn ${isLocked ? 'active-toggle' : ''}`}
+                                    title={isLocked ? 'Unlock feature 3D dragging' : 'Lock feature 3D dragging'}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onUpdateFeature(feature.id, { locked: !isLocked });
+                                    }}
+                                  >
+                                    {isLocked ? <SvgLockIcon /> : <SvgUnlockIcon />}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="layer-btn"
+                                    title="Duplicate feature"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const dup = cloneFeatureAt(feature, {
+                                        u: Math.min(feature.u + 0.05, 1),
+                                        v: feature.v,
+                                      });
+                                      onAddFeature(dup);
+                                      onSelectFeature(dup.id);
+                                    }}
+                                  >
+                                    <SvgCopyIcon />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="layer-btn layer-btn-danger"
+                                    title="Delete feature"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onRemoveFeature(feature.id);
+                                    }}
+                                  >
+                                    <SvgTrashIcon />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 3: STUDIO & SHADING */}
+      {activeTab === 'studio' && (
+        <>
+          <SectionCard title="Viewport Studio &amp; Shading" icon={<SidebarSectionIcon type="viewport" />} defaultOpen={true}>
+            <FieldsGrid2Col>
+              {onChangeShadingMode && (
+                <label className="field">
+                  <span>Shading</span>
+                  <select
+                    value={shadingMode}
+                    onChange={(e) => onChangeShadingMode(e.target.value as 'smooth' | 'flat')}
+                  >
+                    <option value="smooth">Smooth</option>
+                    <option value="flat">Flat / Faceted</option>
+                  </select>
+                </label>
+              )}
+              {onChangeMaterialPreset && (
+                <label className="field">
+                  <span>Material theme</span>
+                  <select
+                    value={materialPreset}
+                    onChange={(e) => onChangeMaterialPreset(e.target.value as MaterialPreset)}
+                  >
+                    <option value="default">Radio Classic</option>
+                    <option value="tactical-black">Tactical Matte Black</option>
+                    <option value="gunmetal">Gunmetal Gray</option>
+                    <option value="olive-drab">Olive Drab Green</option>
+                    <option value="radio-orange">Radio Orange</option>
+                  </select>
+                </label>
+              )}
+            </FieldsGrid2Col>
+          </SectionCard>
+
+          <SectionCard title="Mesh Quality &amp; Tessellation" icon={<SidebarSectionIcon type="viewport" />} defaultOpen={true}>
+            <div className="lid-view-buttons" style={{ marginBottom: '8px' }}>
+              {[
+                { label: 'Draft (20)', val: 20 },
+                { label: 'Standard (32)', val: 32 },
+                { label: 'High (64)', val: 64 },
+                { label: 'Ultra (128)', val: 128 },
+              ].map((item) => (
+                <button
+                  key={item.val}
+                  type="button"
+                  className={`btn-lid-mode ${(project.tessellation?.liveSegments ?? 32) === item.val ? 'active' : ''}`}
+                  onClick={() => setLiveSegments(item.val)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <FieldsGrid2Col>
+              <NumberField
+                label="Live segments"
+                value={project.tessellation?.liveSegments ?? 32}
+                min={16}
+                max={128}
+                step={4}
+                onChange={setLiveSegments}
+              />
+              <NumberField
+                label="Export segments"
+                value={project.tessellation?.exportSegments ?? 64}
+                min={32}
+                max={256}
+                step={8}
+                onChange={setExportSegments}
+              />
+            </FieldsGrid2Col>
+          </SectionCard>
+        </>
+      )}
     </div>
   );
 }

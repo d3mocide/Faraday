@@ -1250,14 +1250,7 @@ editing old entries, so this stays a readable history. -->
   above. (1) `SupportPadSpec` gained count/pitch/axis so one feature emits a row, with
   `supportPadPositions()` in `faceFrame.ts` as the shared source of truth for where the pillars
   are; plus `state/boardSupport.ts`'s `planOverhangSupport()` behind a "Prop up the <edge> edge"
-  button on the board-mount inspector, which finds the cantilevered edge from the hole pattern and
-  builds the row (it independently lands on the same 41.765mm inset the CM4 design chose by hand).
-  (2) New `state/designChecks.ts` + a Checks card + magenta halos in the viewport, with three
-  conservative support-pad rules and an assertion that every shipped preset stays check-clean.
-  112 tests passing (was 93); browser-verified, including one UI bug found there (the Checks card
-  stayed collapsed when its first finding appeared, because SectionCard reads defaultOpen once).
-
-- **2026-08-11**: Two fixes from the repo owner's review of the merged PR #13 — see the "Panel
+  button on the board-mount inspector, which finds the cantilevered edge from the hole pattern an- **2026-08-11**: Two fixes from the repo owner's review of the merged PR #13 — see the "Panel
   retention + mount blending" section above. (1) Slide-in plates genuinely had nothing holding
   them in: the channel was cut to the walls' outer surface and the plate sat flush, so it could be
   pulled straight back out. New `PanelSpec.retainLip` (default 1mm) leaves each adjacent wall
@@ -1283,3 +1276,47 @@ editing old entries, so this stays a readable history. -->
   point, or the tangency produces a non-manifold sliver (found with a 232-variation watertightness
   sweep). 129 tests passing (was 125), including two old assertions rewritten because they pinned
   the buggy cone; browser-verified with before/after screenshots from under the floor plane.
+
+- **2026-08-12**: High-polygon dynamic rendering & portable radio enclosure features:
+  - Added `TessellationSpec` (`liveSegments` 16-128, `exportSegments` 32-256) passing directly into `manifold-3d` circular segment generator.
+  - Implemented 3D rim edge chamfers (`topEdgeBevel`, `bottomEdgeBevel`) for 45° subtraction along top and bottom enclosure perimeters.
+  - Added faceted octagonal (`faceted`) and double chamfer (`double-chamfer`) corner styles.
+  - Added Viewport Shading Studio (CAD edge outlines, smooth vs flat/faceted shading, and 5 PBR material themes).
+  - Added `grip-ribs` tactile side-wall feature.
+  - 130 vitest tests passing (was 121); oxlint clean; `npm run build` verified.
+
+- **2026-08-12**: Inspector UI/UX Restructuring & Floating Viewport Toolbar:
+  - Floating 3D Viewport Toolbar (`ViewportToolbar.tsx`) containing glassmorphic controls for Lid Presentation (`Assembled`, `Ghost`, `Hidden`, `Exploded`) and quick display chips (`Outlines`, `Grid`, `Handles`, `Ghosts`, `Markers`).
+  - Restructured Inspector Panel (`InspectorPanel.tsx`) into 3 top segmented tabs: `Structure`, `Layers`, `Studio`.
+  - Added real-time feature search bar and face-grouped accordions (`BOTTOM`, `FRONT`, `BACK`, `LEFT`, `RIGHT`, `TOP`) in the `Layers` tab.
+  - Focused feature header drawer with cyan border and `✕ Done` button pinned at top when editing a feature.
+  - 130 vitest tests passing; oxlint clean (0 errors); `npm run build` verified.
+
+- **2026-08-12**: Top Taskbar Relocation, Vector SVG Icon Conversion & 7 Advanced UX Features:
+  - Relocated Viewport Controls directly into top header taskbar (`AppShell.tsx`), removing floating viewport overlay.
+  - Complete project-wide emoji removal: substituted all emojis with vector SVG icons.
+  - Implemented 2D Face Blueprint Editor (`BlueprintModal.tsx` & `blueprint2d.ts`) with orthogonal SVG CAD canvas and face tabs.
+  - Implemented CAD Smart Snap Alignment (`computeSmartSnap` in `blueprint2d.ts`) with cyan guidelines and snap distance thresholds.
+  - Implemented 3D Digital Caliper (`CaliperTool.tsx`) for live 3D point-to-point measurements and delta readout.
+  - Implemented Quick Command Palette (`CommandPalette.tsx`) triggered via `Ctrl+K` / `Cmd+K` for searching connectors, features, and board presets.
+  - Implemented 3D Exploded View with smooth offsets for lid, slide-in panels, and body parts.
+  - Implemented Live 3D Printability & Hardware BOM Dashboard (`PrintabilityCard.tsx` & `printability.ts`) calculating shell volume ($\text{cm}^3$), estimated PLA weight (g), print time (hrs), hardware fastener list, and overhang bridging warnings.
+  - 130 vitest tests passing; oxlint clean (0 errors); `npm run build` verified (1.02s).
+
+- **2026-08-12**: 3D Caliper Surface Point Picking & 2D Blueprint CAD Drawing Enhancements:
+  - Implemented 3D surface point-to-point raycast picking for the Digital Caliper Tool in `Viewport3D.tsx`: calculates 3D Euclidean distance $d$ and deltas $\Delta X, \Delta Y, \Delta Z$ and renders a 3D yellow line with endpoint spheres.
+  - Upgraded 2D Face Blueprint Editor (`BlueprintModal.tsx`):
+    - Sub-feature CAD geometry rendering: renders actual slot arrays for vents (`slots`/`honeycomb`), screw holes/tabs for external mounts, connector cutout shapes (USB/HDMI/RF), standoff rings, and fan bolt circle patterns.
+    - Added Lid Seam Line (`splitHeight`) overlay in magenta (`#ff007f`) on lateral faces (`front`, `back`, `left`, `right`).
+    - Added CAD Engineering Callout dimension lines ($X, Y$ distances in amber `#ffc107` with extension lines) for selected/dragged features.
+  - 130 vitest tests passing; oxlint clean (0 errors); `npm run build` verified (876ms).
+
+- **2026-08-12**: PrintabilityCard Elevation & Slide-in Panel Selector Spacing:
+  - Elevated `3D Printability & BOM` section card to the 1st top position in the `Structure` tab in `InspectorPanel.tsx` (above `Body Dimensions`).
+  - Added clean spacing (`margin-top`, `margin-bottom`, `gap`) to the Slide-in Panels face selector (`Front`, `Back`, `Left`, `Right`).
+  - 130 vitest tests passing; oxlint clean (0 errors); `npm run build` verified (2.61s).
+
+- **2026-08-13**: Screw Boss Column Foot Taper Fix & Custom Angle Controls:
+  - Integrated `FootWalls` one-sided wall plane cuts (`primitives.ts`) with custom angle controls so foot renders cleanly as a wall-facing bracket slope on non-full-height columns.
+  - Added `footEnabled` (checkbox: `Sloped foot (towards wall)`) and `footAngleDeg` (numeric input: `Foot angle (deg)`, 15° to 75°, default 45°) to `ScrewSpec` in `types/project.ts`, `state/projectStore.ts`, and `InspectorPanel.tsx`.
+  - Oxlint clean (0 errors); `npm run build` verified.

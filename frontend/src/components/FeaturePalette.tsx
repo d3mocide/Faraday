@@ -12,7 +12,8 @@ export type ArmedFeatureTemplate =
   | { type: 'custom-hole'; label: string }
   | { type: 'external-mount'; label: string; mountStyle: 'flange' | 'boss' }
   | { type: 'fan-mount'; label: string; fanSize: number }
-  | { type: 'support-pad'; label: string };
+  | { type: 'support-pad'; label: string }
+  | { type: 'grip-ribs'; label: string };
 
 interface FeaturePaletteProps {
   armed: ArmedFeatureTemplate | null;
@@ -402,6 +403,17 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
                   <span className="dim-badge">Custom</span>
                 </div>
                 <span className="card-note">Custom circular or rectangular cutout</span>
+              </button>
+              <button
+                type="button"
+                className={armed?.type === 'grip-ribs' ? 'palette-card armed' : 'palette-card'}
+                onClick={() => onArm({ type: 'grip-ribs', label: 'Grip Ribs' })}
+              >
+                <div className="card-top">
+                  <span className="card-name">Grip Ribs</span>
+                  <span className="dim-badge">Tactical</span>
+                </div>
+                <span className="card-note">Parallel recessed tactile grip slots</span>
               </button>
             </div>
           </section>

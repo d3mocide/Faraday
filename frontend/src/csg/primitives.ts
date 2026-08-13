@@ -1,6 +1,7 @@
 import type { CrossSection, Manifold, ManifoldToplevel } from 'manifold-3d';
 import type {
   CornerStyle,
+  EdgeBevelSpec,
   GasketSpec,
   ScrewColumnShape,
   ScrewCount,
@@ -27,6 +28,52 @@ export function footprintCrossSection(
       radius,
       'Round',
     );
+  }
+
+  if (cornerStyle.type === 'faceted') {
+    const r = Math.min(Math.max(radius, 3), maxRadius - 0.001);
+    const hl = length / 2;
+    const hw = width / 2;
+    const points: [number, number][] = [
+      [-hl + r, -hw],
+      [hl - r, -hw],
+      [hl, -hw + r],
+      [hl, hw - r],
+      [hl - r, hw],
+      [-hl + r, hw],
+      [-hl, hw - r],
+      [-hl, -hw + r],
+    ];
+    return new CrossSection(points);
+  }
+
+  if (cornerStyle.type === 'double-chamfer') {
+    const r = Math.min(radius, maxRadius - 0.001);
+    const r1 = r * 0.4;
+    const r2 = r * 0.8;
+    const hl = length / 2;
+    const hw = width / 2;
+    const points: [number, number][] = [
+      [-hl + r, -hw],
+      [hl - r, -hw],
+      [hl - r + r1, -hw + (r - r2)],
+      [hl - (r - r2), -hw + r1],
+      [hl, -hw + r],
+      [hl, hw - r],
+      [hl, hw - r + (r - r2)],
+      [hl - (r - r2), hw - r1],
+      [hl - r + r1, hw],
+      [hl - r, hw],
+      [-hl + r, hw],
+      [-hl + r - r1, hw],
+      [-hl + (r - r2), hw - r1],
+      [-hl, hw - r],
+      [-hl, -hw + r],
+      [-hl, -hw + r - (r - r2)],
+      [-hl + (r - r2), -hw + r1],
+      [-hl + r - r1, -hw],
+    ];
+    return new CrossSection(points);
   }
 
   // chamfered: flat corner cuts of size `radius`
@@ -172,6 +219,8 @@ function columnSolid(
     : cylinderZ(wasm, size, height, zBottom);
 }
 
+
+
 /**
  * The wall planes a set of screw columns lean on, so a hanging column's foot knows which way to
  * slope. Interior columns sit inside the cavity with the wall outboard of them; exterior ones
@@ -251,35 +300,31 @@ function footAnchors(
   return anchors;
 }
 
-/** Everything under a plane that climbs at 45 degrees along `dx, dy`, so that intersecting a
- * column with it shaves the column's far side away at exactly the rate the column descends. The
- * plane is positioned to graze the column's outer edge at z = zBottom, which is what makes the
- * foot start as the full cross-section and lose material only on the way down. */
+/** Everything under a plane that climbs at specified angle (default 45 degrees) along `dx, dy`,
+ * so that intersecting a column with it shaves the column's far side away at exactly the rate the column descends. */
 function footSlopeSolid(
   wasm: ManifoldToplevel,
   extent: number,
   zBottom: number,
   anchor: FootAnchor,
+  screw: ScrewSpec,
 ): Manifold {
+  const angleDeg = Math.min(Math.max(screw.footAngleDeg ?? 45, 15), 75);
   // Keep the half-space `s - z <= extent - zBottom`, where s is distance along the anchor.
   const offset = extent + FOOT_SLOPE_CLEARANCE - zBottom;
   const big = 200 + 4 * (extent + zBottom + Math.abs(offset));
   const yawDeg = (Math.atan2(anchor.dy, anchor.dx) * 180) / Math.PI;
   return wasm.Manifold.cube([big, big, big], true)
     .translate(-big / 2, 0, 0)
-    .rotate(0, 45, 0)
+    .rotate(0, angleDeg, 0)
     .translate(offset / 2, 0, -offset / 2)
     .rotate(0, 0, yawDeg);
 }
 
 /**
- * The sloped foot under a column that doesn't reach the floor: a 45-degree taper off its lower end
- * that runs back into the wall the column is welded to, instead of leaving it stopping dead in
- * mid-air. The taper is one-sided per wall -- it keeps the wall side of the column full and eats
- * away only the free side, so the slope actually lands on the wall (a cone shrinking away from
- * every side at once ends in a stub floating clear of it). The slope prints without support.
- * Returns null for a full-height column, which stands on the floor and needs nothing, or for one
- * with no wall within reach to slope into.
+ * The sloped foot under a column that doesn't reach the floor: a 45-degree (or customizable angle)
+ * slope tapering off its lower end back into the wall it's welded to, instead of leaving it stopping
+ * dead in mid-air or forming a cone. Returns null for a full-height column or when disabled.
  */
 function columnFoot(
   wasm: ManifoldToplevel,
@@ -287,15 +332,16 @@ function columnFoot(
   size: number,
   zBottom: number,
   anchors: FootAnchor[],
+  screw: ScrewSpec,
 ): Manifold | null {
-  if (anchors.length === 0) return null;
+  if (screw.footEnabled === false || anchors.length === 0) return null;
   const run = Math.min(Math.max(...anchors.map((anchor) => anchor.run)), zBottom);
   if (run < 0.6) return null;
 
   let foot = columnSolid(wasm, shape, size, run, zBottom - run);
   for (const anchor of anchors) {
     const extent = columnHalfExtent(shape, size, anchor.dx, anchor.dy);
-    foot = foot.intersect(footSlopeSolid(wasm, extent, zBottom, anchor));
+    foot = foot.intersect(footSlopeSolid(wasm, extent, zBottom, anchor, screw));
   }
   return foot;
 }
@@ -362,6 +408,7 @@ export function applyScrewBossLidAt(
       outerDiameter,
       zBottom,
       footAnchors([x, y], walls, shape, outerDiameter),
+      screw,
     );
     if (foot) nextBase = nextBase.add(foot.translate(x, y, 0));
 
@@ -441,6 +488,7 @@ function applyExteriorScrewBossLidAt(
       outerDiameter,
       zBottom,
       footAnchors([x, y], walls, shape, outerDiameter),
+      screw,
     );
     nextBase = nextBase
       .add(foot ? column.add(foot.translate(x, y, 0)) : column)
@@ -791,4 +839,92 @@ export function applyGasketChannelCylinder(
   const innerRing = cylinderShell(wasm, innerDiameter, channelDepth);
   const groove = outerRing.subtract(innerRing).translate(0, 0, splitHeight - channelDepth);
   return base.subtract(groove);
+}
+
+export function applyEdgeBevelsBox(
+  wasm: ManifoldToplevel,
+  shape: Manifold,
+  length: number,
+  width: number,
+  height: number,
+  topBevel?: EdgeBevelSpec,
+  bottomBevel?: EdgeBevelSpec,
+): Manifold {
+  let result = shape;
+  const maxBevel = Math.min(length, width, height) * 0.35;
+
+  if (topBevel && topBevel.type === 'chamfer' && topBevel.size > 0) {
+    const s = Math.min(topBevel.size, maxBevel);
+    const sz = s * 2;
+    const lenExt = length + 20;
+    const widExt = width + 20;
+
+    const cutTopY1 = wasm.Manifold.cube([lenExt, sz, sz], true)
+      .rotate(45, 0, 0)
+      .translate(0, width / 2, height);
+    const cutTopY2 = wasm.Manifold.cube([lenExt, sz, sz], true)
+      .rotate(45, 0, 0)
+      .translate(0, -width / 2, height);
+    const cutTopX1 = wasm.Manifold.cube([sz, widExt, sz], true)
+      .rotate(0, -45, 0)
+      .translate(length / 2, 0, height);
+    const cutTopX2 = wasm.Manifold.cube([sz, widExt, sz], true)
+      .rotate(0, 45, 0)
+      .translate(-length / 2, 0, height);
+
+    result = result.subtract(cutTopY1).subtract(cutTopY2).subtract(cutTopX1).subtract(cutTopX2);
+  }
+
+  if (bottomBevel && bottomBevel.type === 'chamfer' && bottomBevel.size > 0) {
+    const s = Math.min(bottomBevel.size, maxBevel);
+    const sz = s * 2;
+    const lenExt = length + 20;
+    const widExt = width + 20;
+
+    const cutBotY1 = wasm.Manifold.cube([lenExt, sz, sz], true)
+      .rotate(45, 0, 0)
+      .translate(0, width / 2, 0);
+    const cutBotY2 = wasm.Manifold.cube([lenExt, sz, sz], true)
+      .rotate(45, 0, 0)
+      .translate(0, -width / 2, 0);
+    const cutBotX1 = wasm.Manifold.cube([sz, widExt, sz], true)
+      .rotate(0, -45, 0)
+      .translate(length / 2, 0, 0);
+    const cutBotX2 = wasm.Manifold.cube([sz, widExt, sz], true)
+      .rotate(0, 45, 0)
+      .translate(-length / 2, 0, 0);
+
+    result = result.subtract(cutBotY1).subtract(cutBotY2).subtract(cutBotX1).subtract(cutBotX2);
+  }
+
+  return result;
+}
+
+export function applyEdgeBevelsCylinder(
+  wasm: ManifoldToplevel,
+  shape: Manifold,
+  diameter: number,
+  height: number,
+  topBevel?: EdgeBevelSpec,
+  bottomBevel?: EdgeBevelSpec,
+): Manifold {
+  let result = shape;
+  const maxBevel = Math.min(diameter / 2, height) * 0.35;
+  const r = diameter / 2;
+
+  if (topBevel && topBevel.type === 'chamfer' && topBevel.size > 0) {
+    const s = Math.min(topBevel.size, maxBevel);
+    const outerCyl = wasm.Manifold.cylinder(s + 0.1, r + 5, r + 5).translate(0, 0, height - s);
+    const innerCone = wasm.Manifold.cylinder(s + 0.1, r - s, r).translate(0, 0, height - s);
+    result = result.subtract(outerCyl.subtract(innerCone));
+  }
+
+  if (bottomBevel && bottomBevel.type === 'chamfer' && bottomBevel.size > 0) {
+    const s = Math.min(bottomBevel.size, maxBevel);
+    const outerCyl = wasm.Manifold.cylinder(s + 0.1, r + 5, r + 5).translate(0, 0, -0.05);
+    const innerCone = wasm.Manifold.cylinder(s + 0.1, r, r - s).translate(0, 0, -0.05);
+    result = result.subtract(outerCyl.subtract(innerCone));
+  }
+
+  return result;
 }

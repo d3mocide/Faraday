@@ -883,3 +883,78 @@ describe('support pads', () => {
     for (const part of Object.values(solids)) part.delete();
   });
 });
+
+describe('Rendering studio: tessellation, edge bevels, corner styles & grip ribs', () => {
+  it('respects tessellation live and export segments', () => {
+    const project: EnclosureProject = {
+      ...makeBox({}),
+      tessellation: { liveSegments: 48, exportSegments: 128 },
+    };
+    const resLive = generateEnclosure(wasm, project, 'live');
+    for (const p of resLive.parts) {
+      expect(isWatertight(extractMeshData(p.manifold))).toBe(true);
+      p.manifold.delete();
+    }
+    const resExport = generateEnclosure(wasm, project, 'export');
+    for (const p of resExport.parts) {
+      expect(isWatertight(extractMeshData(p.manifold))).toBe(true);
+      p.manifold.delete();
+    }
+  });
+
+  it('generates watertight parts with faceted (octagonal) corner style', () => {
+    const project = makeBox({});
+    project.body.cornerStyle = { type: 'faceted', radius: 6 };
+    const res = generateEnclosure(wasm, project, 'live');
+    for (const p of res.parts) {
+      expect(isWatertight(extractMeshData(p.manifold))).toBe(true);
+      p.manifold.delete();
+    }
+  });
+
+  it('generates watertight parts with double-chamfer corner style', () => {
+    const project = makeBox({});
+    project.body.cornerStyle = { type: 'double-chamfer', radius: 5 };
+    const res = generateEnclosure(wasm, project, 'live');
+    for (const p of res.parts) {
+      expect(isWatertight(extractMeshData(p.manifold))).toBe(true);
+      p.manifold.delete();
+    }
+  });
+
+  it('generates watertight parts with top and bottom rim edge chamfers', () => {
+    const project = makeBox({});
+    project.body.topEdgeBevel = { type: 'chamfer', size: 2 };
+    project.body.bottomEdgeBevel = { type: 'chamfer', size: 2 };
+    const res = generateEnclosure(wasm, project, 'live');
+    for (const p of res.parts) {
+      expect(isWatertight(extractMeshData(p.manifold))).toBe(true);
+      p.manifold.delete();
+    }
+  });
+
+  it('generates watertight parts with tactical grip ribs placed on a face', () => {
+    const gripRibsFeature: Feature = {
+      id: 'ribs1',
+      type: 'grip-ribs',
+      face: 'front',
+      u: 0.5,
+      v: 0.5,
+      rotationDeg: 0,
+      ribs: {
+        count: 5,
+        depth: 1.0,
+        width: 2.0,
+        spacing: 4.0,
+        orientation: 'horizontal',
+        span: 25,
+      },
+    };
+    const project = makeBox({ features: [gripRibsFeature] });
+    const res = generateEnclosure(wasm, project, 'live');
+    for (const p of res.parts) {
+      expect(isWatertight(extractMeshData(p.manifold))).toBe(true);
+      p.manifold.delete();
+    }
+  });
+});

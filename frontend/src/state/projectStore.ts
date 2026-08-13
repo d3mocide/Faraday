@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   BodyShape,
   CornerStyleType,
+  EdgeBevelSpec,
   EnclosureBody,
   EnclosureProject,
   Feature,
@@ -64,6 +65,8 @@ interface ProjectStore {
   setScrewColumnShape: (shape: ScrewColumnShape) => void;
   setScrewHeadStyle: (headStyle: ScrewHeadStyle) => void;
   setScrewColumnHeight: (height: number | undefined) => void;
+  setScrewFootEnabled: (enabled: boolean) => void;
+  setScrewFootAngleDeg: (angle: number) => void;
   setGasketEnabled: (enabled: boolean) => void;
   setGasketWidth: (value: number) => void;
   setGasketDepth: (value: number) => void;
@@ -74,6 +77,10 @@ interface ProjectStore {
   setPanelGrooveDepth: (value: number) => void;
   setPanelCaptureInLid: (value: boolean) => void;
   setPanelRetainLip: (value: number) => void;
+  setLiveSegments: (segments: number) => void;
+  setExportSegments: (segments: number) => void;
+  setTopEdgeBevel: (spec: EdgeBevelSpec | undefined) => void;
+  setBottomEdgeBevel: (spec: EdgeBevelSpec | undefined) => void;
   addFeature: (feature: Feature) => void;
   updateFeature: (id: string, patch: Partial<Feature>) => void;
   removeFeature: (id: string) => void;
@@ -210,6 +217,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
     setScrewColumnHeight: (height) =>
       mutate(patchScrew((screw) => ({ ...screw, columnHeight: height }))),
 
+    setScrewFootEnabled: (enabled) =>
+      mutate(patchScrew((screw) => ({ ...screw, footEnabled: enabled }))),
+
+    setScrewFootAngleDeg: (angle) =>
+      mutate(patchScrew((screw) => ({ ...screw, footAngleDeg: angle }))),
+
     setGasketEnabled: (enabled) =>
       mutate((p) => ({
         ...p,
@@ -268,6 +281,30 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
       mutate(patchPanels((panels) => ({ ...panels, captureInLid: value }))),
 
     setPanelRetainLip: (value) => mutate(patchPanels((panels) => ({ ...panels, retainLip: value }))),
+
+    setLiveSegments: (segments) =>
+      mutate((p) => ({
+        ...p,
+        tessellation: {
+          liveSegments: Math.max(16, Math.min(128, segments)),
+          exportSegments: p.tessellation?.exportSegments ?? 64,
+        },
+      })),
+
+    setExportSegments: (segments) =>
+      mutate((p) => ({
+        ...p,
+        tessellation: {
+          liveSegments: p.tessellation?.liveSegments ?? 32,
+          exportSegments: Math.max(32, Math.min(256, segments)),
+        },
+      })),
+
+    setTopEdgeBevel: (spec) =>
+      mutate((p) => ({ ...p, body: { ...p.body, topEdgeBevel: spec } })),
+
+    setBottomEdgeBevel: (spec) =>
+      mutate((p) => ({ ...p, body: { ...p.body, bottomEdgeBevel: spec } })),
 
     addFeature: (feature) => mutate((p) => ({ ...p, features: [...p.features, feature] })),
 

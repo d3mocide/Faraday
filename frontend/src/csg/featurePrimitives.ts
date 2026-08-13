@@ -734,3 +734,64 @@ export function buildBoardMount(
   }
   return wasm.Manifold.union(standoffs);
 }
+
+/** Builds a grip-ribs feature: parallel recessed tactile grip slots cut into a wall face. */
+export function buildGripRibs(
+  wasm: ManifoldToplevel,
+  feature: Feature,
+  geom: BodyGeometry,
+  wallThickness: number,
+): Manifold {
+  const { CrossSection } = wasm;
+  const spec = feature.ribs ?? {
+    count: 5,
+    depth: 1.2,
+    width: 2.0,
+    spacing: 4.0,
+    orientation: 'horizontal',
+    span: 30,
+  };
+
+  const count = Math.max(Math.round(spec.count), 1);
+  const depth = Math.min(Math.max(spec.depth, 0.4), wallThickness - 0.2);
+  const slotW = Math.max(spec.width, 0.5);
+  const pitch = Math.max(spec.spacing, slotW + 0.5);
+  const span = Math.max(spec.span, 5);
+  const radius = Math.min(slotW / 2 - 0.01, 2);
+
+  let compoundCross: CrossSection | null = null;
+  const totalOffset = (count - 1) * pitch;
+
+  for (let i = 0; i < count; i++) {
+    const offset = i * pitch - totalOffset / 2;
+    const w = spec.orientation === 'horizontal' ? span : slotW;
+    const h = spec.orientation === 'horizontal' ? slotW : span;
+    const r = Math.min(radius, Math.min(w, h) / 2 - 0.01);
+
+    const slotCross =
+      r > 0
+        ? CrossSection.square([Math.max(w - 2 * r, 0.1), Math.max(h - 2 * r, 0.1)], true).offset(r, 'Round')
+        : CrossSection.square([w, h], true);
+
+    const translatedSlot =
+      spec.orientation === 'horizontal'
+        ? slotCross.translate(0, offset)
+        : slotCross.translate(offset, 0);
+
+    compoundCross = compoundCross ? compoundCross.add(translatedSlot) : translatedSlot;
+  }
+
+  if (!compoundCross) compoundCross = CrossSection.square([span, slotW], true);
+
+  const rotatedCross = compoundCross.rotate(feature.rotationDeg);
+  const cutDepth = depth + 0.5;
+
+  const slotSolid = orientAlongFace(
+    rotatedCross.extrude(cutDepth, undefined, undefined, undefined, true),
+    feature.face,
+    feature.u,
+  );
+
+  const [x, y, z] = faceFrame(feature.face, geom).toWorld(feature.u, feature.v);
+  return slotSolid.translate(x, y, z);
+}

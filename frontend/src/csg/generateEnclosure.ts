@@ -8,6 +8,7 @@ import {
   buildCustomHole,
   buildExternalMount,
   buildFanMount,
+  buildGripRibs,
   buildStandoff,
   buildSupportPad,
   buildVentCutout,
@@ -16,6 +17,8 @@ import { effectiveSplitHeight } from './lidSplit';
 import { orientPanelForPrint, panelChannelCut, panelPlate } from './panels';
 import { featurePart, panelMetrics, panelPartId, partLabel, type PartId } from './parts';
 import {
+  applyEdgeBevelsBox,
+  applyEdgeBevelsCylinder,
   applyFrictionLipLid,
   applyFrictionLipLidCylinder,
   applyGasketChannelBox,
@@ -61,7 +64,9 @@ export function generateEnclosure(
   project: EnclosureProject,
   quality: CsgQuality,
 ): EnclosureResult {
-  wasm.setCircularSegments(quality === 'export' ? 64 : 20);
+  const liveSegs = project.tessellation?.liveSegments ?? 32;
+  const exportSegs = project.tessellation?.exportSegments ?? 64;
+  wasm.setCircularSegments(quality === 'export' ? exportSegs : liveSegs);
 
   const { body } = project;
   const height = body.outer.height;
@@ -78,6 +83,15 @@ export function generateEnclosure(
   if (body.shape === 'box') {
     const { length, width } = body.outer;
     outerShape = boxShell(wasm, length, width, height, body.cornerStyle);
+    outerShape = applyEdgeBevelsBox(
+      wasm,
+      outerShape,
+      length,
+      width,
+      height,
+      body.topEdgeBevel,
+      body.bottomEdgeBevel,
+    );
     innerLength = Math.max(length - 2 * wallThickness, 1);
     innerWidth = Math.max(width - 2 * wallThickness, 1);
     const innerHeight = Math.max(height - 2 * wallThickness, 1);
@@ -89,6 +103,14 @@ export function generateEnclosure(
   } else {
     const { diameter } = body.outer;
     outerShape = cylinderShell(wasm, diameter, height);
+    outerShape = applyEdgeBevelsCylinder(
+      wasm,
+      outerShape,
+      diameter,
+      height,
+      body.topEdgeBevel,
+      body.bottomEdgeBevel,
+    );
     innerDiameter = Math.max(diameter - 2 * wallThickness, 1);
     const innerHeight = Math.max(height - 2 * wallThickness, 1);
     innerShape = cylinderShell(wasm, innerDiameter, innerHeight).translate(0, 0, wallThickness);
@@ -283,6 +305,8 @@ export function generateEnclosure(
       cutout = buildVentCutout(wasm, feature, geom, wallThickness);
     } else if (feature.type === 'custom-hole' && feature.custom) {
       cutout = buildCustomHole(wasm, feature, geom, wallThickness);
+    } else if (feature.type === 'grip-ribs') {
+      cutout = buildGripRibs(wasm, feature, geom, wallThickness);
     }
     if (cutout) subtractFrom(featurePart(feature, body), cutout);
   }

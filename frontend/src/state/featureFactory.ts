@@ -232,6 +232,25 @@ export function buildFeatureFromTemplate(
     };
   }
 
+  if (template.type === 'grip-ribs') {
+    return {
+      id,
+      type: 'grip-ribs',
+      face,
+      u,
+      v,
+      rotationDeg: 0,
+      ribs: {
+        count: 5,
+        depth: 1.2,
+        width: 2.0,
+        spacing: 4.0,
+        orientation: 'horizontal',
+        span: 30,
+      },
+    };
+  }
+
   return {
     id,
     type: 'connector-cutout',
