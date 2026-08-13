@@ -21,7 +21,10 @@ points here. If something here conflicts with `DESIGN.md` or `PROGRESS.md`, thos
 ├── AGENTS.md            this file
 ├── CLAUDE.md             thin pointer to this file
 ├── README.md
-├── docker-compose.yml   builds ./frontend, serves on :8090
+├── docker-compose.yml   pulls the published image from GHCR, serves on :8090 (self-hosting)
+├── docker-compose.dev.yml  builds ./frontend from source (local dev / testing Dockerfile changes)
+├── CHANGELOG.md          per-release notes; entries here become GitHub Release bodies
+├── .github/workflows/    docker-release.yml — tag-gated multi-arch build + GHCR publish + release
 └── frontend/            the entire app (static Vite/React SPA, no backend)
     ├── Dockerfile, Caddyfile
     ├── package.json, vite.config.ts, tsconfig*.json, .oxlintrc.json
@@ -88,12 +91,20 @@ pattern to follow:
 - **Verify before calling a phase done.** This is a UI-heavy app; run the dev server and exercise
   the golden path (and the obvious edge cases) in a real browser before reporting success. Type
   checking (`tsc -b`) and lint (`oxlint`) catch correctness of code, not correctness of behavior.
-- Before considering any change complete: `cd frontend && npm run lint && npm run build`. There is
-  no automated test suite yet (Phase 0-1 verification was manual/Playwright-driven, see
-  PROGRESS.md) — flag this explicitly rather than claiming test coverage that doesn't exist.
+- Before considering any change complete: `cd frontend && npm run lint && npm run build && npm test`.
+  The vitest suite (`frontend/test/`) covers CSG/geometry logic; it does not replace browser
+  verification for UI/interaction behavior — flag that gap explicitly rather than claiming UI test
+  coverage that doesn't exist.
 - **Update `PROGRESS.md` at the end of every session/phase**: the status table at the top, and a
   new dated entry *appended* to the Session log (don't rewrite old entries — it's a history, not a
   snapshot). Note any new known issues/gotchas future sessions need.
+- **Cutting a release**: add a dated entry to `CHANGELOG.md` under a new `## [vX.Y.Z]` heading (pre-
+  1.0, so breaking changes are fine between minor versions), merge to `main`, then push a matching
+  `vX.Y.Z` git tag. That tag push is what triggers `.github/workflows/docker-release.yml` — it
+  lint/build/test-gates the code, publishes a multi-arch (amd64+arm64) image to
+  `ghcr.io/d3mocide/faraday`, and creates a GitHub Release using that CHANGELOG section as the
+  body. Use a `-beta.N`/`-rc.N` suffix for pre-releases; only a suffix-free tag gets the `latest`
+  and major.minor floating tags.
 - Branch/PR flow: one feature branch per unit of work, draft PRs, don't push straight to a default
   branch. Match whatever branch-naming/PR conventions are already in use in the repo's history.
 

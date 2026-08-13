@@ -1,0 +1,9 @@
+# docker-compose.dev.yml — builds ./frontend from source. Use this for local development, or to
+# test a change to the Dockerfile/Caddyfile before it's published. For normal self-hosted use
+# (pulling the published image instead of building), see docker-compose.yml.
+services:
+  faraday:
+    build: ./frontend
+    ports:
+      - "8090:80"
+    restart: unless-stopped

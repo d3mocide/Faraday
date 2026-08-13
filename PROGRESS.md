@@ -30,7 +30,10 @@ DESIGN.md §4). Root holds only planning docs and deployment orchestration:
 ├── AGENTS.md            repo structure / coding / workflow rules for any agent (or human)
 ├── CLAUDE.md             thin pointer to AGENTS.md
 ├── README.md            quick-start
-├── docker-compose.yml   builds ./frontend, serves on :8090
+├── CHANGELOG.md          per-release notes; source for GitHub Release bodies
+├── docker-compose.yml   pulls the published image from GHCR, serves on :8090 (self-hosting)
+├── docker-compose.dev.yml  builds ./frontend from source (local dev / testing Dockerfile changes)
+├── .github/workflows/    docker-release.yml — tag-gated multi-arch build + GHCR publish + release
 └── frontend/
     ├── Dockerfile, Caddyfile   (build/serve config, scoped to the frontend build context)
     ├── package.json, vite.config.ts, tsconfig*.json, .oxlintrc.json
@@ -295,9 +298,15 @@ targeted, documented escape hatch — reach for that before revisiting this.
 - Production bundle is ~845KB (gzip ~228KB) for the main chunk — three.js + JSZip + the manifold
   WASM loader are the bulk. Not yet addressed. Candidate fix: dynamic `import()` the export path
   (JSZip/STLExporter) since it's only needed after clicking Export, not on initial load.
-- Docker image build was **not** verified (no docker daemon available in the sandbox this was
-  built in). `Dockerfile`/`Caddyfile` follow DESIGN.md §11 exactly; worth a real `docker compose up
-  --build` smoke test before relying on it.
+- Docker image build **was verified** in the 2026-08-13 release-pipeline session (see below): a
+  real `docker build ./frontend` + container run confirmed `index.html`, the SPA fallback route,
+  and the `manifold-3d` wasm asset all serve correctly. `linux/arm64` was validated by inspection
+  (QEMU cross-emulation of arbitrary `RUN` steps doesn't work in *this* sandbox's nested-container
+  setup — a sandbox limitation, not something specific to this Dockerfile) rather than an actual
+  emulated build; there's nothing platform-specific in the Dockerfile (pure npm/vite build, no
+  native compilation, and both `node:22-alpine`/`caddy:2-alpine` publish arm64 images), so it
+  should build the same way GitHub Actions' `docker/setup-qemu-action` does it — worth confirming
+  once the first real `arm64` image is published and someone can pull it on real arm64 hardware.
 - **Snap-fit's nub/pocket is a plain sphere pair, no lead-in ramp or catching ledge** — see the
   Phase 5 notes above. Functions as a retention feature but with less holding force than an
   engineered wedge profile would give; revisit if real-world prints show the lid popping off too
@@ -1344,3 +1353,45 @@ editing old entries, so this stays a readable history. -->
   - Added `CYD_MOUNT` ($91.5 \times 52\text{ mm}$ PCB outline, 4-corner $84.5 \times 45\text{ mm}$ pitch M3 standoff pattern) in `presets/boardMounts.ts`.
   - Added `cyd-esp32-2432s028` preset in `presets/boards.ts` complete with top lid $60 \times 46\text{ mm}$ TFT touchscreen display bezel cutout, USB-C power port, MicroSD card slot, 3.5mm audio jack opening, and rear cooling vents.
   - 137 vitest unit tests passing; oxlint clean (0 errors); `npm run build` verified (635ms).
+
+## Release pipeline: first beta, Docker publish, GHCR (2026-08-13 session)
+
+The app has been developed straight off `main` with no cut releases and no CI so far — this
+session adds the first release/publish pipeline and cuts the first tag.
+
+- **New `.github/workflows/docker-release.yml`**, gated entirely on pushing a `vMAJOR.MINOR.PATCH[-
+  PRERELEASE]` git tag (nothing else triggers it): a `verify` job (`npm ci && lint && build &&
+  test`) gates a `build-and-push` job that cross-builds `linux/amd64` + `linux/arm64` via
+  `docker/setup-qemu-action` + Buildx and pushes to `ghcr.io/d3mocide/faraday`, which gates a
+  `release` job that cuts a GitHub Release. `docker/metadata-action` only applies the `latest` and
+  bare-`major.minor` tags to a suffix-free tag (no `latest` pointing at a beta); any `-beta` tag
+  also gets the floating `beta` tag, which is what `docker-compose.yml` tracks until a real stable
+  release exists.
+- **Release notes come from `CHANGELOG.md`**, not hand-written per release: the `release` job
+  `awk`-extracts the section between this tag's `## [x.y.z]` heading and the next one and passes it
+  as the release body (`generate_release_notes: true` appends GitHub's own commit list after it).
+  Verified the extraction against the new `[0.1.0-beta.1]` entry directly (correct section, no
+  bleed into the next heading) before wiring it into the workflow.
+- **`docker-compose.yml` now pulls the published image** (`ghcr.io/d3mocide/faraday:beta`) instead
+  of building locally — this is the self-hosting path. **New `docker-compose.dev.yml`** carries the
+  old `build: ./frontend` behavior forward for local development / testing Dockerfile changes.
+- **Versioned `0.1.0-beta.1`**: pre-1.0 because there's no automated UI/visual-regression coverage
+  yet (browser verification has been manual/Playwright-driven every session, per the entries
+  above) and several library values are still flagged "verify before printing" — both real gaps for
+  a 1.0 claim, not just caution. `-beta.1` because this is the first cut, full stop, not because
+  anything specific is known-broken.
+- **Docker build/serve verified for real** (see the updated Known-issues entry above): a docker
+  daemon happened to be available in this session's sandbox, so `docker build ./frontend` +
+  container run was smoke-tested directly (`index.html`, the SPA fallback route, and the
+  `manifold-3d` wasm asset all returned 200) rather than left as a standing "not verified" caveat.
+  `arm64` specifically could not be emulated end-to-end in this sandbox (QEMU's `binfmt_misc`
+  registration didn't extend into the nested container setup here — confirmed as a sandbox
+  limitation via `exec format error` on a trivial `RUN`, not a Dockerfile issue) — worth a real pull
+  on arm64 hardware once the first tag publishes.
+- **`AGENTS.md`'s Workflow section gained a "Cutting a release" step** (CHANGELOG entry → merge →
+  tag push) and its `npm run lint && npm run build` line grew `&& npm test` — the 137-test vitest
+  suite referenced throughout the log above was never actually reflected in that instruction.
+- Not done in this session: the tag itself. `v0.1.0-beta.1` is documented here and in
+  `CHANGELOG.md` as the plan, but cutting it (and therefore the first real GHCR publish + GitHub
+  Release) is left for after this PR merges to `main`, per the repo's tag-goes-on-main convention —
+  pushing a tag from a feature branch would trigger a real public package publish before review.
