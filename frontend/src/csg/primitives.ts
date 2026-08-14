@@ -159,7 +159,10 @@ export function wedgeShell(
   const ny = -dz / len;
   const nz = dy / len;
   const offset = ny * (-width / 2) + nz * heightFront;
-  const [wedge] = box.splitByPlane([0, ny, nz], offset);
+  // splitByPlane returns [above the plane, below it]; the wedge we want -- flat floor at z=0,
+  // sloped ceiling from heightFront to heightBack -- is the *below* half. Taking the first
+  // element here used to keep the inverted sliver instead, floating above the real wedge shape.
+  const [, wedge] = box.splitByPlane([0, ny, nz], offset);
   return wedge;
 }
 

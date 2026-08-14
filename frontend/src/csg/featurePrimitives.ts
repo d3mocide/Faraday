@@ -8,7 +8,7 @@ import type {
   Feature,
   VentSpec,
 } from '../types/project';
-import { cornerAnchor, faceFrame, supportPadPositions, type BodyGeometry } from './faceFrame';
+import { cornerAnchor, faceFrame, polygonFacetAngleDeg, supportPadPositions, type BodyGeometry } from './faceFrame';
 import { cylinderZ } from './primitives';
 
 interface HoleDims {
@@ -64,8 +64,12 @@ function holeCrossSection(wasm: ManifoldToplevel, dims: HoleDims): CrossSection 
  * through-wall direction never matters — but the in-plane axis mapping does for anything
  * non-square (rect connectors, vent patterns): left/right/side need the extra spin around Z so
  * local X follows the face's u axis instead of ending up vertical.
+ *
+ * `geom` disambiguates the polygon-facet and wedge-slope cases, which have no fixed orientation
+ * -- a hexagon's f1 and an octagon's f1 point different directions, and the slope angle depends
+ * on the wedge's own front/back heights.
  */
-function orientAlongFace(solid: Manifold, face: Face, u: number): Manifold {
+function orientAlongFace(solid: Manifold, face: Face, u: number, geom: BodyGeometry): Manifold {
   switch (face) {
     case 'top':
     case 'bottom':
@@ -80,6 +84,28 @@ function orientAlongFace(solid: Manifold, face: Face, u: number): Manifold {
       // Same frame as left/right at theta=0 (tangent=u, Z=v), then spun to the feature's angle.
       const thetaDeg = u * 360;
       return solid.rotate(90, 0, 0).rotate(0, 0, 90 + thetaDeg);
+    }
+    case 'f1':
+    case 'f2':
+    case 'f3':
+    case 'f4':
+    case 'f5':
+    case 'f6':
+    case 'f7':
+    case 'f8': {
+      // Same left/right-at-theta=0 frame as 'side' above, spun to this facet's own outward angle.
+      if (geom.shape !== 'hexagon' && geom.shape !== 'octagon') return solid.rotate(90, 0, 0);
+      const angleDeg = polygonFacetAngleDeg(face, geom.shape);
+      return solid.rotate(90, 0, 0).rotate(0, 0, 90 + angleDeg);
+    }
+    case 'slanted-top': {
+      if (geom.shape !== 'wedge') return solid.rotate(90, 0, 0);
+      // Tilt local Z (extrusion axis) from straight-up toward the slope's own outward normal --
+      // local X stays world X (=u) throughout, matching faceFrame's slanted-top toWorld, so no
+      // extra Z-spin is needed the way the facet/side cases above need one.
+      const { heightFront: hF, heightBack: hB, width } = geom;
+      const slopeDeg = (Math.atan2(hB - hF, width) * 180) / Math.PI;
+      return solid.rotate(slopeDeg, 0, 0);
     }
     default:
       return solid.rotate(90, 0, 0);
@@ -101,6 +127,7 @@ function extrudeThroughWall(
     cross.extrude(depth, undefined, undefined, undefined, true),
     feature.face,
     feature.u,
+    geom,
   );
   const [x, y, z] = faceFrame(feature.face, geom).toWorld(feature.u, feature.v);
   return solid.translate(x, y, z);
@@ -794,6 +821,7 @@ export function buildGripRibs(
     rotatedCross.extrude(cutDepth, undefined, undefined, undefined, true),
     feature.face,
     feature.u,
+    geom,
   );
 
   const [x, y, z] = faceFrame(feature.face, geom).toWorld(feature.u, feature.v);

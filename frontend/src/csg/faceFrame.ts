@@ -38,6 +38,29 @@ export function bodyGeometry(body: EnclosureBody): BodyGeometry {
   return { shape: 'wedge', length: body.outer.length, width: body.outer.width, heightFront: body.outer.heightFront, heightBack: body.outer.heightBack };
 }
 
+const HEX_FACES: Face[] = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6'];
+const OCT_FACES: Face[] = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'];
+
+/**
+ * Angle (radians, from +X) of a hexagon/octagon facet's own outward normal -- matches
+ * manifold-3d's `CrossSection.circle(r, n)` vertex phase (confirmed empirically: hex vertices
+ * land on 0/60/120…°, octagon vertices on 0/45/90…°), so a facet's *center* sits half a step
+ * further round: hexagon +30°, octagon +22.5°. Getting the octagon phase wrong here used to put
+ * every octagon facet frame straddling a vertex instead of centered on its own facet.
+ */
+function polygonFacetAngleRad(face: Face, shape: 'hexagon' | 'octagon'): number {
+  const faces = shape === 'hexagon' ? HEX_FACES : OCT_FACES;
+  const idx = Math.max(0, faces.indexOf(face));
+  const step = shape === 'hexagon' ? Math.PI / 3 : Math.PI / 4;
+  const phase = shape === 'hexagon' ? Math.PI / 6 : Math.PI / 8;
+  return step * idx + phase;
+}
+
+/** Same angle, in degrees -- for CSG code that spins solids with Manifold's `.rotate()`. */
+export function polygonFacetAngleDeg(face: Face, shape: 'hexagon' | 'octagon'): number {
+  return (polygonFacetAngleRad(face, shape) * 180) / Math.PI;
+}
+
 export function faceFrame(face: Face, geom: BodyGeometry): FaceFrame {
   if (geom.shape === 'cylinder') {
     const { diameter, height } = geom;
@@ -72,18 +95,18 @@ export function faceFrame(face: Face, geom: BodyGeometry): FaceFrame {
     }
   }
 
-  if (geom.shape === 'hexagon') {
+  if (geom.shape === 'hexagon' || geom.shape === 'octagon') {
     const { radius: r, height: h } = geom;
-    const rFlat = r * Math.cos(Math.PI / 6);
-    const faceW = r;
+    const n = geom.shape === 'hexagon' ? 6 : 8;
+    const rFlat = r * Math.cos(Math.PI / n);
+    const faceW = geom.shape === 'hexagon' ? r : 2 * r * Math.sin(Math.PI / n);
     if (face === 'top') {
       return { toWorld: (u, v) => [(u - 0.5) * 2 * r, (v - 0.5) * 2 * r, h], normalAt: () => [0, 0, 1] };
     }
     if (face === 'bottom') {
       return { toWorld: (u, v) => [(u - 0.5) * 2 * r, (v - 0.5) * 2 * r, 0], normalAt: () => [0, 0, -1] };
     }
-    const idx = Math.max(0, ['f1', 'f2', 'f3', 'f4', 'f5', 'f6'].indexOf(face));
-    const angle = (Math.PI / 3) * idx + Math.PI / 6;
+    const angle = polygonFacetAngleRad(face, geom.shape);
     const nx = Math.cos(angle);
     const ny = Math.sin(angle);
     const ux = -ny;
@@ -98,50 +121,9 @@ export function faceFrame(face: Face, geom: BodyGeometry): FaceFrame {
     };
   }
 
-  if (geom.shape === 'octagon') {
-    const { radius: r, height: h } = geom;
-    const rFlat = r * Math.cos(Math.PI / 8);
-    const faceW = 2 * r * Math.sin(Math.PI / 8);
-    if (face === 'top') {
-      return { toWorld: (u, v) => [(u - 0.5) * 2 * r, (v - 0.5) * 2 * r, h], normalAt: () => [0, 0, 1] };
-    }
-    if (face === 'bottom') {
-      return { toWorld: (u, v) => [(u - 0.5) * 2 * r, (v - 0.5) * 2 * r, 0], normalAt: () => [0, 0, -1] };
-    }
-    const idx = Math.max(0, ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'].indexOf(face));
-    const angle = (Math.PI / 4) * idx;
-    const nx = Math.cos(angle);
-    const ny = Math.sin(angle);
-    const ux = -ny;
-    const uy = nx;
-    return {
-      toWorld: (u, v) => [
-        nx * rFlat + ux * (u - 0.5) * faceW,
-        ny * rFlat + uy * (u - 0.5) * faceW,
-        v * h,
-      ],
-      normalAt: () => [nx, ny, 0],
-    };
-  }
-
-  if (geom.shape === 'stadium' || geom.shape === 'wedge') {
-    const l = geom.length;
-    const w = geom.width;
-    const h = geom.shape === 'wedge' ? geom.heightBack : geom.height;
+  if (geom.shape === 'stadium') {
+    const { length: l, width: w, height: h } = geom;
     switch (face) {
-      case 'slanted-top': {
-        if (geom.shape === 'wedge') {
-          const { heightFront: hF, heightBack: hB } = geom;
-          const dy = w;
-          const dz = hB - hF;
-          const len = Math.hypot(dy, dz);
-          return {
-            toWorld: (u, v) => [(u - 0.5) * l, (v - 0.5) * w, hF + v * dz],
-            normalAt: () => [0, -dz / len, dy / len],
-          };
-        }
-        return { toWorld: (u, v) => [(u - 0.5) * l, (v - 0.5) * w, h], normalAt: () => [0, 0, 1] };
-      }
       case 'top':
         return { toWorld: (u, v) => [(u - 0.5) * l, (v - 0.5) * w, h], normalAt: () => [0, 0, 1] };
       case 'bottom':
@@ -156,6 +138,38 @@ export function faceFrame(face: Face, geom: BodyGeometry): FaceFrame {
         return { toWorld: (u, v) => [l / 2, (u - 0.5) * w, v * h], normalAt: () => [1, 0, 0] };
       default:
         return { toWorld: (u, v) => [(u - 0.5) * l, (v - 0.5) * w, h], normalAt: () => [0, 0, 1] };
+    }
+  }
+
+  if (geom.shape === 'wedge') {
+    const { length: l, width: w, heightFront: hF, heightBack: hB } = geom;
+    const dz = hB - hF;
+    switch (face) {
+      case 'slanted-top': {
+        const dy = w;
+        const len = Math.hypot(dy, dz);
+        return {
+          toWorld: (u, v) => [(u - 0.5) * l, (v - 0.5) * w, hF + v * dz],
+          normalAt: () => [0, -dz / len, dy / len],
+        };
+      }
+      case 'bottom':
+        return { toWorld: (u, v) => [(u - 0.5) * l, (v - 0.5) * w, 0], normalAt: () => [0, 0, -1] };
+      // front (short wall) is heightFront tall; back (tall wall) is heightBack tall -- these used
+      // to both use heightBack, which floated the front wall's whole face above the actual wall.
+      case 'front':
+        return { toWorld: (u, v) => [(u - 0.5) * l, -w / 2, v * hF], normalAt: () => [0, -1, 0] };
+      case 'back':
+        return { toWorld: (u, v) => [(u - 0.5) * l, w / 2, v * hB], normalAt: () => [0, 1, 0] };
+      // left/right are still flat (an X=const plane trivially contains any Y/Z), but the slanted
+      // top makes them trapezoids: the wall's height ramps from heightFront at u=0 to heightBack
+      // at u=1, so v has to scale against that per-u height rather than a single constant.
+      case 'left':
+        return { toWorld: (u, v) => [-l / 2, (u - 0.5) * w, v * (hF + u * dz)], normalAt: () => [-1, 0, 0] };
+      case 'right':
+        return { toWorld: (u, v) => [l / 2, (u - 0.5) * w, v * (hF + u * dz)], normalAt: () => [1, 0, 0] };
+      default:
+        return { toWorld: (u, v) => [(u - 0.5) * l, (v - 0.5) * w, hB], normalAt: () => [0, 0, 1] };
     }
   }
 
@@ -194,22 +208,33 @@ export function faceSize(face: Face, geom: BodyGeometry): [number, number] {
     }
   }
 
-  if (geom.shape === 'hexagon') {
+  if (geom.shape === 'hexagon' || geom.shape === 'octagon') {
     const { radius: r, height: h } = geom;
-    return face === 'top' || face === 'bottom' ? [2 * r, 2 * r] : [r, h];
-  }
-
-  if (geom.shape === 'octagon') {
-    const { radius: r, height: h } = geom;
-    const faceW = 2 * r * Math.sin(Math.PI / 8);
+    const faceW = geom.shape === 'hexagon' ? r : 2 * r * Math.sin(Math.PI / 8);
     return face === 'top' || face === 'bottom' ? [2 * r, 2 * r] : [faceW, h];
   }
 
-  if (geom.shape === 'stadium' || geom.shape === 'wedge') {
-    const l = geom.length;
-    const w = geom.width;
-    const h = geom.shape === 'wedge' ? geom.heightBack : geom.height;
-    return face === 'top' || face === 'bottom' || face === 'slanted-top' ? [l, w] : face === 'front' || face === 'back' ? [l, h] : [w, h];
+  if (geom.shape === 'stadium') {
+    const { length: l, width: w, height: h } = geom;
+    return face === 'top' || face === 'bottom' ? [l, w] : face === 'front' || face === 'back' ? [l, h] : [w, h];
+  }
+
+  if (geom.shape === 'wedge') {
+    const { length: l, width: w, heightFront: hF, heightBack: hB } = geom;
+    switch (face) {
+      case 'top':
+      case 'bottom':
+      case 'slanted-top':
+        return [l, w];
+      case 'front':
+        return [l, hF];
+      case 'back':
+        return [l, hB];
+      default:
+        // left/right are trapezoids ramping hF..hB -- hB is the over-approximation used for
+        // snap-tolerance and 2D-blueprint sizing, both of which just need "big enough", not exact.
+        return [w, hB];
+    }
   }
 
   const { length: l, width: w, height: h } = geom;
@@ -252,20 +277,49 @@ export function faceFromWorld(
   }
 
   if (geom.shape === 'hexagon' || geom.shape === 'octagon') {
-    const r = geom.radius;
-    const h = geom.height;
-    return face === 'top' || face === 'bottom' ? [x / (2 * r) + 0.5, y / (2 * r) + 0.5] : [0.5, z / h];
+    const { radius: r, height: h } = geom;
+    if (face === 'top' || face === 'bottom') return [x / (2 * r) + 0.5, y / (2 * r) + 0.5];
+    const n = geom.shape === 'hexagon' ? 6 : 8;
+    const rFlat = r * Math.cos(Math.PI / n);
+    const faceW = geom.shape === 'hexagon' ? r : 2 * r * Math.sin(Math.PI / n);
+    const angle = polygonFacetAngleRad(face, geom.shape);
+    const nx = Math.cos(angle);
+    const ny = Math.sin(angle);
+    const ux = -ny;
+    const uy = nx;
+    const u = 0.5 + ((x - nx * rFlat) * ux + (y - ny * rFlat) * uy) / faceW;
+    return [u, h > 0 ? z / h : 0];
   }
 
-  if (geom.shape === 'stadium' || geom.shape === 'wedge') {
-    const l = geom.length;
-    const w = geom.width;
-    const h = geom.shape === 'wedge' ? geom.heightBack : geom.height;
-    return face === 'top' || face === 'bottom' || face === 'slanted-top'
+  if (geom.shape === 'stadium') {
+    const { length: l, width: w, height: h } = geom;
+    return face === 'top' || face === 'bottom'
       ? [x / l + 0.5, y / w + 0.5]
       : face === 'front' || face === 'back'
       ? [x / l + 0.5, z / h]
       : [y / w + 0.5, z / h];
+  }
+
+  if (geom.shape === 'wedge') {
+    const { length: l, width: w, heightFront: hF, heightBack: hB } = geom;
+    switch (face) {
+      case 'top':
+      case 'bottom':
+      case 'slanted-top':
+        return [x / l + 0.5, y / w + 0.5];
+      case 'front':
+        return [x / l + 0.5, hF > 0 ? z / hF : 0];
+      case 'back':
+        return [x / l + 0.5, hB > 0 ? z / hB : 0];
+      case 'left':
+      case 'right': {
+        const u = y / w + 0.5;
+        const heightAtU = hF + u * (hB - hF);
+        return [u, heightAtU > 0 ? z / heightAtU : 0];
+      }
+      default:
+        return [x / l + 0.5, y / w + 0.5];
+    }
   }
 
   const { length: l, width: w, height: h } = geom;
@@ -293,12 +347,50 @@ const CANONICAL_BOX_FACE_NORMALS: Array<[Face, [number, number, number]]> = [
   ['right', [1, 0, 0]],
 ];
 
-export function closestFace(normal: [number, number, number], shape: string): Face {
-  if (shape === 'cylinder') {
-    const [nx, ny, nz] = normal;
+export function closestFace(normal: [number, number, number], geom: BodyGeometry): Face {
+  const [nx, ny, nz] = normal;
+
+  if (geom.shape === 'cylinder') {
     const radial = Math.hypot(nx, ny);
     if (Math.abs(nz) > radial) return nz > 0 ? 'top' : 'bottom';
     return 'side';
+  }
+
+  if (geom.shape === 'hexagon' || geom.shape === 'octagon') {
+    const radial = Math.hypot(nx, ny);
+    if (Math.abs(nz) > radial) return nz > 0 ? 'top' : 'bottom';
+    const n = geom.shape === 'hexagon' ? 6 : 8;
+    const step = geom.shape === 'hexagon' ? Math.PI / 3 : Math.PI / 4;
+    const phase = geom.shape === 'hexagon' ? Math.PI / 6 : Math.PI / 8;
+    const theta = Math.atan2(ny, nx);
+    const idx = (((Math.round((theta - phase) / step) % n) + n) % n) as number;
+    return `f${idx + 1}` as Face;
+  }
+
+  if (geom.shape === 'wedge') {
+    const { heightFront: hF, heightBack: hB, width } = geom;
+    const dz = hB - hF;
+    const len = Math.hypot(width, dz);
+    // No 'top' candidate here -- a wedge has no flat top, and closestFace used to fall through to
+    // the box normals below, which could pick 'top' for a hit that's actually on the slope.
+    const candidates: Array<[Face, [number, number, number]]> = [
+      ['bottom', [0, 0, -1]],
+      ['front', [0, -1, 0]],
+      ['back', [0, 1, 0]],
+      ['left', [-1, 0, 0]],
+      ['right', [1, 0, 0]],
+      ['slanted-top', [0, -dz / len, width / len]],
+    ];
+    let best: Face = 'bottom';
+    let bestDot = -Infinity;
+    for (const [face, n] of candidates) {
+      const dot = nx * n[0] + ny * n[1] + nz * n[2];
+      if (dot > bestDot) {
+        bestDot = dot;
+        best = face;
+      }
+    }
+    return best;
   }
 
   let best: Face = 'top';
