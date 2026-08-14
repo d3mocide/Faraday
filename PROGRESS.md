@@ -1395,3 +1395,130 @@ session adds the first release/publish pipeline and cuts the first tag.
   `CHANGELOG.md` as the plan, but cutting it (and therefore the first real GHCR publish + GitHub
   Release) is left for after this PR merges to `main`, per the repo's tag-goes-on-main convention —
   pushing a tag from a feature branch would trigger a real public package publish before review.
+
+## Face-selector highlight fixes for the new body shapes (2026-08-14 session)
+
+The hexagon/octagon/stadium/wedge shapes added in the 2026-08-13 "4 New Parametric Body Shapes"
+session shipped `faceFrame.ts` support for their new `Face` values, but the code that *resolves* a
+raycast hit into one of those faces (`closestFace`), and the viewport's hover/placement highlight,
+were never extended to match — so on every shape but box/cylinder, hovering or clicking a facet
+either silently mapped to the wrong facet or drew a highlight that didn't match the model at all.
+Full written audit (all 13 findings, P0-P2) is in this session's chat log; this entry covers the
+8 items actually fixed (audit items 1-8, the P0s and the two easy P1s among them):
+
+- **`closestFace(normal, shape: string)` → `closestFace(normal, geom: BodyGeometry)`**
+  (`csg/faceFrame.ts`): the old version only special-cased `'cylinder'`, so a raycast hit on a
+  hexagon/octagon facet fell through to the six box-face normals and (via `faceFrame`'s
+  then-unclamped `indexOf` fallback) always resolved to facet `f1` — every side click and hover on
+  a polygon body landed on facet 1 regardless of where you actually clicked. Added hex/oct branches
+  (inverse of the facet-angle formula below) and a wedge branch (max-dot over
+  `bottom/front/back/left/right/slanted-top`, deliberately excluding `'top'`, which a wedge doesn't
+  have).
+- **Octagon facet phase was off by one half-step** (`faceFrame.ts`): `CrossSection.circle(r, 8)`
+  puts vertices at 0°/45°/90°… (confirmed empirically), so facet *centers* sit at the vertex angle
+  + half a step (22.5° for octagon) — the hexagon branch already had this offset (+30°), the
+  octagon branch didn't, so every octagon facet frame straddled a vertex instead of centering on
+  its own flat face. Factored both shapes' phase/step math into one shared `polygonFacetAngleRad`/
+  `polygonFacetAngleDeg` helper (`faceFrame.ts`) so `faceFrame`, `closestFace`, and
+  `orientAlongFace` (see below) can't drift apart again.
+- **`updateHighlight` in `Viewport3D.tsx` read `body` (the prop captured when the mount effect
+  first ran) instead of `bodyRef.current`** for its Z placement — resizing the body height (or
+  changing shape) left the hover highlight's vertical position stuck at whatever it was on first
+  mount, even though its footprint tracked live via `geom`. Fixed by deriving `outerHeight` from
+  the already-current `geom`. This was flagged by oxlint's `exhaustive-deps` rule and is now clean.
+- **Replaced `HIGHLIGHT_ROTATION` (a `Face → fixed rotation` table covering only the six box
+  faces) with direct corner-sampling from `faceFrame`** for every non-planar-top/bottom face
+  (`Viewport3D.tsx`): box/stadium walls, hexagon/octagon facets, and a wedge's `slanted-top` and
+  (trapezoidal) left/right walls are all planar quads in their own frame, so the highlight mesh's 4
+  corners are now built by calling `frame.toWorld(u,v)`/`normalAt(u,v)` directly instead of trying
+  to describe the face with one fixed `Euler` rotation. This is what actually fixes the visible
+  bug: previously every hex/oct facet highlighted as a flat horizontal disc (wrong plane entirely),
+  and a wedge's slanted-top highlighted as a flat plane floating above the real slope. The existing
+  exploded-view partial-height restriction (only highlight the base-or-lid half under the cursor)
+  is preserved for every face except `slanted-top`, whose `v=0` edge isn't at the floor so there's
+  no single cutoff fraction — full-face highlight is the accepted simplification there.
+- **`wedgeShell()` kept the wrong half of `Manifold.splitByPlane`** (`csg/primitives.ts`):
+  `splitByPlane` returns `[above the plane, below it]`; the actual wedge (flat floor at z=0, slope
+  from `heightFront` to `heightBack`) is the *below* half, but the code destructured the first
+  element. Selecting a wedge body used to produce an inverted floating sliver split into a splinter
+  base and an oversized lid reaching above `heightBack` — confirmed by direct `manifold-3d` probe
+  and by running `generateEnclosure` on a wedge body before/after: the base's bounding box now
+  starts at `z=0` with the full footprint and is watertight, where before it was a 70×6.25×5mm
+  fragment floating at `z=20`. One-character fix (`const [wedge]` → `const [, wedge]`).
+- **`orientAlongFace()` (`csg/featurePrimitives.ts`) had no cases for `f1`..`f8` or `slanted-top`**,
+  so a connector cutout or grip-ribs feature placed on a polygon facet or a wedge's slope got the
+  `default` orientation (front/back's) and was extruded in the wrong direction relative to the
+  material there. Added facet cases (same rotate-then-spin-to-angle pattern as the existing
+  cylinder `'side'` case, reusing `polygonFacetAngleDeg`) and a `slanted-top` case (single `Rx`
+  rotation by `atan2(heightBack-heightFront, width)`, derived to land local Z on the slope's own
+  outward normal while keeping local X on world X, matching `faceFrame`'s convention). Threaded a
+  new `geom: BodyGeometry` parameter through `orientAlongFace` and both its call sites
+  (`extrudeThroughWall`, `buildGripRibs`) since the facet/slope math needs the body's actual shape
+  and dimensions, not just the `Face` string. (`orientOutward`, the analogous function for
+  external-mount flanges, has the same gap but wasn't in scope this session — flagged for later.)
+- **Wedge `front`/`back`/`left`/`right` all used `heightBack` in `faceFrame.ts`**: `front` (the
+  short wall) is `heightFront` tall, not `heightBack`, so its highlight/cutout plane used to float
+  above the actual wall; `left`/`right` are trapezoids (height ramps `heightFront → heightBack`
+  across `u`, not a constant), not rectangles. Split the old combined `stadium`/`wedge` branch in
+  `faceFrame`/`faceSize`/`faceFromWorld` apart; wedge's `left`/`right` `toWorld` is now `v * (hF +
+  u * dz)` instead of `v * hB`, with a matching `faceFromWorld` inverse. (This is also what makes
+  the corner-sampled highlight above draw the correct trapezoid instead of a rectangle — the four
+  sampled corners are genuinely at different heights now.)
+- **`faceFromWorld` hardcoded `u = 0.5` for every hexagon/octagon side face** (`faceFrame.ts`):
+  dragging or placing a feature on a polygon facet used to always snap to the facet's horizontal
+  center regardless of where you clicked. Replaced with a proper projection onto the facet's own
+  tangent axis (`u = 0.5 + ((point - facetCenter) · tangent) / faceWidth`), using the same
+  `nx,ny,ux,uy` the `toWorld` direction already computes.
+
+### Verification
+
+- `npx tsc -b`, `npm run lint` (only the one pre-existing, unrelated warning left), and `npm test`
+  (137/137) all clean.
+- Added a throwaway vitest probe (not committed) asserting, for every shape/face, that
+  `faceFromWorld(face, geom, toWorld(u,v)) ≈ (u,v)` and `closestFace(normalAt(u,v), geom) === face`
+  — passed for box/hexagon/octagon/wedge. Also probed `generateEnclosure` directly on a wedge body:
+  base bbox now starts at `z=0` across the full footprint and both pieces are watertight (was a
+  floating 70×6.25×5mm sliver before the `wedgeShell` fix).
+- **Browser-verified** (dev server + Playwright/`chromium-cli`-equivalent driving, screenshots
+  taken at each step, no console errors):
+  - Wedge: selecting the shape now renders an actual wedge (flat rounded-rect floor, slope from a
+    short front wall to a tall back wall); hovering the slanted-top, front, back, left, and right
+    walls each highlight as a quad hugging that specific surface (including the trapezoidal
+    left/right walls and the tilted slope), not a flat disc floating nearby.
+  - Octagon/hexagon: hovering different facets highlights each one individually, correctly shaped
+    and positioned (not always facet 1, not rotated off-facet). Placing a Custom Hole feature via
+    click-to-place landed on distinct facets across repeated placements (`f7` on an octagon, `f5`
+    and `f6` on a hexagon) — confirmed via the feature's `face-badge` in the Inspector, not just
+    visually.
+  - Box height resize (typing a new value into the Height field, which goes through the same store
+    action a handle-drag would): re-hovering the same screen position after growing the box from
+    30mm to 90mm correctly highlighted the (now much taller) side wall spanning its full new
+    height, rather than staying pinned to the old 30mm position.
+- **Not verified this session**: dragging the 3D height-resize handle itself (a UI-interaction
+  detail unrelated to the 8 fixes above — the handle's own hit-testing wasn't touched) got stubborn
+  under headless-Playwright pixel-targeting and was swapped for the equivalent Height-field test
+  above, which exercises the same `updateHighlight` code path.
+
+### Known gaps intentionally left for a follow-up session
+
+From the same audit, not part of this pass:
+- Stadium's curved end-caps (`left`/`right`) are still flat planes tangent at one point, not a
+  proper arc band; its `front`/`back` width still includes the rounded-cap overhang.
+- Hex/oct/stadium top/bottom highlight is still a `PlaneGeometry` sized `[2r, 2r]` (a bounding
+  square), not the actual polygon footprint.
+- `resolveInteriorFace` (interior-click remapping when the lid is hidden/ghosted) doesn't know
+  about polygon facets or `slanted-top`.
+- Corner/height resize-handle dragging is still box/cylinder-only in practice: `BodyResizePatch`
+  has no `radius`/`heightFront`/`heightBack`, so dragging a hexagon's corner handle or a wedge's
+  height cone silently does nothing useful (confirmed above) rather than resizing.
+- `BlueprintModal`'s 2D face list is hardcoded to the six box faces (`front/back/left/right/top/
+  bottom`) — unusable for a cylinder's `side`, a polygon's `f1..f8`, or a wedge's `slanted-top`.
+- The per-feature "Placement & Position" **Face** `<select>` in `InspectorPanel.tsx`'s focused
+  feature drawer only offers `side/top/bottom` for any non-box shape — noticed while verifying the
+  octagon placement above (the selected feature's face was correctly `f7` per its badge and the
+  underlying data, but the dropdown itself has no matching `<option value="f7">` so it renders
+  with nothing visibly selected). Cosmetic — the stored `face` value is correct — but worth fixing
+  alongside `BlueprintModal`'s face list since it's the same root gap (shape-specific face lists
+  hardcoded to box's six faces in more than one place).
+- `orientOutward` (`featurePrimitives.ts`, external-mount flanges) has the same missing-facet-cases
+  gap `orientAlongFace` had, wasn't touched this session.

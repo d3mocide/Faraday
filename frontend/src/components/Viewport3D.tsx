@@ -482,16 +482,12 @@ export function Viewport3D({
 
     // PlaneGeometry's default normal is +Z. Three.js Euler 'XYZ' builds R = Rx(x)*Ry(y)*Rz(z),
     // so the ry (middle) component, not rz, is what pivots a plane from the XZ into the YZ plane.
-    // front/back only need Rx(±π/2) to swing the plane up from XY into XZ; left/right additionally
-    // need Ry(±π/2) to swing it from XZ into YZ. The overlay is double-sided, so normal sign is
-    // irrelevant -- only which world plane the geometry ends up in matters.
+    // Only used for the flat, always-rectangular top/bottom faces below -- every other face gets
+    // its quad sampled straight out of its own faceFrame instead (see the fallback branch), since
+    // a fixed rotation table can only ever describe the six axis-aligned box faces.
     const HIGHLIGHT_ROTATION: Partial<Record<Face, [number, number, number]>> = {
       top: [0, 0, 0],
       bottom: [Math.PI, 0, 0],
-      front: [Math.PI / 2, 0, 0],
-      back: [-Math.PI / 2, 0, 0],
-      left: [Math.PI / 2, -Math.PI / 2, 0],
-      right: [Math.PI / 2, Math.PI / 2, 0],
     };
 
     // A cylinder's curved lateral wall has no single tangent plane, so 'side' highlights the
@@ -506,7 +502,10 @@ export function Viewport3D({
       highlightMesh.visible = true;
       highlightMesh.geometry.dispose();
 
-      const outerHeight = body.shape === 'wedge' ? body.outer.heightBack : body.outer.height;
+      // Was reading the `body` prop captured when this mount effect first ran instead of the
+      // current bodyRef -- resizing the body (or switching shape) left the highlight's Z placement
+      // stuck at the original height even though its footprint (via `geom` above) tracked live.
+      const outerHeight = geom.shape === 'wedge' ? geom.heightBack : geom.height;
       const isExploded = lidViewRef.current === 'exploded';
       const explodeZ = explodeOffset(lidViewRef.current, outerHeight);
       const split = effectiveSplitHeight(bodyRef.current);
@@ -542,33 +541,57 @@ export function Viewport3D({
         return;
       }
 
-      if (face === 'top' || face === 'bottom' || face === 'slanted-top') {
+      if (face === 'top' || face === 'bottom') {
         const [length, width] = faceSize(face, geom);
-        const z = face === 'top' || face === 'slanted-top' ? outerHeight + 0.2 + explodeZ : -0.2;
+        const z = face === 'top' ? outerHeight + 0.2 + explodeZ : -0.2;
         highlightMesh.position.set(0, 0, z);
         highlightMesh.geometry = new THREE.PlaneGeometry(length, width);
         highlightMesh.rotation.set(...(HIGHLIGHT_ROTATION[face] ?? [0, 0, 0]));
         return;
       }
 
-      // Side faces
-      const EDGE_INSET = 0.5;
-      const sideH = isExploded ? (hitOnLid ? outerHeight - split : split) : outerHeight;
-      const sv = Math.max(1, sideH - EDGE_INSET * 2);
-      const zCenter = isExploded
-        ? hitOnLid
-          ? split + EDGE_INSET + sv / 2 + explodeZ
-          : EDGE_INSET + sv / 2
-        : EDGE_INSET + sv / 2;
-
-      const [su] = faceSize(face, geom);
-      highlightMesh.geometry = new THREE.PlaneGeometry(su, sv);
-
+      // Every other face -- box/stadium walls, hexagon/octagon facets, and a wedge's slanted-top
+      // and (trapezoidal) left/right walls -- is a planar quad in its own frame, so its corners are
+      // sampled directly from faceFrame rather than described with a fixed rotation (the old
+      // PlaneGeometry+HIGHLIGHT_ROTATION approach only ever matched the six box faces: it mapped
+      // every polygon facet onto a flat horizontal quad, and drew the wedge's slope as a flat plane
+      // floating above it instead of following the tilt).
+      highlightMesh.position.set(0, 0, 0);
+      highlightMesh.rotation.set(0, 0, 0);
       const frame = faceFrame(face, geom);
-      const [x, y] = frame.toWorld(0.5, 0.5);
-      const [nx, ny] = frame.normalAt(0.5, 0.5);
-      highlightMesh.position.set(x + nx * 0.2, y + ny * 0.2, zCenter);
-      highlightMesh.rotation.set(...(HIGHLIGHT_ROTATION[face] ?? [0, 0, 0]));
+
+      let vLo = 0;
+      let vHi = 1;
+      // In exploded view, restrict the highlight to just the half (base or lid) under the cursor
+      // -- v scales linearly with world Z on every one of these faces except 'slanted-top' (whose
+      // v=0 edge sits at heightFront, not the floor), so split / topZ(u=0.5) gives the cutoff.
+      if (isExploded && face !== 'slanted-top') {
+        const topZ = frame.toWorld(0.5, 1)[2];
+        const vSplit = topZ > 0 ? clamp01(split / topZ) : 0.5;
+        if (hitOnLid) vLo = vSplit;
+        else vHi = vSplit;
+      }
+
+      const corners: Array<[number, number]> = [
+        [0, vLo],
+        [1, vLo],
+        [1, vHi],
+        [0, vHi],
+      ];
+      const positions = new Float32Array(12);
+      corners.forEach(([u, v], i) => {
+        const [x, y, z] = frame.toWorld(u, v);
+        const [nx, ny, nz] = frame.normalAt(u, v);
+        const liftZ = isExploded && hitOnLid ? explodeZ : 0;
+        positions[i * 3] = x + nx * 0.2;
+        positions[i * 3 + 1] = y + ny * 0.2;
+        positions[i * 3 + 2] = z + nz * 0.2 + liftZ;
+      });
+      const quad = new THREE.BufferGeometry();
+      quad.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      quad.setIndex([0, 1, 2, 0, 2, 3]);
+      quad.computeVertexNormals();
+      highlightMesh.geometry = quad;
     };
 
     const handlePointerDown = (event: PointerEvent) => {
@@ -722,7 +745,7 @@ export function Viewport3D({
       }
       const face = closestFace(
         [hit.face.normal.x, hit.face.normal.y, hit.face.normal.z],
-        bodyRef.current.shape,
+        bodyGeometry(bodyRef.current),
       );
       // Highlight the face placement would actually target (interior floor -> 'bottom', etc.).
       updateHighlight(resolveInteriorFace(face, modelPoint(hit)), hitPartId(hit) === 'lid');
@@ -740,7 +763,7 @@ export function Viewport3D({
         const hit = raycaster.intersectObjects(raycastTargets(), false)[0];
         if (!hit?.face) return;
         const geom = bodyGeometry(bodyRef.current);
-        const rawFace = closestFace([hit.face.normal.x, hit.face.normal.y, hit.face.normal.z], geom.shape);
+        const rawFace = closestFace([hit.face.normal.x, hit.face.normal.y, hit.face.normal.z], geom);
         const point = modelPoint(hit);
         const face = resolveInteriorFace(rawFace, point);
         const [u, v] = faceFromWorld(face, geom, point);
