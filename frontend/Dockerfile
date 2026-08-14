@@ -4,6 +4,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+ARG APP_VERSION
+ENV VITE_APP_VERSION=${APP_VERSION}
 RUN npm run build
 
 # Serve stage — static files only

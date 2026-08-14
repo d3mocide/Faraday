@@ -10,6 +10,25 @@ Each entry here corresponds to a `vX.Y.Z` git tag, which is what triggers
 
 ## [Unreleased]
 
+## [0.1.0-beta.2] - 2026-08-14
+
+Second beta release, focusing on complete UI/UX modernization, workspace ergonomics, visual brand identity, and editing workflows.
+
+### Added
+
+- **Collapsible Feature Activity Rail**: Left sidebar now collapses into a slim 54px vertical icon rail (default on load) with 13 categorized vector icons and 1-click filter-and-expand interaction.
+- **Brand Identity & Vector Logo**: Added a 3D isometric enclosure Faraday logo with electromagnetic flux node to the top bar and browser favicon (`favicon.svg`), paired with stylized typography.
+- **Top Bar Ergonomics**: Centered viewport options and segmented view mode chips (`Assembled | Ghost | Hidden | Exploded`) with dedicated keyboard shortcuts (`1`-`4`, `O`, `G`, `H`), 1-click segmented unit toggle (`mm | in`), and Figma-style inline project rename.
+- **Floating Viewport Regeneration Pill**: Relocated CSG background worker status to a floating glassmorphic indicator in the 3D viewport next to Blueprint & Caliper tools, eliminating all top bar layout jitter.
+- **Enhanced 2D Blueprint & Inspector Drawer Controls**: Added canvas background click-to-deselect, `Escape` key deselect/close handlers, live Lock/Unlock toggles with visual badges, and compact `✕` close actions replacing overflowing text buttons.
+- **Studio Tessellation Segmented Bar**: Replaced grid buttons with an intuitive 4-segment pill bar for mesh quality (`Draft 20`, `Standard 32`, `High 64`, `Ultra 128`).
+- **Dynamic Build Version & GitHub Link**: Added sidebar footer with live compile-time injected version badge and direct link to the Faraday repository.
+
+### Changed
+
+- Replaced all legacy unicode emoji icons throughout the entire codebase with crisp, scalable vector SVGs.
+- Standardized rail category icons at 20px × 20px with 2px stroke width.
+
 ## [0.1.0-beta.1] - 2026-08-13
 
 First tagged release, and the first version published as a Docker image

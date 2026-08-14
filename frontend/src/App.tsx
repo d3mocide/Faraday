@@ -65,10 +65,34 @@ function App() {
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
         target instanceof HTMLSelectElement;
-      if (isFormField || !(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
-      e.preventDefault();
-      if (e.shiftKey) redo();
-      else undo();
+      if (isFormField) return;
+
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key.toLowerCase() === 'z') {
+          e.preventDefault();
+          if (e.shiftKey) redo();
+          else undo();
+        }
+        return;
+      }
+
+      if (e.altKey) return;
+
+      if (e.key === '1') {
+        setLidView('assembled');
+      } else if (e.key === '2') {
+        setLidView('ghost');
+      } else if (e.key === '3') {
+        setLidView('hidden');
+      } else if (e.key === '4') {
+        setLidView('exploded');
+      } else if (e.key.toLowerCase() === 'o') {
+        setShowEdgeLines((v) => !v);
+      } else if (e.key.toLowerCase() === 'g') {
+        setShowGrid((v) => !v);
+      } else if (e.key.toLowerCase() === 'h') {
+        setShowHandles((v) => !v);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -102,7 +126,6 @@ function App() {
   return (
     <AppShell
       onExport={() => setExportOpen(true)}
-      isGenerating={isGenerating}
       lidView={lidView}
       onSetLidView={setLidView}
       showHandles={showHandles}
@@ -120,6 +143,12 @@ function App() {
       <FeaturePalette armed={armed} onArm={setArmed} onDisarm={() => setArmed(null)} />
       <div className="viewport-area">
         <div className="viewport-floating-tools">
+          {isGenerating && (
+            <div className="generating-indicator-chip" role="status" aria-live="polite">
+              <span className="generating-spinner" />
+              <span>Regenerating...</span>
+            </div>
+          )}
           <button
             type="button"
             className="vtoolbar-chip"

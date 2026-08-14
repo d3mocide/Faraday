@@ -1,4 +1,5 @@
 import { useState, type ChangeEvent, type ReactNode } from 'react';
+import { APP_VERSION } from '../version';
 import { PrintabilityCard } from './PrintabilityCard';
 import { findConnector } from '../connectors/library';
 import { useProjectStore } from '../state/projectStore';
@@ -74,7 +75,17 @@ function SectionCard({
           <span>{title}</span>
           {badge !== undefined && <span className="card-badge">{badge}</span>}
         </div>
-        <span className="card-arrow">{open ? '▾' : '▸'}</span>
+        <svg
+          className={`card-chevron ${open ? 'open' : ''}`}
+          viewBox="0 0 16 16"
+          width="12"
+          height="12"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <path d="M4 6l4 4 4-4" />
+        </svg>
       </button>
       {open && <div className="card-body">{children}</div>}
     </div>
@@ -1066,54 +1077,54 @@ function SidebarSectionIcon({
   }
 }
 
-function SvgEyeIcon() {
+function SvgEyeIcon({ size = 13 }: { size?: number }) {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
       <circle cx="12" cy="12" r="3" />
     </svg>
   );
 }
 
-function SvgEyeOffIcon() {
+function SvgEyeOffIcon({ size = 13 }: { size?: number }) {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
       <line x1="1" y1="1" x2="23" y2="23" />
     </svg>
   );
 }
 
-function SvgLockIcon() {
+function SvgLockIcon({ size = 14 }: { size?: number }) {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
     </svg>
   );
 }
 
-function SvgUnlockIcon() {
+function SvgUnlockIcon({ size = 14 }: { size?: number }) {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
       <path d="M7 11V7a5 5 0 0 1 9.9-1" />
     </svg>
   );
 }
 
-function SvgCopyIcon() {
+function SvgCopyIcon({ size = 13 }: { size?: number }) {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </svg>
   );
 }
 
-function SvgTrashIcon() {
+function SvgTrashIcon({ size = 14 }: { size?: number }) {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="3 6 5 6 21 6" />
       <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
     </svg>
@@ -1281,14 +1292,28 @@ export function InspectorPanel({
               <span className="focused-name">{featureLabel(selectedFeature)}</span>
               <span className="face-badge">{selectedFeature.face}</span>
             </div>
-            <button
-              type="button"
-              className="btn-done-edit"
-              onClick={() => onSelectFeature(null)}
-              title="Close feature editor"
-            >
-              ✕ Done
-            </button>
+            <div className="focused-drawer-actions">
+              <button
+                type="button"
+                className={`drawer-action-btn ${selectedFeature.locked ? 'active' : ''}`}
+                onClick={() => onUpdateFeature(selectedFeature.id, { locked: !selectedFeature.locked })}
+                title={selectedFeature.locked ? 'Unlock feature 3D dragging' : 'Lock feature 3D dragging'}
+                aria-label={selectedFeature.locked ? 'Unlock feature' : 'Lock feature'}
+              >
+                {selectedFeature.locked ? <SvgLockIcon size={14} /> : <SvgUnlockIcon size={14} />}
+              </button>
+              <button
+                type="button"
+                className="btn-close-drawer"
+                onClick={() => onSelectFeature(null)}
+                title="Deselect feature (Esc)"
+                aria-label="Close feature editor"
+              >
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <div className="focused-drawer-content">
@@ -1558,11 +1583,19 @@ export function InspectorPanel({
             )}
             <button
               type="button"
-              className="btn-danger-outline"
-              style={{ marginTop: '12px', width: '100%' }}
+              className="btn-danger-outline btn-delete-feature"
+              style={{
+                marginTop: '12px',
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+              }}
               onClick={() => onRemoveFeature(selectedFeature.id)}
             >
-              🗑️ Delete Feature
+              <SvgTrashIcon size={14} />
+              <span>Delete Feature</span>
             </button>
           </div>
         </div>
@@ -2307,20 +2340,21 @@ export function InspectorPanel({
           </SectionCard>
 
           <SectionCard title="Mesh Quality &amp; Tessellation" icon={<SidebarSectionIcon type="viewport" />} defaultOpen={true}>
-            <div className="lid-view-buttons" style={{ marginBottom: '8px' }}>
+            <div className="tessellation-segmented" style={{ marginBottom: '10px' }}>
               {[
-                { label: 'Draft (20)', val: 20 },
-                { label: 'Standard (32)', val: 32 },
-                { label: 'High (64)', val: 64 },
-                { label: 'Ultra (128)', val: 128 },
+                { label: 'Draft', sub: '20', val: 20 },
+                { label: 'Standard', sub: '32', val: 32 },
+                { label: 'High', sub: '64', val: 64 },
+                { label: 'Ultra', sub: '128', val: 128 },
               ].map((item) => (
                 <button
                   key={item.val}
                   type="button"
-                  className={`btn-lid-mode ${(project.tessellation?.liveSegments ?? 32) === item.val ? 'active' : ''}`}
+                  className={`tessellation-btn ${(project.tessellation?.liveSegments ?? 32) === item.val ? 'active' : ''}`}
                   onClick={() => setLiveSegments(item.val)}
                 >
-                  {item.label}
+                  <span className="tess-label">{item.label}</span>
+                  <span className="tess-val">{item.sub}</span>
                 </button>
               ))}
             </div>
@@ -2346,6 +2380,22 @@ export function InspectorPanel({
         </>
       )}
       </div>
+
+      <footer className="inspector-footer">
+        <a
+          href="https://github.com/d3mocide/Faraday"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inspector-footer-link"
+          title="Faraday GitHub Repository"
+        >
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+          </svg>
+          <span>GitHub</span>
+        </a>
+        <span className="inspector-footer-version">{APP_VERSION}</span>
+      </footer>
     </div>
   );
 }

@@ -59,7 +59,10 @@ export function ViewportToolbar({
           onClick={() => onToggleShowEdgeLines(!showEdgeLines)}
           title="Toggle CAD Edge Outlines"
         >
-          <span className="chip-icon">📐</span>
+          <svg className="chip-icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <polygon points="2,14 14,14 14,2" strokeLinejoin="round" />
+            <line x1="2" y1="14" x2="14" y2="2" />
+          </svg>
           <span>Outlines</span>
         </button>
 
@@ -69,7 +72,11 @@ export function ViewportToolbar({
           onClick={() => onToggleShowGrid(!showGrid)}
           title="Toggle Grid & Floor Axes"
         >
-          <span className="chip-icon">🌐</span>
+          <svg className="chip-icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <line x1="2" y1="8" x2="14" y2="8" />
+            <line x1="8" y1="2" x2="8" y2="14" />
+            <circle cx="8" cy="8" r="6" />
+          </svg>
           <span>Grid</span>
         </button>
 
@@ -79,7 +86,13 @@ export function ViewportToolbar({
           onClick={() => onToggleShowHandles(!showHandles)}
           title="Toggle 3D Resize Handles"
         >
-          <span className="chip-icon">🕹️</span>
+          <svg className="chip-icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <rect x="2" y="2" width="12" height="12" rx="2" strokeDasharray="2 2" />
+            <circle cx="2" cy="2" r="1.5" fill="currentColor" />
+            <circle cx="14" cy="2" r="1.5" fill="currentColor" />
+            <circle cx="2" cy="14" r="1.5" fill="currentColor" />
+            <circle cx="14" cy="14" r="1.5" fill="currentColor" />
+          </svg>
           <span>Handles</span>
         </button>
 
@@ -89,7 +102,11 @@ export function ViewportToolbar({
           onClick={() => onToggleShowGhosts(!showGhosts)}
           title="Toggle Ghost Hardware (PCBs & Fans)"
         >
-          <span className="chip-icon">👻</span>
+          <svg className="chip-icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M4 14V7a4 4 0 018 0v7l-2-1.5-2 1.5-2-1.5L4 14z" />
+            <circle cx="6.5" cy="7" r="1" fill="currentColor" />
+            <circle cx="9.5" cy="7" r="1" fill="currentColor" />
+          </svg>
           <span>Ghosts</span>
         </button>
 
@@ -99,7 +116,10 @@ export function ViewportToolbar({
           onClick={() => onToggleShowMarkers(!showMarkers)}
           title="Toggle Feature Placement Markers"
         >
-          <span className="chip-icon">📍</span>
+          <svg className="chip-icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M8 2a4 4 0 00-4 4c0 3.5 4 8 4 8s4-4.5 4-8a4 4 0 00-4-4z" />
+            <circle cx="8" cy="6" r="1.5" fill="currentColor" />
+          </svg>
           <span>Markers</span>
         </button>
       </div>

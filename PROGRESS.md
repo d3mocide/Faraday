@@ -1522,3 +1522,46 @@ From the same audit, not part of this pass:
   hardcoded to box's six faces in more than one place).
 - `orientOutward` (`featurePrimitives.ts`, external-mount flanges) has the same missing-facet-cases
   gap `orientAlongFace` had, wasn't touched this session.
+
+---
+
+## Session 2026-08-14: UI/UX Modernization, Vector Branding & v0.1.0-beta.2 Release
+
+Focused on user-driven interface polish, ergonomic layout enhancements, brand identity, and prep for the `v0.1.0-beta.2` release.
+
+### What was built / changed:
+
+1. **Collapsible Feature Activity Rail**:
+   - Left sidebar `FeaturePalette` defaults to a sleek collapsed 54px vertical icon rail on startup.
+   - Includes all 13 category vector icons (`all`, `mounting`, `boards`, `openings`, `fans`, `usb`, `rf`, `video`, `network`, `audio`, `power`, `antenna`, `misc`) with hover tooltips and active state indicators.
+   - 1-click interaction: clicking any category icon auto-sets that filter and expands the sidebar directly to those parts.
+   - Standardized icons at 20px × 20px with 2px stroke width.
+
+2. **Faraday Brand Identity & Vector Logo**:
+   - Designed 3D isometric enclosure cage logo with electromagnetic flux core and parametric gradient facets.
+   - Integrated `<FaradayLogo />` in the top bar beside the Faraday typography wordmark.
+   - Updated browser favicon (`favicon.svg`) with the brand mark.
+
+3. **Top Navigation Ergonomics**:
+   - Centered viewport options and segmented view mode chips (`Assembled | Ghost | Hidden | Exploded`) with dedicated keyboard shortcuts (`1`-`4`, `O`, `G`, `H`).
+   - 1-click segmented unit toggle (`mm | in`).
+   - Figma-style inline project rename with pencil icon.
+
+4. **Floating Viewport Regeneration Pill**:
+   - Moved worker status from the top bar to a floating glassmorphic indicator in the 3D viewport next to 2D Blueprint & Caliper tools, eliminating top bar layout shift/jitter.
+
+5. **2D Blueprint & Inspector Drawer Controls**:
+   - Added canvas background click-to-deselect and `Escape` key deselect/close handlers in `BlueprintModal`.
+   - Added live Lock/Unlock toggles with pure SVG badges in both the 2D Blueprint selection bar and the Inspector feature drawer header.
+   - Replaced wrapping `✕ Done` button with a compact, high-contrast `✕` close action.
+
+6. **100% SVG Vector Icons**:
+   - Purged all remaining unicode emoji characters across the UI, replacing them with crisp inline SVG icons.
+
+7. **Dynamic Build Version & GitHub Link**:
+   - Sidebar footer displays compile-time injected version badge and direct link to the Faraday repository.
+
+### Verification:
+- `npm run lint` (0 errors, 1 fast-refresh warning).
+- `npm run build` (clean production build).
+- `npm test` (all 137 unit and geometry tests passing).

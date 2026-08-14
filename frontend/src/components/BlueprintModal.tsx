@@ -1,4 +1,4 @@
-import { useState, useRef, type MouseEvent } from 'react';
+import { useState, useEffect, useRef, type MouseEvent } from 'react';
 import { bodyGeometry, faceSize } from '../csg/faceFrame';
 import { computeSmartSnap, getFeature2DBounds, type Feature2DBounds } from '../csg/blueprint2d';
 import type { Face } from '../types/project';
@@ -30,6 +30,22 @@ export function BlueprintModal({
 
   const svgRef = useRef<SVGSVGElement>(null);
 
+  useEffect(() => {
+    const handleModalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (selectedFeatureId) {
+          e.preventDefault();
+          e.stopPropagation();
+          onSelectFeature(null);
+        } else {
+          onClose();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleModalKeyDown);
+    return () => window.removeEventListener('keydown', handleModalKeyDown);
+  }, [selectedFeatureId, onSelectFeature, onClose]);
+
   const geom = bodyGeometry(project.body);
   const [sizeU, sizeV] = faceSize(activeFace, geom);
 
@@ -55,9 +71,18 @@ export function BlueprintModal({
   const svgToMmU = (svgX: number) => (svgX - originX) / scale;
   const svgToMmV = (svgY: number) => (originY - svgY) / scale;
 
+  const handleCanvasBackgroundMouseDown = (e: MouseEvent<SVGSVGElement>) => {
+    if (e.target === e.currentTarget || (e.target as Element).tagName === 'rect' || (e.target as Element).tagName === 'line') {
+      onSelectFeature(null);
+    }
+  };
+
   const handlePointerDown = (featId: string) => {
     onSelectFeature(featId);
-    setDraggingFeatureId(featId);
+    const feat = project.features.find((f) => f.id === featId);
+    if (!feat?.locked) {
+      setDraggingFeatureId(featId);
+    }
   };
 
   const handlePointerMove = (e: MouseEvent<SVGSVGElement>) => {
@@ -83,6 +108,8 @@ export function BlueprintModal({
     setDraggingFeatureId(null);
     setSmartGuides([]);
   };
+
+  const selectedFeature = project.features.find((f) => f.id === selectedFeatureId);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -118,10 +145,53 @@ export function BlueprintModal({
         </div>
 
         <div className="blueprint-canvas-area">
+          {selectedFeature && selectedFeature.face === activeFace && (
+            <div className="blueprint-selected-bar">
+              <div className="selected-feat-info">
+                <span className="selected-feat-name">{selectedFeature.type}</span>
+                {selectedFeature.locked && (
+                  <span className="locked-badge">
+                    <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                    <span>Locked</span>
+                  </span>
+                )}
+              </div>
+              <div className="selected-feat-actions">
+                <button
+                  type="button"
+                  className={`blueprint-action-btn ${selectedFeature.locked ? 'active-locked' : ''}`}
+                  onClick={() => updateFeature(selectedFeature.id, { locked: !selectedFeature.locked })}
+                  title={selectedFeature.locked ? 'Unlock feature 2D dragging' : 'Lock feature 2D dragging'}
+                >
+                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <rect x="3" y="6" width="10" height="8" rx="2" />
+                    <path d={selectedFeature.locked ? "M5 6V4a3 3 0 016 0v2" : "M5 6V4a3 3 0 016 0"} />
+                  </svg>
+                  <span>{selectedFeature.locked ? 'Unlock' : 'Lock'}</span>
+                </button>
+                <button
+                  type="button"
+                  className="blueprint-action-btn btn-deselect"
+                  onClick={() => onSelectFeature(null)}
+                  title="Deselect feature (Esc)"
+                >
+                  <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M3 3l10 10M13 3L3 13" />
+                  </svg>
+                  <span>Deselect</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           <svg
             ref={svgRef}
             className="blueprint-svg"
             viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
+            onMouseDown={handleCanvasBackgroundMouseDown}
             onMouseMove={handlePointerMove}
             onMouseUp={handlePointerUp}
             onMouseLeave={handlePointerUp}
@@ -248,14 +318,23 @@ export function BlueprintModal({
 
                   <g
                     transform={`translate(${x}, ${y}) rotate(${feat.rotationDeg})`}
-                    style={{ cursor: feat.locked ? 'not-allowed' : 'move' }}
-                    onMouseDown={() => !feat.locked && handlePointerDown(feat.id)}
+                    style={{ cursor: feat.locked ? 'pointer' : 'move' }}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      handlePointerDown(feat.id);
+                    }}
                   >
                     {renderFeatureCadShapes(feat, scale, isSelected)}
-                    <circle cx="0" cy="0" r="2.5" fill={isSelected ? '#00ffff' : '#a0aec0'} />
+                    <circle cx="0" cy="0" r={2.5} fill={isSelected ? '#00ffff' : '#a0aec0'} />
                     <text x="0" y={h / 2 + 12} textAnchor="middle" fill="#e2e8f0" fontSize="10" fontWeight="600">
                       {feat.label}
                     </text>
+                    {feat.locked && (
+                      <g transform={`translate(${feat.widthMm * scale / 2 + 6}, -6)`}>
+                        <circle cx="0" cy="0" r="7" fill="rgba(10, 14, 20, 0.85)" stroke="#ffaa00" strokeWidth="1" />
+                        <path d="M-2.5 -0.5 h5 v4 h-5 z M-1.5 -0.5 v-2 a1.5 1.5 0 0 1 3 0 v2" fill="none" stroke="#ffaa00" strokeWidth="1" />
+                      </g>
+                    )}
                   </g>
                 </g>
               );
@@ -264,8 +343,15 @@ export function BlueprintModal({
         </div>
 
         <div className="blueprint-footer">
-          <span className="blueprint-hint">Click & drag features to position with live 2D CAD grid alignment</span>
-          <button type="button" className="btn-done-edit" onClick={onClose}>
+          <span className="blueprint-hint">Click &amp; drag features to position. Click canvas or press Esc to deselect.</span>
+          <button
+            type="button"
+            className="btn-done-edit"
+            onClick={() => {
+              onSelectFeature(null);
+              onClose();
+            }}
+          >
             Done Editing
           </button>
         </div>
