@@ -41,6 +41,50 @@ export function bodyGeometry(body: EnclosureBody): BodyGeometry {
 const HEX_FACES: Face[] = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6'];
 const OCT_FACES: Face[] = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'];
 
+/** Every selectable face a body actually has, bottom-to-top order -- the single source of truth
+ * for anything that needs to enumerate a shape's faces (the Layers accordion, the per-feature
+ * Face dropdown, BlueprintModal's 2D face tabs), so they can't drift into three different
+ * hardcoded lists that only cover box's six faces. */
+export function facesForShape(shape: BodyGeometry['shape']): Face[] {
+  switch (shape) {
+    case 'hexagon':
+      return ['bottom', ...HEX_FACES, 'top'];
+    case 'octagon':
+      return ['bottom', ...OCT_FACES, 'top'];
+    case 'wedge':
+      return ['bottom', 'front', 'back', 'left', 'right', 'slanted-top'];
+    case 'box':
+    case 'stadium':
+      return ['bottom', 'front', 'back', 'left', 'right', 'top'];
+    case 'cylinder':
+      return ['bottom', 'side', 'top'];
+  }
+}
+
+/** Human-readable label for a face value, shape-independent. */
+export function faceLabel(face: Face): string {
+  switch (face) {
+    case 'top':
+      return 'Top';
+    case 'bottom':
+      return 'Bottom';
+    case 'front':
+      return 'Front';
+    case 'back':
+      return 'Back';
+    case 'left':
+      return 'Left';
+    case 'right':
+      return 'Right';
+    case 'side':
+      return 'Side';
+    case 'slanted-top':
+      return 'Slanted Top';
+    default:
+      return `Facet ${face.slice(1)}`;
+  }
+}
+
 /**
  * Angle (radians, from +X) of a hexagon/octagon facet's own outward normal -- matches
  * manifold-3d's `CrossSection.circle(r, n)` vertex phase (confirmed empirically: hex vertices

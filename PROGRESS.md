@@ -1506,22 +1506,9 @@ From the same audit, not part of this pass:
   proper arc band; its `front`/`back` width still includes the rounded-cap overhang.
 - Hex/oct/stadium top/bottom highlight is still a `PlaneGeometry` sized `[2r, 2r]` (a bounding
   square), not the actual polygon footprint.
-- `resolveInteriorFace` (interior-click remapping when the lid is hidden/ghosted) doesn't know
-  about polygon facets or `slanted-top`.
-- Corner/height resize-handle dragging is still box/cylinder-only in practice: `BodyResizePatch`
-  has no `radius`/`heightFront`/`heightBack`, so dragging a hexagon's corner handle or a wedge's
-  height cone silently does nothing useful (confirmed above) rather than resizing.
-- `BlueprintModal`'s 2D face list is hardcoded to the six box faces (`front/back/left/right/top/
-  bottom`) — unusable for a cylinder's `side`, a polygon's `f1..f8`, or a wedge's `slanted-top`.
-- The per-feature "Placement & Position" **Face** `<select>` in `InspectorPanel.tsx`'s focused
-  feature drawer only offers `side/top/bottom` for any non-box shape — noticed while verifying the
-  octagon placement above (the selected feature's face was correctly `f7` per its badge and the
-  underlying data, but the dropdown itself has no matching `<option value="f7">` so it renders
-  with nothing visibly selected). Cosmetic — the stored `face` value is correct — but worth fixing
-  alongside `BlueprintModal`'s face list since it's the same root gap (shape-specific face lists
-  hardcoded to box's six faces in more than one place).
-- `orientOutward` (`featurePrimitives.ts`, external-mount flanges) has the same missing-facet-cases
-  gap `orientAlongFace` had, wasn't touched this session.
+- ~~`resolveInteriorFace`...~~, ~~corner/height resize-handle dragging...~~, ~~`BlueprintModal`'s 2D
+  face list...~~, ~~the per-feature Face `<select>`...~~, and ~~`orientOutward`...~~ — all fixed in
+  the 2026-08-15 session below (body-shapes-fasteners-resize).
 
 ---
 
@@ -1565,3 +1552,187 @@ Focused on user-driven interface polish, ergonomic layout enhancements, brand id
 - `npm run lint` (0 errors, 1 fast-refresh warning).
 - `npm run build` (clean production build).
 - `npm test` (all 137 unit and geometry tests passing).
+
+## Full fastener/resize/settings parity for hexagon/octagon/stadium/wedge (2026-08-15 session)
+
+Prompted by a user report with screenshots: lid fasteners on all four new body shapes (added
+2026-08-13) rendered as one degenerate column at the body center instead of separate bosses, and
+hexagon/octagon weren't resizable by the drag handles at all. Investigation (see chat transcript for
+the full written audit) found the root cause and a cluster of related gaps, tackled as five phases.
+
+### Phase A — stop the data loss
+
+- **`isValidEnclosureProject` only ever recognized `body.shape === 'box' | 'cylinder'`.** Every
+  hexagon/octagon/stadium/wedge project was silently rejected by the autosave-restore and file-Load
+  paths and replaced with a fresh default box — confirmed in the browser: switch to hexagon, reload
+  the page, land back on an 80×50×30 box with the hexagon state gone from `localStorage` too (the
+  bad restore overwrites the good autosave entry on its next write). Extended validation to check
+  the correct `outer` fields and (where applicable) `cornerStyle` per shape, covering all six.
+
+### Phase B — the actual fastener bug
+
+- **Root cause**: `generateEnclosure.ts`'s lid-mating dispatch was a hard `if (shape === 'box') {…}
+  else {…cylinder path…}`. Hexagon/octagon/stadium/wedge all fell into the cylinder branch, which is
+  driven by `innerDiameter` — a variable only ever assigned in the cylinder branch, so it was `0` for
+  every other shape. `bossPositionsCircular(count, 0, …)` then placed every boss at `(0,0)`, and they
+  unioned into the single center column from the screenshots. Friction-lip and snap-fit were broken
+  the same way (zero-diameter skirt/tabs). The `hexagonBossPositions`/`octagonBossPositions`/
+  `stadiumBossPositions` helper functions already existed in `primitives.ts` (written the day the
+  shapes were added) but were never called from anywhere — dead code that turned out to be exactly
+  what was needed.
+- **New `FootWalls` variant `'polygon'`** (`primitives.ts`): a hanging/short screw column's sloped
+  foot needs to know which wall it's welding into. For a hex/oct boss (placed at a vertex, per
+  `hexagonBossPositions`/`octagonBossPositions` — equidistant from its two adjacent facets, same
+  reasoning as a box corner boss checking both its x and y walls) `footAnchors` now checks both
+  neighbouring facet planes and returns up to two anchors.
+- **New per-polygon and per-stadium functions**, following the codebase's existing "parallel
+  implementations per shape, not one generic function" precedent (see the Phase 5 notes above on why
+  box/cylinder lid mating was already written twice): `applyScrewBossLidPolygon`,
+  `applyScrewBossLidStadium`, `applyFrictionLipLidPolygon`, `applyFrictionLipLidStadium`,
+  `applySnapFitLidPolygon`, `applyGasketChannelPolygon`, `applyGasketChannelStadium`,
+  `applyEdgeBevelsPolygon` (a real faceted-cone rim chamfer via `CrossSection.extrude`'s `scaleTop`
+  taper, not a rounded approximation). **Wedge and stadium's snap-fit, and wedge's screw-boss/
+  friction-lip/gasket, reuse the *box* functions directly** — a wedge's XY footprint is exactly a
+  box's (only the Z profile slopes, and the split plane that positions every fastener is a flat
+  horizontal cut regardless of shape, so boss *height* was never actually shape-dependent), and a
+  stadium's flat front/back walls are box-shaped for the same reason snap-fit tabs land there. Only
+  the truly novel geometry (hex/oct polygon math, stadium's pill-shaped skirt/gasket ring) needed new
+  code.
+- **Stadium was missing edge-bevel CSG entirely** (not part of the original bug report, found while
+  wiring this up) — the UI already showed Top/Bottom Rim Chamfer checkboxes for every shape, but
+  `generateEnclosure.ts`'s stadium branch never called any `applyEdgeBevels*`. Now reuses
+  `applyEdgeBevelsBox`: exact on the straight sides, an accepted approximation on the rounded caps
+  (the cut assumes a square corner that doesn't physically exist there) — a true shape-correct
+  version would need a loft between two different-radius stadium cross-sections, which
+  `CrossSection.extrude`'s `scaleTop` can't express (uniform scale only, and a stadium's inward
+  offset isn't uniform). Flagged in a code comment rather than attempted.
+- Verified with a geometric probe (not just watertightness, which the original bug also happened to
+  pass): a 1.5mm cube at the cavity center is now **empty** on all four shapes with all three lid
+  types, and boss material is found at multiple distinct off-center positions rather than one spot.
+  Also probed boss-count variations (4/6/8), stadium exterior screw placement, and a hanging column
+  (`columnHeight`) on both wedge and octagon specifically to exercise the new polygon `FootWalls`
+  path. All watertight.
+
+### Phase C — resize handles
+
+- **`BodyResizePatch` gained `radius`/`heightFront`/`heightBack`** (`Viewport3D.tsx`) — the store's
+  `setBodyDimension` action already accepted these keys (apparently anticipated when the shapes were
+  added), only the viewport's drag math and `App.tsx`'s `handleResizeBody` mapping were missing.
+  Turned out the existing 'corner' drag branch already computed `length`/`width` correctly for
+  stadium and wedge (both have real `outer.length`/`outer.width` fields) — only hexagon/octagon
+  (need `radius` instead) and wedge's height were actually broken.
+- **A wedge's single height cone became two** (`height-front`/`height-back` drag states): a wedge has
+  no single `outer.height`, so the old cone silently wrote a spurious `height` field into the wedge's
+  `outer` object that nothing reads. Two cones, positioned over each wall's own top, drive
+  `heightFront`/`heightBack` independently — both verified live-dragging in the browser (front height
+  down to 2mm, back height up to ~67mm, producing a dramatic wedge visibly matching the numbers).
+- **Corner-cube Z placement is now per-corner for a wedge** (front two at `heightFront`, back two at
+  `heightBack`) instead of a uniform height that floated the front handles above the actual (shorter)
+  front wall.
+- **Stadium's corner handles moved from `±length/2` to `±(length/2 - width/2)`** — the point where the
+  straight side actually meets the rounded cap, instead of floating out past the curve (visible in
+  the user's original screenshot). Purely a visual/hit-target fix; the drag math reads the live
+  ray/plane intersection at the cursor, not an offset from the handle's rest position, so moving it
+  doesn't touch the resize behavior.
+- Verified all four handle types (radius, height, heightFront, heightBack, length/width) with real
+  Playwright mouse drags against known screen coordinates (re-screenshotted before each drag since
+  handle positions move with the geometry) — every one produced the expected store change.
+
+### Phase D — settings parity
+
+- **Corner-style controls enabled for wedge** (`projectStore.ts`, `InspectorPanel.tsx`):
+  `wedgeShell` already reads `cornerStyle` exactly like `boxShell` did, just gated out of the UI/store
+  setters. **Deliberately left disabled for stadium**, despite `StadiumBody` carrying a `cornerStyle`
+  field — `stadiumShell` never reads it, and a stadium's ends are already fully rounded by
+  construction (the semicircular caps *are* its corners), so there's nothing for the control to do.
+  Same reasoning as cylinder having no corner style, just not encoded in the type for stadium.
+- **`orientOutward` (`featurePrimitives.ts`) gained a `geom` parameter and real `f1`..`f8`/
+  `slanted-top` cases** — previously fell through to the `front`/`back` default on every non-box-face
+  external mount or fan-mount boss, pointing it the wrong way. Verified with a geometric probe (not
+  just watertightness): a boss on a hexagon facet now has material along *that facet's own* outward
+  normal and nothing along the opposite direction; a boss on a wedge's `slanted-top` (steepened to
+  ~60° for the test) has material along the true slope normal and nothing straight up, which is what
+  the old default-branch bug would have produced.
+- **New `facesForShape(shape)` and `faceLabel(face)`** in `faceFrame.ts` — single source of truth for
+  "which faces does this shape have," replacing three independent hardcoded lists: `InspectorPanel`'s
+  `FACES_ORDER` (Layers accordion — was already shape-aware, just inlined), the per-feature
+  "Placement & Position" **Face** `<select>` (previously offered only `side/top/bottom` for any
+  non-box shape, so selecting an octagon feature showed nothing selected even though the underlying
+  `face: 'f7'` was correct), and `BlueprintModal`'s face tabs (previously hardcoded to the six box
+  faces, unusable for any other shape). `BlueprintModal` also gained a guard effect that resets
+  `activeFace` if the body shape changes underneath it while the modal is open.
+- **`BlueprintModal`'s lid-seam overlay extended from four hardcoded faces to every lateral face**
+  (`isLateralFace` helper) — the seam-position math (`split - sizeV/2`) was already shape-agnostic
+  (every lateral face's `v=0` is the floor, `v=1` the top, by `faceFrame`'s own convention), it was
+  just gated to `front/back/left/right` only. Verified in the browser: a hexagon's Facet 3 blueprint
+  view now shows the correct seam line at the correct height.
+- **`resolveInteriorFace` (`Viewport3D.tsx`) generalized from a box-only per-axis flip to a single
+  `closestFace([x, y, 0], geom)` recomputation** for every lateral face — an interior surface's
+  normal points inward (opposite of the wall it belongs to), and for any star-convex footprint (box,
+  hex, oct, cylinder, stadium's straight sections) the point's own `(x,y)` direction always points
+  toward the correct wall, which is exactly what `closestFace` already resolves given a normal. The
+  old code only knew how to flip box's four vertical walls. `slanted-top`/`side` are left unremapped
+  (no interior-click-with-lid-hidden support attempted for those — noted as still open below).
+- **BOM (`export/bom.ts`) and printability (`state/printability.ts`) turned out to already be
+  correct** — investigated as a suspected gap, but both just echo the user-configured `screw.count`
+  rather than deriving a quantity from geometry, so fixing the Phase B placement bug was sufficient;
+  no BOM/printability code changes were needed.
+
+### Phase E — test coverage
+
+134 new vitest tests (137 → 271), all against the real `manifold-3d` WASM build, no mocking of the
+CSG pipeline:
+- **`test/newShapeFasteners.test.ts`** (21 tests): geometric probes (not just watertightness) for
+  screw-boss/friction-lip/snap-fit/gasket/edge-bevel on all four new shapes, boss-count variations,
+  stadium exterior placement, and hanging columns on wedge and octagon.
+- **`test/projectValidation.test.ts`** (14 tests): every shape's minimal-valid project round-trips
+  through `isValidEnclosureProject`, plus targeted malformed-payload rejections per shape — direct
+  regression coverage for the Phase A data-loss bug.
+- **`test/faceFrame.test.ts`** (81 tests): for every shape and every face `facesForShape` returns,
+  `faceFromWorld(toWorld(u,v)) ≈ (u,v)` and `closestFace(normalAt(u,v)) === face`, sampled at four
+  non-edge (u,v) points each (edges/corners are legitimately ambiguous — two faces' normals can tie).
+  This is the permanent version of a "throwaway probe, not committed" mentioned in the 2026-08-14
+  session log; it's committed this time and would have caught the octagon phase-offset bug from that
+  session directly.
+- **`test/projectStore.test.ts`** (16 tests): `setBodyShape` produces a valid body with the right
+  `outer` fields for all six shapes and clears features; `setBodyDimension` writes `radius`/
+  `heightFront`/`heightBack`/etc. on the right shape; `setCornerStyleType`/`setCornerRadius` apply to
+  box and wedge and are confirmed no-ops (same object reference back, since `mutate` bails out
+  entirely) on hexagon/cylinder/stadium.
+- **`test/orientOutward.test.ts`** (2 tests): the geometric probes described in Phase D above,
+  committed as permanent regression coverage.
+- Browser-verified (Playwright + screenshots, zero console errors throughout): all four new-shape
+  resize handles with real mouse drags (Phase C); hexagon/octagon/stadium/wedge all survive a full
+  page reload via autosave (the core Phase A fix, confirmed end-to-end); the 2D Blueprint Editor's
+  facet tabs and lid-seam overlay on a hexagon; wedge's Corner Style section appearing and its Top
+  Rim Chamfer checkbox correctly *not* appearing; Export producing STLs for a hexagon with real
+  (no-longer-merged) bosses visible in the base mesh.
+- **Scope note on "unit tests for the app as a whole"**: this session's 134 new tests target the CSG/
+  geometry/state layers only (`frontend/test/`, run against the real WASM build), consistent with the
+  existing suite's precedent (`vitest`, no React component tests) and `AGENTS.md`'s explicit division
+  of labor — `npm test` covers CSG/geometry logic, browser verification covers UI/interaction. No
+  React Testing Library or similar was introduced; component-level UI tests remain a gap the project
+  has never had tooling for, flagged here rather than silently left implied-covered.
+
+### Verification
+
+- `npx tsc -b`, `npm run lint` (0 errors, the one pre-existing fast-refresh warning), `npm run build`,
+  and `npm test` (271/271) all clean.
+- See Phase B/C/D/E notes above for the specific probes and browser checks each phase's fix was
+  verified against.
+
+### Known gaps still open after this session
+
+- Stadium's curved end-caps are still flat tangent planes for hover/click purposes (pre-existing,
+  unrelated to this session's fixes).
+- `resolveInteriorFace` still doesn't remap `slanted-top`/`side` interior clicks (only the lateral
+  faces this session's `closestFace`-based rewrite covers).
+- External-mount **corner anchoring** (`cornerAnchor()` in `faceFrame.ts`) remains box-only by
+  design — hex/oct/stadium/wedge have no vertical-corner concept `cornerAnchor` currently models one
+  for. Not attempted this session; would need its own design (a hex/oct vertex isn't the same shape
+  of corner a box's is).
+- Slide-in panels (`BoxBody.panels`) remain box-only, as scoped in a design discussion earlier this
+  session — stadium/wedge both have flat walls that could in principle support them, but it's a
+  separate multi-part-enclosure feature, not part of the fastener/resize bug this session targeted.
+- Stadium's edge bevel is a documented approximation (exact on the straight sides, imperfect on the
+  rounded caps) rather than a true shape-correct loft — see the Phase B notes above for why.

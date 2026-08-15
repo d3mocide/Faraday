@@ -180,13 +180,25 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
 
     setWallThickness: (value) => mutate((p) => ({ ...p, body: { ...p.body, wallThickness: value } })),
 
-    // No-ops on a cylinder body (it has no cornerStyle) -- the inspector only shows these controls
-    // for a box body, so this should never actually be called in that state.
+    // box and wedge both have real vertical corners a cornerStyle can round/chamfer/facet (wedgeShell
+    // reads it exactly like boxShell). Stadium also carries a cornerStyle field on its type, but it's
+    // vestigial: a stadium's ends are already fully rounded by construction (the semicircular caps
+    // ARE its corners) and stadiumShell never reads the field, so there's nothing for this control to
+    // do there -- same reasoning as cylinder having no cornerStyle at all, just not encoded in the
+    // type. No-ops on cylinder/hexagon/octagon/stadium, where the inspector doesn't show this control.
     setCornerStyleType: (type) =>
-      mutate((p) => (p.body.shape !== 'box' ? p : { ...p, body: { ...p.body, cornerStyle: { ...p.body.cornerStyle, type } } })),
+      mutate((p) =>
+        p.body.shape !== 'box' && p.body.shape !== 'wedge'
+          ? p
+          : { ...p, body: { ...p.body, cornerStyle: { ...p.body.cornerStyle, type } } },
+      ),
 
     setCornerRadius: (radius) =>
-      mutate((p) => (p.body.shape !== 'box' ? p : { ...p, body: { ...p.body, cornerStyle: { ...p.body.cornerStyle, radius } } })),
+      mutate((p) =>
+        p.body.shape !== 'box' && p.body.shape !== 'wedge'
+          ? p
+          : { ...p, body: { ...p.body, cornerStyle: { ...p.body.cornerStyle, radius } } },
+      ),
 
     setLidType: (type) =>
       mutate((p) => ({ ...p, body: { ...p.body, lid: { ...p.body.lid, type } } })),

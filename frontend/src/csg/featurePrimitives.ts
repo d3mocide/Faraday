@@ -325,7 +325,7 @@ export function buildFanMount(
   }
   const [x, y, z] = faceFrame(feature.face, geom).toWorld(feature.u, feature.v);
   const spun = feature.rotationDeg ? bosses!.rotate(0, 0, feature.rotationDeg) : bosses!;
-  return { add: orientOutward(spun, feature.face, feature.u).translate(x, y, z), cut };
+  return { add: orientOutward(spun, feature.face, feature.u, geom).translate(x, y, z), cut };
 }
 
 /**
@@ -399,7 +399,7 @@ export function buildStandoff(
  * match all three axes at once; those flip v instead, which is invisible here because the mount
  * geometry is symmetric in v -- its only asymmetric axis is the outward normal.
  */
-function orientOutward(solid: Manifold, face: Face, u: number): Manifold {
+function orientOutward(solid: Manifold, face: Face, u: number, geom: BodyGeometry): Manifold {
   switch (face) {
     case 'top':
       return solid;
@@ -415,6 +415,28 @@ function orientOutward(solid: Manifold, face: Face, u: number): Manifold {
       return solid.rotate(-90, 0, 0).rotate(0, 0, 90);
     case 'side':
       return solid.rotate(90, 0, 0).rotate(0, 0, 90 + u * 360);
+    case 'f1':
+    case 'f2':
+    case 'f3':
+    case 'f4':
+    case 'f5':
+    case 'f6':
+    case 'f7':
+    case 'f8': {
+      if (geom.shape !== 'hexagon' && geom.shape !== 'octagon') return solid.rotate(90, 0, 0);
+      const angleDeg = polygonFacetAngleDeg(face, geom.shape);
+      return solid.rotate(90, 0, 0).rotate(0, 0, 90 + angleDeg);
+    }
+    case 'slanted-top': {
+      if (geom.shape !== 'wedge') return solid;
+      // Local +Z (the "outward" axis orientOutward's callers build along) tilts from straight up
+      // toward the slope's own outward normal -- same rotation faceFrame's slanted-top normalAt
+      // uses, so a boss/flange grown along it stands proud of the actual slope, not straight up
+      // through it.
+      const { heightFront: hF, heightBack: hB, width } = geom;
+      const slopeDeg = (Math.atan2(hB - hF, width) * 180) / Math.PI;
+      return solid.rotate(slopeDeg, 0, 0);
+    }
     default:
       return solid.rotate(90, 0, 0);
   }
@@ -736,7 +758,7 @@ export function buildExternalMount(
       // The natural->local rotation below puts natural +Z on -v, so the brace side inverts here.
         : flangeSolid(wasm, spec, wallThickness, gusset, naturalZAlongFace(feature.face, webSide)).rotate(90, 0, 0);
   const spun = feature.rotationDeg ? local.rotate(0, 0, feature.rotationDeg) : local;
-  return orientOutward(spun, feature.face, feature.u).translate(mountX, mountY, mountZ);
+  return orientOutward(spun, feature.face, feature.u, geom).translate(mountX, mountY, mountZ);
 }
 
 

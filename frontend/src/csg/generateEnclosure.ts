@@ -19,14 +19,22 @@ import { featurePart, panelMetrics, panelPartId, partLabel, type PartId } from '
 import {
   applyEdgeBevelsBox,
   applyEdgeBevelsCylinder,
+  applyEdgeBevelsPolygon,
   applyFrictionLipLid,
   applyFrictionLipLidCylinder,
+  applyFrictionLipLidPolygon,
+  applyFrictionLipLidStadium,
   applyGasketChannelBox,
   applyGasketChannelCylinder,
+  applyGasketChannelPolygon,
+  applyGasketChannelStadium,
   applyScrewBossLid,
   applyScrewBossLidCylinder,
+  applyScrewBossLidPolygon,
+  applyScrewBossLidStadium,
   applySnapFitLid,
   applySnapFitLidCylinder,
+  applySnapFitLidPolygon,
   boxShell,
   cylinderShell,
   hexagonShell,
@@ -91,6 +99,10 @@ export function generateEnclosure(
   let innerLength = 0;
   let innerWidth = 0;
   let innerDiameter = 0;
+  // Circumradius (vertex-to-center) of the inner cavity -- hexagon/octagon only. Boss placement
+  // and the friction-lip/snap-fit/gasket geometry all key off this, the polygon counterpart to
+  // innerLength/innerWidth/innerDiameter above.
+  let innerRadius = 0;
 
   if (body.shape === 'box') {
     const { length, width } = body.outer;
@@ -112,21 +124,26 @@ export function generateEnclosure(
       0,
       wallThickness,
     );
-  } else if (body.shape === 'hexagon') {
+  } else if (body.shape === 'hexagon' || body.shape === 'octagon') {
+    const n = body.shape === 'hexagon' ? 6 : 8;
     const { radius } = body.outer;
-    outerShape = hexagonShell(wasm, radius, height);
-    const rInner = Math.max(radius - wallThickness / Math.cos(Math.PI / 6), 1);
+    outerShape = body.shape === 'hexagon' ? hexagonShell(wasm, radius, height) : octagonShell(wasm, radius, height);
+    outerShape = applyEdgeBevelsPolygon(wasm, outerShape, n, radius, height, body.topEdgeBevel, body.bottomEdgeBevel);
+    innerRadius = Math.max(radius - wallThickness / Math.cos(Math.PI / n), 1);
     const innerHeight = Math.max(height - 2 * wallThickness, 1);
-    innerShape = hexagonShell(wasm, rInner, innerHeight).translate(0, 0, wallThickness);
-  } else if (body.shape === 'octagon') {
-    const { radius } = body.outer;
-    outerShape = octagonShell(wasm, radius, height);
-    const rInner = Math.max(radius - wallThickness / Math.cos(Math.PI / 8), 1);
-    const innerHeight = Math.max(height - 2 * wallThickness, 1);
-    innerShape = octagonShell(wasm, rInner, innerHeight).translate(0, 0, wallThickness);
+    const innerShell = body.shape === 'hexagon' ? hexagonShell : octagonShell;
+    innerShape = innerShell(wasm, innerRadius, innerHeight).translate(0, 0, wallThickness);
   } else if (body.shape === 'stadium') {
     const { length, width } = body.outer;
     outerShape = stadiumShell(wasm, length, width, height);
+    // Reuses the box bevel's per-axis diagonal cut: exact on the straight sides (a real flat wall
+    // at y=+-width/2), an approximation on the rounded end caps (the cut plane assumes a square
+    // corner that doesn't physically exist there) -- safe/watertight either way since it only ever
+    // removes material that's actually solid, just doesn't perfectly follow the cap's curve. A
+    // shape-correct version would need a true loft between two different-radius stadium
+    // cross-sections, which CrossSection.extrude's scaleTop can't express (it only uniform-scales,
+    // and a stadium's inward offset isn't a uniform scale).
+    outerShape = applyEdgeBevelsBox(wasm, outerShape, length, width, height, body.topEdgeBevel, body.bottomEdgeBevel);
     innerLength = Math.max(length - 2 * wallThickness, 1);
     innerWidth = Math.max(width - 2 * wallThickness, 1);
     const innerHeight = Math.max(height - 2 * wallThickness, 1);
@@ -138,6 +155,11 @@ export function generateEnclosure(
   } else if (body.shape === 'wedge') {
     const { length, width, heightFront, heightBack } = body.outer;
     outerShape = wedgeShell(wasm, length, width, heightFront, heightBack, body.cornerStyle);
+    // Only the bottom rim is a real, consistent edge around the whole footprint -- the "top" isn't
+    // flat (front wall is short, back is tall, and the slope has no edge of its own), so a
+    // topEdgeBevel has no sane meaning here and is intentionally not applied (see InspectorPanel,
+    // which hides the control for a wedge body).
+    outerShape = applyEdgeBevelsBox(wasm, outerShape, length, width, heightBack, undefined, body.bottomEdgeBevel);
     innerLength = Math.max(length - 2 * wallThickness, 1);
     innerWidth = Math.max(width - 2 * wallThickness, 1);
     const inHf = Math.max(heightFront - 2 * wallThickness, 1);
@@ -172,8 +194,28 @@ export function generateEnclosure(
   let lid = lidRaw;
 
   if (body.lid.type === 'screw-boss' && body.lid.screw) {
-    if (body.shape === 'box') {
+    if (body.shape === 'box' || body.shape === 'wedge') {
       ({ base, lid } = applyScrewBossLid(wasm, base, lid, {
+        innerLength,
+        innerWidth,
+        outerLength: body.outer.length,
+        outerWidth: body.outer.width,
+        wallThickness,
+        splitHeight,
+        outerHeight: height,
+        screw: body.lid.screw,
+      }));
+    } else if (body.shape === 'hexagon' || body.shape === 'octagon') {
+      ({ base, lid } = applyScrewBossLidPolygon(wasm, base, lid, {
+        n: body.shape === 'hexagon' ? 6 : 8,
+        innerRadius,
+        wallThickness,
+        splitHeight,
+        outerHeight: height,
+        screw: body.lid.screw,
+      }));
+    } else if (body.shape === 'stadium') {
+      ({ base, lid } = applyScrewBossLidStadium(wasm, base, lid, {
         innerLength,
         innerWidth,
         outerLength: body.outer.length,
@@ -193,11 +235,27 @@ export function generateEnclosure(
       }));
     }
   } else if (body.lid.type === 'friction-lip') {
-    if (body.shape === 'box') {
+    if (body.shape === 'box' || body.shape === 'wedge') {
       lid = applyFrictionLipLid(wasm, lid, {
         innerLength,
         innerWidth,
         innerCornerStyle: innerCornerStyle!,
+        splitHeight,
+        wallThickness,
+        wallGap: Math.max(body.lid.wallGap, 0),
+      });
+    } else if (body.shape === 'hexagon' || body.shape === 'octagon') {
+      lid = applyFrictionLipLidPolygon(wasm, lid, {
+        n: body.shape === 'hexagon' ? 6 : 8,
+        innerRadius,
+        splitHeight,
+        wallThickness,
+        wallGap: Math.max(body.lid.wallGap, 0),
+      });
+    } else if (body.shape === 'stadium') {
+      lid = applyFrictionLipLidStadium(wasm, lid, {
+        innerLength,
+        innerWidth,
         splitHeight,
         wallThickness,
         wallGap: Math.max(body.lid.wallGap, 0),
@@ -211,10 +269,18 @@ export function generateEnclosure(
       });
     }
   } else if (body.lid.type === 'snap-fit') {
-    if (body.shape === 'box') {
+    if (body.shape === 'box' || body.shape === 'wedge' || body.shape === 'stadium') {
       ({ base, lid } = applySnapFitLid(wasm, base, lid, {
         innerLength,
         innerWidth,
+        splitHeight,
+        wallThickness,
+        wallGap: Math.max(body.lid.wallGap, 0),
+      }));
+    } else if (body.shape === 'hexagon' || body.shape === 'octagon') {
+      ({ base, lid } = applySnapFitLidPolygon(wasm, base, lid, {
+        n: body.shape === 'hexagon' ? 6 : 8,
+        innerRadius,
         splitHeight,
         wallThickness,
         wallGap: Math.max(body.lid.wallGap, 0),
@@ -232,11 +298,27 @@ export function generateEnclosure(
   // Gasket channel (Phase 5 stretch, DESIGN.md §13): independent of lid.type, so it's applied
   // after the lid-mating branch above rather than folded into each one.
   if (body.lid.gasket) {
-    if (body.shape === 'box') {
+    if (body.shape === 'box' || body.shape === 'wedge') {
       base = applyGasketChannelBox(wasm, base, {
         length: body.outer.length,
         width: body.outer.width,
         cornerStyle: body.cornerStyle,
+        wallThickness,
+        splitHeight,
+        gasket: body.lid.gasket,
+      });
+    } else if (body.shape === 'hexagon' || body.shape === 'octagon') {
+      base = applyGasketChannelPolygon(wasm, base, {
+        n: body.shape === 'hexagon' ? 6 : 8,
+        radius: body.outer.radius,
+        wallThickness,
+        splitHeight,
+        gasket: body.lid.gasket,
+      });
+    } else if (body.shape === 'stadium') {
+      base = applyGasketChannelStadium(wasm, base, {
+        length: body.outer.length,
+        width: body.outer.width,
         wallThickness,
         splitHeight,
         gasket: body.lid.gasket,

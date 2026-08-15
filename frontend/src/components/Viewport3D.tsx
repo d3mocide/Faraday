@@ -19,7 +19,16 @@ import { snapValue } from '../csg/snapping';
 import type { EnclosureBody, Face, Feature, PanelFace } from '../types/project';
 import type { CaliperMeasurement } from './CaliperTool';
 
-export type BodyResizePatch = Partial<{ length: number; width: number; height: number; diameter: number; splitHeight: number }>;
+export type BodyResizePatch = Partial<{
+  length: number;
+  width: number;
+  height: number;
+  diameter: number;
+  radius: number;
+  heightFront: number;
+  heightBack: number;
+  splitHeight: number;
+}>;
 
 /** View-only lid presentation — never part of the saved project or undo history. */
 export type LidView = 'assembled' | 'ghost' | 'hidden' | 'exploded';
@@ -118,6 +127,8 @@ type DragState =
   | { type: 'none' }
   | { type: 'corner' }
   | { type: 'height' }
+  | { type: 'height-front' }
+  | { type: 'height-back' }
   | { type: 'split' }
   | { type: 'feature'; id: string; face: Face };
 
@@ -456,14 +467,20 @@ export function Viewport3D({
     // view instead of orbiting underneath the model. (u,v) stays correct: faceFromWorld's
     // mapping for the remapped face reads the same world coordinates.
     const resolveInteriorFace = (face: Face, [x, y, z]: [number, number, number]): Face => {
-      if (face === 'front' && y > 0) return 'back';
-      if (face === 'back' && y < 0) return 'front';
-      if (face === 'left' && x > 0) return 'right';
-      if (face === 'right' && x < 0) return 'left';
-      const split = effectiveSplitHeight(bodyRef.current);
-      if (face === 'top' && z < split - 0.01) return 'bottom';
-      if (face === 'bottom' && z > split + 0.01) return 'top';
-      return face;
+      if (face === 'top' || face === 'bottom') {
+        const split = effectiveSplitHeight(bodyRef.current);
+        if (face === 'top' && z < split - 0.01) return 'bottom';
+        if (face === 'bottom' && z > split + 0.01) return 'top';
+        return face;
+      }
+      if (face === 'slanted-top' || face === 'side') return face; // no remap needed/handled yet
+      // Every other lateral face (front/back/left/right, a hex/oct facet): an interior surface's
+      // normal points inward, so closestFace picked whichever *opposite* wall that inward normal
+      // happens to face. Recomputing from the point's own (x,y) direction -- which, for any of
+      // these star-convex footprints, always points roughly toward the wall the point is actually
+      // near -- finds the correct one directly instead of a per-axis flip that only ever knew
+      // about box's four vertical walls.
+      return closestFace([x, y, 0], bodyGeometry(bodyRef.current));
     };
 
     /** A plane containing the vertical axis through (0,0,*) and facing the camera, for dragging the height handle. */
@@ -632,7 +649,12 @@ export function Viewport3D({
 
       const handleHit = raycaster.intersectObjects(handleGroup.children, false)[0];
       if (handleHit) {
-        const handleType = handleHit.object.userData.handleType as 'corner' | 'height' | 'split';
+        const handleType = handleHit.object.userData.handleType as
+          | 'corner'
+          | 'height'
+          | 'height-front'
+          | 'height-back'
+          | 'split';
         dragState.current = { type: handleType };
         setControlsEnabled(false);
         return;
@@ -677,6 +699,9 @@ export function Viewport3D({
           if (geom.shape === 'cylinder') {
             const diameter = Math.max(Math.hypot(scratchVec.x, scratchVec.y) * 2, MIN_DIMENSION);
             callbacksRef.current.onResizeBody({ diameter });
+          } else if (geom.shape === 'hexagon' || geom.shape === 'octagon') {
+            const radius = Math.max(Math.hypot(scratchVec.x, scratchVec.y), MIN_DIMENSION / 2);
+            callbacksRef.current.onResizeBody({ radius });
           } else {
             const length = Math.max(Math.abs(scratchVec.x) * 2, MIN_DIMENSION);
             const width = Math.max(Math.abs(scratchVec.y) * 2, MIN_DIMENSION);
@@ -691,6 +716,26 @@ export function Viewport3D({
         if (raycaster.ray.intersectPlane(heightDragPlane(), scratchVec)) {
           const height = Math.max(scratchVec.z, MIN_DIMENSION);
           callbacksRef.current.onResizeBody({ height });
+        }
+        return;
+      }
+
+      // Wedge only: the single height cone is replaced by two handles (front wall top, back wall
+      // top) since a wedge has no single 'height' -- see BodyResizePatch/handleResizeBody.
+      if (dragState.current.type === 'height-front') {
+        raycaster.setFromCamera(pointer, camera);
+        if (raycaster.ray.intersectPlane(heightDragPlane(), scratchVec)) {
+          const heightFront = Math.max(scratchVec.z, 2);
+          callbacksRef.current.onResizeBody({ heightFront });
+        }
+        return;
+      }
+
+      if (dragState.current.type === 'height-back') {
+        raycaster.setFromCamera(pointer, camera);
+        if (raycaster.ray.intersectPlane(heightDragPlane(), scratchVec)) {
+          const heightBack = Math.max(scratchVec.z, MIN_DIMENSION);
+          callbacksRef.current.onResizeBody({ heightBack });
         }
         return;
       }
@@ -1164,14 +1209,44 @@ export function Viewport3D({
     const outerH = body.shape === 'wedge' ? body.outer.heightBack : body.outer.height;
     const effectiveHeight = lidView === 'hidden' ? split : outerH;
 
-    const positions: Array<[number, number]> =
-      body.shape === 'box' || body.shape === 'stadium' || body.shape === 'wedge'
+    // [x, y, z] -- z defaults to effectiveHeight below; a wedge overrides it per-corner since its
+    // front wall (y<0) is shorter than its back wall (y>0), so a uniform Z would float the front
+    // two corner handles above the actual (shorter) front wall.
+    const positions: Array<[number, number, number?]> =
+      body.shape === 'box'
         ? [
             [body.outer.length / 2, body.outer.width / 2],
             [body.outer.length / 2, -body.outer.width / 2],
             [-body.outer.length / 2, body.outer.width / 2],
             [-body.outer.length / 2, -body.outer.width / 2],
           ]
+        : body.shape === 'stadium'
+        ? (() => {
+            // A stadium's straight side meets its rounded end-cap at x = length/2 - width/2 (the
+            // cap's own radius), not length/2 -- a handle placed at length/2 floats out past the
+            // curve instead of sitting on the model surface. The drag math itself doesn't care
+            // where the handle rests (it reads the live ray/plane intersection, not an offset from
+            // this position), so moving it here is purely a visual/hit-target fix.
+            const capX = Math.max(body.outer.length / 2 - body.outer.width / 2, 0);
+            const y = body.outer.width / 2;
+            return [
+              [capX, y],
+              [capX, -y],
+              [-capX, y],
+              [-capX, -y],
+            ] as Array<[number, number]>;
+          })()
+        : body.shape === 'wedge'
+        ? (() => {
+            const frontZ = lidView === 'hidden' ? Math.min(split, body.outer.heightFront) : body.outer.heightFront;
+            const backZ = lidView === 'hidden' ? split : body.outer.heightBack;
+            return [
+              [body.outer.length / 2, body.outer.width / 2, backZ],
+              [body.outer.length / 2, -body.outer.width / 2, frontZ],
+              [-body.outer.length / 2, body.outer.width / 2, backZ],
+              [-body.outer.length / 2, -body.outer.width / 2, frontZ],
+            ] as Array<[number, number, number]>;
+          })()
         : body.shape === 'hexagon' || body.shape === 'octagon'
         ? [
             [body.outer.radius, 0],
@@ -1179,20 +1254,37 @@ export function Viewport3D({
           ]
         : [[body.outer.diameter / 2, 0]];
 
-    for (const [x, y] of positions) {
+    for (const [x, y, z] of positions) {
       const handle = new THREE.Mesh(cornerGeometry, cornerMaterial);
-      handle.position.set(x, y, effectiveHeight);
+      handle.position.set(x, y, z ?? effectiveHeight);
       handle.userData.handleType = 'corner';
       group.add(handle);
     }
 
     const heightGeometry = new THREE.ConeGeometry(2, 5, 12);
     const heightMaterial = new THREE.MeshStandardMaterial({ color: HANDLE_COLOR });
-    const heightHandle = new THREE.Mesh(heightGeometry, heightMaterial);
-    heightHandle.rotation.x = Math.PI / 2;
-    heightHandle.position.set(0, 0, effectiveHeight + 4);
-    heightHandle.userData.handleType = 'height';
-    group.add(heightHandle);
+    if (body.shape === 'wedge') {
+      // A wedge has no single 'height' -- two cones, one over each wall's own top, drive
+      // heightFront and heightBack independently (see the height-front/height-back drag branches).
+      const frontZ = lidView === 'hidden' ? Math.min(split, body.outer.heightFront) : body.outer.heightFront;
+      const backZ = lidView === 'hidden' ? split : body.outer.heightBack;
+      const frontHandle = new THREE.Mesh(heightGeometry, heightMaterial);
+      frontHandle.rotation.x = Math.PI / 2;
+      frontHandle.position.set(0, -body.outer.width / 2, frontZ + 4);
+      frontHandle.userData.handleType = 'height-front';
+      group.add(frontHandle);
+      const backHandle = new THREE.Mesh(heightGeometry, heightMaterial);
+      backHandle.rotation.x = Math.PI / 2;
+      backHandle.position.set(0, body.outer.width / 2, backZ + 4);
+      backHandle.userData.handleType = 'height-back';
+      group.add(backHandle);
+    } else {
+      const heightHandle = new THREE.Mesh(heightGeometry, heightMaterial);
+      heightHandle.rotation.x = Math.PI / 2;
+      heightHandle.position.set(0, 0, effectiveHeight + 4);
+      heightHandle.userData.handleType = 'height';
+      group.add(heightHandle);
+    }
 
     // Split-height handle: a small diamond (OctahedronGeometry) sitting on the seam between
     // lid and body, colour-coded amber so it's visually distinct from the resize handles.

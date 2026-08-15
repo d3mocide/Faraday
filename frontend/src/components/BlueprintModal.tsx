@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, type MouseEvent } from 'react';
-import { bodyGeometry, faceSize } from '../csg/faceFrame';
+import { bodyGeometry, faceLabel, facesForShape, faceSize } from '../csg/faceFrame';
 import { computeSmartSnap, getFeature2DBounds, type Feature2DBounds } from '../csg/blueprint2d';
 import type { Face } from '../types/project';
 import { useProjectStore } from '../state/projectStore';
@@ -13,10 +13,15 @@ interface BlueprintModalProps {
   onClose: () => void;
 }
 
-const FACES: Face[] = ['front', 'back', 'left', 'right', 'top', 'bottom'];
+/** A face with a consistent vertical extent from floor (v=0) to seam-relevant top (v=1) --
+ * i.e. every face except the two horizontal ones and a wedge's sloped one, which don't have a
+ * "lid seam crosses this face" line to draw the same way. */
+function isLateralFace(face: Face): boolean {
+  return face !== 'top' && face !== 'bottom' && face !== 'slanted-top';
+}
 
 export function BlueprintModal({
-  initialFace = 'front',
+  initialFace,
   selectedFeatureId,
   onSelectFeature,
   onClose,
@@ -24,7 +29,10 @@ export function BlueprintModal({
   const project = useProjectStore((s) => s.project);
   const updateFeature = useProjectStore((s) => s.updateFeature);
 
-  const [activeFace, setActiveFace] = useState<Face>(initialFace);
+  const shapeFaces = facesForShape(project.body.shape);
+  const [activeFace, setActiveFace] = useState<Face>(
+    initialFace && shapeFaces.includes(initialFace) ? initialFace : shapeFaces[0],
+  );
   const [draggingFeatureId, setDraggingFeatureId] = useState<string | null>(null);
   const [smartGuides, setSmartGuides] = useState<{ axis: 'u' | 'v'; posMm: number; label: string }[]>([]);
 
@@ -47,6 +55,15 @@ export function BlueprintModal({
   }, [selectedFeatureId, onSelectFeature, onClose]);
 
   const geom = bodyGeometry(project.body);
+
+  // The active tab can go stale if the body shape changes while the modal is open (e.g. hexagon's
+  // f6 doesn't exist once you switch to a box) -- fall back to the new shape's first face rather
+  // than feeding faceSize/faceFromWorld a face they don't recognize for this shape.
+  useEffect(() => {
+    const faces = facesForShape(project.body.shape);
+    if (!faces.includes(activeFace)) setActiveFace(faces[0]);
+  }, [project.body.shape, activeFace]);
+
   const [sizeU, sizeV] = faceSize(activeFace, geom);
 
   const faceFeatures = project.features.filter((f) => f.face === activeFace);
@@ -125,14 +142,14 @@ export function BlueprintModal({
           </div>
 
           <div className="blueprint-face-tabs">
-            {FACES.map((f) => (
+            {shapeFaces.map((f) => (
               <button
                 key={f}
                 type="button"
                 className={`btn-face-tab ${activeFace === f ? 'active' : ''}`}
                 onClick={() => setActiveFace(f)}
               >
-                {f.toUpperCase()}
+                {faceLabel(f).toUpperCase()}
               </button>
             ))}
           </div>
@@ -228,7 +245,7 @@ export function BlueprintModal({
             <line x1={originX} y1={mmToSvgY(-sizeV / 2)} x2={originX} y2={mmToSvgY(sizeV / 2)} stroke="rgba(111, 211, 255, 0.25)" strokeDasharray="4,4" />
 
             {/* Lid Seam Line (splitHeight) on lateral faces */}
-            {(activeFace === 'front' || activeFace === 'back' || activeFace === 'left' || activeFace === 'right') && (() => {
+            {isLateralFace(activeFace) && (() => {
               const split = effectiveSplitHeight(project.body);
               const seamV_mm = split - sizeV / 2;
               const seamY_svg = mmToSvgY(seamV_mm);
