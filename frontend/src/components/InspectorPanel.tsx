@@ -8,7 +8,7 @@ import { cornerHolePattern } from '../state/featureFactory';
 import { planOverhangSupport } from '../state/boardSupport';
 import type { DesignCheckFinding } from '../state/designChecks';
 import { alignedPosition, cloneFeatureAt, mirroredPosition, type Axis, type AxisTarget } from '../state/alignMirror';
-import { bodyGeometry, faceSize } from '../csg/faceFrame';
+import { bodyGeometry, faceLabel, facesForShape, faceSize } from '../csg/faceFrame';
 import { effectiveSplitHeight } from '../csg/lidSplit';
 import { FAN_PRESETS, fanSpecFor } from '../csg/fanLibrary';
 import { bossRadiusFor } from '../csg/primitives';
@@ -1218,16 +1218,7 @@ export function InspectorPanel({
       ? body.outer.radius * 2
       : body.outer.diameter;
 
-  const FACES_ORDER: Face[] =
-    body.shape === 'hexagon'
-      ? ['bottom', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'top']
-      : body.shape === 'octagon'
-      ? ['bottom', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'top']
-      : body.shape === 'wedge'
-      ? ['bottom', 'front', 'back', 'left', 'right', 'slanted-top']
-      : body.shape === 'box' || body.shape === 'stadium'
-      ? ['bottom', 'front', 'back', 'left', 'right', 'top']
-      : ['bottom', 'side', 'top'];
+  const FACES_ORDER: Face[] = facesForShape(body.shape);
 
   return (
     <div className="inspector-panel">
@@ -1325,22 +1316,11 @@ export function InspectorPanel({
                   value={selectedFeature.face}
                   onChange={(e) => onUpdateFeature(selectedFeature.id, { face: e.target.value as Face })}
                 >
-                  {body.shape === 'box' ? (
-                    <>
-                      <option value="front">Front</option>
-                      <option value="back">Back</option>
-                      <option value="left">Left</option>
-                      <option value="right">Right</option>
-                      <option value="top">Top</option>
-                      <option value="bottom">Bottom</option>
-                    </>
-                  ) : (
-                    <>
-                      <option value="side">Side</option>
-                      <option value="top">Top</option>
-                      <option value="bottom">Bottom</option>
-                    </>
-                  )}
+                  {facesForShape(body.shape).map((face) => (
+                    <option key={face} value={face}>
+                      {faceLabel(face)}
+                    </option>
+                  ))}
                 </select>
               </label>
 
@@ -1736,7 +1716,7 @@ export function InspectorPanel({
               </FieldsGrid2Col>
             )}
 
-            {body.shape === 'box' && (
+            {(body.shape === 'box' || body.shape === 'wedge') && (
               <div className="inspector-subgroup">
                 <div className="subgroup-title">Corner Style</div>
                 <FieldsGrid2Col>
@@ -1769,29 +1749,31 @@ export function InspectorPanel({
 
             <div className="inspector-subgroup">
               <div className="subgroup-title">Rim Edge Chamfers (3D Bevels)</div>
-              <FieldsGrid2Col>
-                <label className="field field-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={body.topEdgeBevel?.type === 'chamfer'}
-                    onChange={(e) =>
-                      setTopEdgeBevel(e.target.checked ? { type: 'chamfer', size: 2.0 } : undefined)
-                    }
-                  />
-                  <span>Top Rim Chamfer</span>
-                </label>
-                {body.topEdgeBevel?.type === 'chamfer' && (
-                  <UnitNumberField
-                    label="Top size"
-                    valueMm={body.topEdgeBevel.size}
-                    units={units}
-                    minMm={0.5}
-                    maxMm={Math.min((body.shape === 'wedge' ? body.outer.heightBack : body.outer.height) / 3, 10)}
-                    stepMm={0.5}
-                    onChangeMm={(v) => setTopEdgeBevel({ type: 'chamfer', size: v })}
-                  />
-                )}
-              </FieldsGrid2Col>
+              {body.shape !== 'wedge' && (
+                <FieldsGrid2Col>
+                  <label className="field field-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={body.topEdgeBevel?.type === 'chamfer'}
+                      onChange={(e) =>
+                        setTopEdgeBevel(e.target.checked ? { type: 'chamfer', size: 2.0 } : undefined)
+                      }
+                    />
+                    <span>Top Rim Chamfer</span>
+                  </label>
+                  {body.topEdgeBevel?.type === 'chamfer' && (
+                    <UnitNumberField
+                      label="Top size"
+                      valueMm={body.topEdgeBevel.size}
+                      units={units}
+                      minMm={0.5}
+                      maxMm={Math.min(body.outer.height / 3, 10)}
+                      stepMm={0.5}
+                      onChangeMm={(v) => setTopEdgeBevel({ type: 'chamfer', size: v })}
+                    />
+                  )}
+                </FieldsGrid2Col>
+              )}
               <FieldsGrid2Col style={{ marginTop: '6px' }}>
                 <label className="field field-checkbox">
                   <input

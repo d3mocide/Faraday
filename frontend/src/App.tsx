@@ -115,6 +115,9 @@ function App() {
     if (patch.width !== undefined) setBodyDimension('width', patch.width);
     if (patch.height !== undefined) setBodyDimension('height', patch.height);
     if (patch.diameter !== undefined) setBodyDimension('diameter', patch.diameter);
+    if (patch.radius !== undefined) setBodyDimension('radius', patch.radius);
+    if (patch.heightFront !== undefined) setBodyDimension('heightFront', patch.heightFront);
+    if (patch.heightBack !== undefined) setBodyDimension('heightBack', patch.heightBack);
     if (patch.splitHeight !== undefined) setSplitHeight(patch.splitHeight);
   };
 

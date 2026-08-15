@@ -333,7 +333,8 @@ function columnSolid(
  */
 export type FootWalls =
   | { kind: 'box'; halfX: number; halfY: number; side: 'interior' | 'exterior' }
-  | { kind: 'cylinder'; radius: number };
+  | { kind: 'cylinder'; radius: number }
+  | { kind: 'polygon'; n: number; rFlat: number; phaseRad: number };
 
 /** One wall a column's foot has to run back into: `dx, dy` is the unit XY direction the foot's
  * material retreats in as it descends (away from that wall), and `run` the 45-degree drop that
@@ -381,6 +382,27 @@ function footAnchors(
     if (radius < 1e-6) return [];
     const anchor = footAnchor(-x / radius, -y / radius, walls.radius - radius, shape, size);
     return anchor ? [anchor] : [];
+  }
+
+  if (walls.kind === 'polygon') {
+    // A hex/oct boss sits near a vertex (bossPositions puts it there deliberately, same reasoning
+    // as a box corner boss), which is equidistant from its two adjacent facets -- so check both
+    // neighbouring facet planes rather than just the nearest one, same as a box corner checking
+    // both its x and y walls.
+    const { n, rFlat, phaseRad } = walls;
+    const step = (2 * Math.PI) / n;
+    const theta = Math.atan2(y, x);
+    const idxFloor = Math.floor((theta - phaseRad) / step);
+    const anchors: FootAnchor[] = [];
+    for (const idx of [idxFloor, idxFloor + 1]) {
+      const angle = phaseRad + idx * step;
+      const nx = Math.cos(angle);
+      const ny = Math.sin(angle);
+      const back = rFlat - (x * nx + y * ny);
+      const anchor = footAnchor(-nx, -ny, back, shape, size);
+      if (anchor) anchors.push(anchor);
+    }
+    return anchors;
   }
 
   const anchors: FootAnchor[] = [];
@@ -695,6 +717,86 @@ export function applyScrewBossLidCylinder(
   });
 }
 
+interface ScrewBossLidPolygonParams {
+  n: 6 | 8; // hexagon or octagon
+  innerRadius: number; // inner cavity's own vertex (circumradius), i.e. rInner from generateEnclosure.ts
+  wallThickness: number;
+  splitHeight: number;
+  outerHeight: number;
+  screw: ScrewSpec;
+}
+
+/** Adds bosses (with pilot/insert holes) near each vertex of a hexagon/octagon base's cavity, and
+ * matching clearance holes to the lid -- the polygon counterpart to applyScrewBossLid's box
+ * corners and applyScrewBossLidCylinder's evenly-spaced ring. Interior placement only: a facet
+ * has no "outside the wall" analogue the way a box's flat front/back walls do. */
+export function applyScrewBossLidPolygon(
+  wasm: ManifoldToplevel,
+  base: Manifold,
+  lid: Manifold,
+  params: ScrewBossLidPolygonParams,
+): { base: Manifold; lid: Manifold } {
+  const { n, innerRadius, wallThickness, splitHeight, outerHeight, screw } = params;
+  const bossRadius = bossRadiusFor(screw);
+  const positionFn = n === 6 ? hexagonBossPositions : octagonBossPositions;
+  const positions = positionFn(innerRadius, bossRadius, hangingInset(screw, bossRadius));
+  const rFlat = innerRadius * Math.cos(Math.PI / n);
+  const phaseRad = n === 6 ? Math.PI / 6 : Math.PI / 8;
+  return applyScrewBossLidAt(wasm, base, lid, splitHeight, outerHeight, screw, positions, wallThickness, {
+    kind: 'polygon',
+    n,
+    rFlat,
+    phaseRad,
+  });
+}
+
+interface ScrewBossLidStadiumParams {
+  innerLength: number; // base cavity's own straight-section length (length - 2*wallThickness)
+  innerWidth: number;
+  outerLength: number;
+  outerWidth: number;
+  wallThickness: number;
+  splitHeight: number;
+  outerHeight: number;
+  screw: ScrewSpec;
+}
+
+/** Adds bosses near the four corners of a stadium base's cavity (where the straight sides meet
+ * the rounded end caps), and matching clearance holes to the lid -- the stadium counterpart to
+ * applyScrewBossLid's box corners. The corner-ish positions and wall-slope approximation both
+ * treat the cavity as a rectangle the size of its straight section, which is a close enough stand-in
+ * for a hanging column's foot (a purely cosmetic taper, not a fit-critical dimension) even though
+ * the true boundary curves away toward the cap tips. */
+export function applyScrewBossLidStadium(
+  wasm: ManifoldToplevel,
+  base: Manifold,
+  lid: Manifold,
+  params: ScrewBossLidStadiumParams,
+): { base: Manifold; lid: Manifold } {
+  const { innerLength, innerWidth, outerLength, outerWidth, wallThickness, splitHeight, outerHeight, screw } =
+    params;
+  if (screw.placement === 'exterior') {
+    return applyExteriorScrewBossLidAt(
+      wasm,
+      base,
+      lid,
+      splitHeight,
+      outerHeight,
+      screw,
+      exteriorBossPositions(screw.count, outerLength / 2, outerWidth / 2, bossRadiusFor(screw)),
+      { kind: 'box', halfX: outerLength / 2, halfY: outerWidth / 2, side: 'exterior' },
+    );
+  }
+  const bossRadius = bossRadiusFor(screw);
+  const positions = stadiumBossPositions(innerLength, innerWidth, bossRadius, hangingInset(screw, bossRadius));
+  return applyScrewBossLidAt(wasm, base, lid, splitHeight, outerHeight, screw, positions, wallThickness, {
+    kind: 'box',
+    halfX: innerLength / 2,
+    halfY: innerWidth / 2,
+    side: 'interior',
+  });
+}
+
 interface FrictionLipParams {
   innerLength: number; // base cavity footprint (length - 2*wallThickness)
   innerWidth: number;
@@ -764,6 +866,69 @@ export function applyFrictionLipLidCylinder(
 
   const skirt = skirtOuter.subtract(skirtInner).translate(0, 0, splitHeight - engagementDepth);
 
+  return lid.add(skirt);
+}
+
+interface FrictionLipPolygonParams {
+  n: 6 | 8;
+  innerRadius: number; // inner cavity's own vertex radius (circumradius)
+  splitHeight: number;
+  wallThickness: number;
+  wallGap: number;
+}
+
+/** Adds an inset skirt (a smaller hexagon/octagon) to the underside of the lid that friction-fits
+ * into the base cavity -- the polygon counterpart to applyFrictionLipLid. */
+export function applyFrictionLipLidPolygon(
+  wasm: ManifoldToplevel,
+  lid: Manifold,
+  params: FrictionLipPolygonParams,
+): Manifold {
+  const { n, innerRadius, splitHeight, wallThickness, wallGap } = params;
+  const shell = n === 6 ? hexagonShell : octagonShell;
+
+  const skirtWallThickness = Math.min(wallThickness, 1.6);
+  const engagementDepth = Math.min(4, Math.max(splitHeight - wallThickness - 1, 1));
+  const outerRadius = Math.max(innerRadius - wallGap, skirtWallThickness * 2 + 1);
+
+  const skirtOuter = shell(wasm, outerRadius, engagementDepth);
+  const skirtInner = shell(wasm, Math.max(outerRadius - skirtWallThickness / Math.cos(Math.PI / n), 0.5), engagementDepth);
+
+  const skirt = skirtOuter.subtract(skirtInner).translate(0, 0, splitHeight - engagementDepth);
+  return lid.add(skirt);
+}
+
+interface FrictionLipStadiumParams {
+  innerLength: number;
+  innerWidth: number;
+  splitHeight: number;
+  wallThickness: number;
+  wallGap: number;
+}
+
+/** Adds an inset skirt (a smaller stadium/pill) to the underside of the lid that friction-fits
+ * into the base cavity -- the stadium counterpart to applyFrictionLipLid. */
+export function applyFrictionLipLidStadium(
+  wasm: ManifoldToplevel,
+  lid: Manifold,
+  params: FrictionLipStadiumParams,
+): Manifold {
+  const { innerLength, innerWidth, splitHeight, wallThickness, wallGap } = params;
+
+  const skirtWallThickness = Math.min(wallThickness, 1.6);
+  const engagementDepth = Math.min(4, Math.max(splitHeight - wallThickness - 1, 1));
+  const outerLength = Math.max(innerLength - 2 * wallGap, skirtWallThickness * 2 + 1);
+  const outerWidth = Math.max(innerWidth - 2 * wallGap, skirtWallThickness * 2 + 1);
+
+  const skirtOuter = stadiumShell(wasm, outerLength, outerWidth, engagementDepth);
+  const skirtInner = stadiumShell(
+    wasm,
+    Math.max(outerLength - 2 * skirtWallThickness, 0.5),
+    Math.max(outerWidth - 2 * skirtWallThickness, 0.5),
+    engagementDepth,
+  );
+
+  const skirt = skirtOuter.subtract(skirtInner).translate(0, 0, splitHeight - engagementDepth);
   return lid.add(skirt);
 }
 
@@ -872,6 +1037,57 @@ export function applySnapFitLidCylinder(
   return { base: nextBase, lid: nextLid };
 }
 
+interface SnapFitLidPolygonParams {
+  n: 6 | 8;
+  innerRadius: number; // inner cavity's own vertex radius (circumradius)
+  splitHeight: number;
+  wallThickness: number;
+  wallGap: number;
+}
+
+/** Two tabs, on two opposite facets (facet 0 and its 180-degree-opposite facet). */
+export function applySnapFitLidPolygon(
+  wasm: ManifoldToplevel,
+  base: Manifold,
+  lid: Manifold,
+  params: SnapFitLidPolygonParams,
+): { base: Manifold; lid: Manifold } {
+  const { n, innerRadius, splitHeight, wallThickness, wallGap } = params;
+  const { tabThickness, engagementDepth, nubZ } = snapTabGeometry(splitHeight, wallThickness);
+  const rFlat = innerRadius * Math.cos(Math.PI / n);
+  const phase = n === 6 ? Math.PI / 6 : Math.PI / 8;
+  const tabWidth = Math.min(Math.max(rFlat * 0.4, 6), 14);
+  const outerR = Math.max(rFlat - wallGap, tabThickness + 1);
+
+  let nextBase = base;
+  let nextLid = lid;
+
+  for (const facetIdx of [0, n / 2]) {
+    const angle = phase + facetIdx * ((2 * Math.PI) / n);
+    const angleDeg = (angle * 180) / Math.PI;
+    const nx = Math.cos(angle);
+    const ny = Math.sin(angle);
+    // Tab's outward (radial) face sits at radius=outerR, matching the wall it friction-fits
+    // against; local X is thickness (radial), local Y is width (tangential) before the Z-rotate
+    // aligns local X with this facet's own outward direction (nx, ny).
+    const centerR = outerR - tabThickness / 2;
+    const tab = wasm.Manifold.cube([tabThickness, tabWidth, engagementDepth], true)
+      .rotate(0, 0, angleDeg)
+      .translate(nx * centerR, ny * centerR, splitHeight - engagementDepth / 2);
+    const nub = wasm.Manifold.sphere(SNAP_NUB_RADIUS).translate(nx * outerR, ny * outerR, nubZ);
+    nextLid = nextLid.add(tab).add(nub);
+
+    const pocket = wasm.Manifold.sphere(SNAP_NUB_RADIUS + SNAP_POCKET_CLEARANCE).translate(
+      nx * outerR,
+      ny * outerR,
+      nubZ,
+    );
+    nextBase = nextBase.subtract(pocket);
+  }
+
+  return { base: nextBase, lid: nextLid };
+}
+
 /**
  * Gasket/seal channel (DESIGN.md §13 stretch goal): a groove cut into the base's top rim, centered
  * in the wall thickness, sized to hold an O-ring or foam cord that the flat underside of the lid
@@ -943,6 +1159,63 @@ export function applyGasketChannelCylinder(
 
   const outerRing = cylinderShell(wasm, outerDiameter, channelDepth);
   const innerRing = cylinderShell(wasm, innerDiameter, channelDepth);
+  const groove = outerRing.subtract(innerRing).translate(0, 0, splitHeight - channelDepth);
+  return base.subtract(groove);
+}
+
+interface GasketChannelPolygonParams {
+  n: 6 | 8;
+  radius: number; // outer vertex radius
+  wallThickness: number;
+  splitHeight: number;
+  gasket: GasketSpec;
+}
+
+export function applyGasketChannelPolygon(
+  wasm: ManifoldToplevel,
+  base: Manifold,
+  params: GasketChannelPolygonParams,
+): Manifold {
+  const { n, radius, wallThickness, splitHeight } = params;
+  const { width: channelWidth, depth: channelDepth } = clampGasket(params.gasket, wallThickness, splitHeight);
+  const shell = n === 6 ? hexagonShell : octagonShell;
+  const centerInset = wallThickness / 2;
+  const outerInset = Math.max(centerInset - channelWidth / 2, 0);
+  const innerInset = centerInset + channelWidth / 2;
+  const cosHalf = Math.cos(Math.PI / n);
+
+  const outerRing = shell(wasm, radius - outerInset / cosHalf, channelDepth);
+  const innerRing = shell(wasm, Math.max(radius - innerInset / cosHalf, 1), channelDepth);
+  const groove = outerRing.subtract(innerRing).translate(0, 0, splitHeight - channelDepth);
+  return base.subtract(groove);
+}
+
+interface GasketChannelStadiumParams {
+  length: number;
+  width: number;
+  wallThickness: number;
+  splitHeight: number;
+  gasket: GasketSpec;
+}
+
+export function applyGasketChannelStadium(
+  wasm: ManifoldToplevel,
+  base: Manifold,
+  params: GasketChannelStadiumParams,
+): Manifold {
+  const { length, width, wallThickness, splitHeight } = params;
+  const { width: channelWidth, depth: channelDepth } = clampGasket(params.gasket, wallThickness, splitHeight);
+  const centerInset = wallThickness / 2;
+  const outerInset = Math.max(centerInset - channelWidth / 2, 0);
+  const innerInset = centerInset + channelWidth / 2;
+
+  const outerRing = stadiumShell(wasm, length - 2 * outerInset, width - 2 * outerInset, channelDepth);
+  const innerRing = stadiumShell(
+    wasm,
+    Math.max(length - 2 * innerInset, 1),
+    Math.max(width - 2 * innerInset, 1),
+    channelDepth,
+  );
   const groove = outerRing.subtract(innerRing).translate(0, 0, splitHeight - channelDepth);
   return base.subtract(groove);
 }
@@ -1030,6 +1303,46 @@ export function applyEdgeBevelsCylinder(
     const outerCyl = wasm.Manifold.cylinder(s + 0.1, r + 5, r + 5).translate(0, 0, -0.05);
     const innerCone = wasm.Manifold.cylinder(s + 0.1, r, r - s).translate(0, 0, -0.05);
     result = result.subtract(outerCyl.subtract(innerCone));
+  }
+
+  return result;
+}
+
+/** Faceted-cone rim chamfer for a hexagon/octagon body -- same cut-away-the-outer-shell-past-a-
+ * cone technique as applyEdgeBevelsCylinder, but the "cone" is a tapered n-gon prism (via
+ * CrossSection.extrude's scaleTop) instead of a round frustum, so the bevel follows the body's own
+ * facets instead of rounding them off. */
+export function applyEdgeBevelsPolygon(
+  wasm: ManifoldToplevel,
+  shape: Manifold,
+  n: 6 | 8,
+  radius: number,
+  height: number,
+  topBevel?: EdgeBevelSpec,
+  bottomBevel?: EdgeBevelSpec,
+): Manifold {
+  let result = shape;
+  const maxBevel = Math.min(radius, height) * 0.35;
+  const bigPoly = (h: number) => wasm.CrossSection.circle(radius + 5, n).extrude(h);
+
+  if (topBevel && topBevel.type === 'chamfer' && topBevel.size > 0) {
+    const s = Math.min(topBevel.size, maxBevel);
+    const rNear = Math.max(radius - s, 0.01);
+    const outer = bigPoly(s + 0.1).translate(0, 0, height - s);
+    const innerCone = wasm.CrossSection.circle(rNear, n)
+      .extrude(s + 0.1, undefined, undefined, radius / rNear)
+      .translate(0, 0, height - s);
+    result = result.subtract(outer.subtract(innerCone));
+  }
+
+  if (bottomBevel && bottomBevel.type === 'chamfer' && bottomBevel.size > 0) {
+    const s = Math.min(bottomBevel.size, maxBevel);
+    const rNear = Math.max(radius - s, 0.01);
+    const outer = bigPoly(s + 0.1).translate(0, 0, -0.05);
+    const innerCone = wasm.CrossSection.circle(radius, n)
+      .extrude(s + 0.1, undefined, undefined, rNear / radius)
+      .translate(0, 0, -0.05);
+    result = result.subtract(outer.subtract(innerCone));
   }
 
   return result;

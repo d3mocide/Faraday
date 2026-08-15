@@ -10,6 +10,38 @@ Each entry here corresponds to a `vX.Y.Z` git tag, which is what triggers
 
 ## [Unreleased]
 
+## [0.1.0-beta.3] - 2026-08-15
+
+Bug-fix release: the hexagon/octagon/stadium/wedge body shapes (added in beta.2) had broken lid
+fasteners and, for hexagon/octagon, no working resize handles. Both are fixed here, along with a
+cluster of related parity gaps the investigation surfaced.
+
+### Fixed
+
+- **Lid fasteners on hexagon/octagon/stadium/wedge bodies no longer collapse into a single column
+  at the body center.** Screw-boss, friction-lip, and snap-fit lids now place real, correctly
+  positioned bosses/skirts/tabs on all four shapes, matching box and cylinder.
+- **Hexagon and octagon bodies are now resizable by their drag handles** (previously silently did
+  nothing). Wedge gained independent front/back height handles in place of a single handle that
+  wrote to a field the wedge doesn't have; stadium's corner handles now sit on the model surface
+  instead of floating past the rounded ends.
+- **Hexagon/octagon/stadium/wedge projects no longer get silently discarded on page reload or file
+  Load.** Project validation only recognized box and cylinder bodies, so restoring an autosaved (or
+  loading a saved) project in any of the other four shapes quietly fell back to a default box.
+- External mounts (flanges/bosses) and fan-mount bosses placed on a hexagon/octagon facet or a
+  wedge's slanted top now point outward correctly instead of using the box front/back orientation.
+- The per-feature Face dropdown, the 2D Blueprint Editor's face tabs, and interior-click handling
+  (lid hidden/ghosted) now work correctly across all six body shapes instead of only offering box's
+  six faces.
+- Corner-style controls (sharp/rounded/chamfered/faceted/double-chamfer) are now available for
+  wedge bodies, and edge-bevel rim chamfers now apply correctly to hexagon, octagon, and stadium
+  bodies (previously box- and cylinder-only).
+
+### Added
+
+- 134 new automated tests (137 → 271) covering fastener geometry, project validation, and face
+  placement across all six body shapes.
+
 ## [0.1.0-beta.2] - 2026-08-14
 
 Second beta release, focusing on complete UI/UX modernization, workspace ergonomics, visual brand identity, and editing workflows.
