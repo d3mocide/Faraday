@@ -1736,3 +1736,40 @@ CSG pipeline:
   separate multi-part-enclosure feature, not part of the fastener/resize bug this session targeted.
 - Stadium's edge bevel is a documented approximation (exact on the straight sides, imperfect on the
   rounded caps) rather than a true shape-correct loft — see the Phase B notes above for why.
+
+## Panel groove thin-wall failure: measurement + design proposal (2026-08-15 session)
+
+**Investigation and design note only — no app code changed this session.** The repo owner test
+printed the `waveshare-cm4-dual-eth-wifi6` preset and the slide-in panel grooves broke: *"the seam
+is so thin that the groves broke... we have a few instances of this where the walls are two thin on
+a print and they just disconnect."* Full write-up, with the measured geometry and the options
+considered, is in [`docs/panel-retention.md`](./docs/panel-retention.md). Summary of what was
+found, so a future session doesn't have to re-measure:
+
+- **The retaining lip added in the 2026-08-11 fifth round is 0.40–0.94mm thick, not the 1.0mm it
+  asks for.** Probed off manifold `slice()` cross-sections of the real preset at export quality:
+  the lip lives between `x = 47.70` (outer − `retainLip`) and the case's **rounded corner arc**,
+  which has already curved inward to `x = 48.10` by the time it reaches the channel end at
+  `y = 56.20`. It is 1.2mm wide and 40.8mm tall — one to two extrusion widths of unsupported
+  vertical rib, carrying the plate's entire retention load across its layer lines.
+- **Root cause:** `panelBounds()` in `csg/panels.ts` applies its `cornerInset` term only where a
+  panel meets *another panel*. Where a panel meets a **wall** the channel is driven straight to
+  `acrossHalf - wallThickness + grooveDepth` with no knowledge of the body's corner style, and
+  `panelMetrics()`'s `MIN_PANEL_SKIN = 0.8` is measured against a flat wall that isn't there.
+- **Independent second defect, same print:** the `panel-right` plate has a **0.19mm web** between
+  the third USB-A cutout (`alongMm 14.745`) and the dual-RJ45 shell (`alongMm 35.83`, overridden to
+  33.6mm wide) — a `presets/boards.ts` data bug, not a generator bug. The slicer drops it and the
+  two openings merge into one 42mm slot.
+- **Wall-mount tabs have the same class of problem:** `flangeHoleCrossSection()` never checks its
+  hole against the flange outline, so `CM4_WALL_TAB` (protrusion 10, slot 9 long) leaves **0.5mm**
+  between the slot end and the tab tip. Confirmed by probing the band `y 66.9 → 67.4`.
+- Minor, unrelated to the break: heat-set bores are cut to exactly `heatSetDepth` with no relief
+  for the plastic the insert displaces (`csg/primitives.ts:522,602`).
+
+The proposal is a shared `csg/printRules.ts` (`MIN_SKIN`/`MIN_WEB` = 1.2mm, three perimeters at a
+0.4mm nozzle — 1.0mm is worse than 0.8mm on FDM because it isn't a whole multiple of the extrusion
+width), hard clamps on machine-chosen dimensions, design-check warnings for user-placed cutouts
+(never silently move a connector), an interior **pilaster** at each end of a panel opening so the
+groove is cut into added material rather than a thin wall, and a new `PanelSpec.retention` mode:
+an inset/rebated plate secured with M2 screws into those pilasters. §6 of the design note lists the
+four decisions that need the owner's call before any of it is built.
