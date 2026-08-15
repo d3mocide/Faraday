@@ -9,6 +9,7 @@ import type {
   GasketSpec,
   LidType,
   PanelFace,
+  PanelScrewSpec,
   PanelSpec,
   ScrewCount,
   ScrewInsertType,
@@ -80,6 +81,13 @@ interface ProjectStore {
   setPanelGrooveDepth: (value: number) => void;
   setPanelCaptureInLid: (value: boolean) => void;
   setPanelRetainLip: (value: number) => void;
+  setPanelScrewEnabled: (enabled: boolean) => void;
+  setPanelScrewSize: (size: ScrewSize) => void;
+  setPanelScrewInsertType: (insertType: ScrewInsertType) => void;
+  setPanelScrewCountPerEnd: (count: 1 | 2) => void;
+  setPanelScrewHeadStyle: (headStyle: ScrewHeadStyle) => void;
+  setPanelPostWidth: (value: number) => void;
+  setPanelPostDepth: (value: number) => void;
   setLiveSegments: (segments: number) => void;
   setExportSegments: (segments: number) => void;
   setTopEdgeBevel: (spec: EdgeBevelSpec | undefined) => void;
@@ -304,6 +312,31 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
 
     setPanelRetainLip: (value) => mutate(patchPanels((panels) => ({ ...panels, retainLip: value }))),
 
+    setPanelScrewEnabled: (enabled) =>
+      mutate(
+        patchPanels((panels) => ({
+          ...panels,
+          screw: enabled ? (panels.screw ?? defaultPanelScrewSpec()) : undefined,
+        })),
+      ),
+
+    setPanelScrewSize: (size) => mutate(patchPanels(patchPanelScrew((screw) => ({ ...screw, size })))),
+
+    setPanelScrewInsertType: (insertType) =>
+      mutate(patchPanels(patchPanelScrew((screw) => ({ ...screw, insertType })))),
+
+    setPanelScrewCountPerEnd: (countPerEnd) =>
+      mutate(patchPanels(patchPanelScrew((screw) => ({ ...screw, countPerEnd })))),
+
+    setPanelScrewHeadStyle: (headStyle) =>
+      mutate(patchPanels(patchPanelScrew((screw) => ({ ...screw, headStyle })))),
+
+    setPanelPostWidth: (value) =>
+      mutate(patchPanels(patchPanelScrew((screw) => ({ ...screw, postWidth: value })))),
+
+    setPanelPostDepth: (value) =>
+      mutate(patchPanels(patchPanelScrew((screw) => ({ ...screw, postDepth: value })))),
+
     setLiveSegments: (segments) =>
       mutate((p) => ({
         ...p,
@@ -419,6 +452,27 @@ function patchScrew(
     ...p,
     body: { ...p.body, lid: { ...p.body.lid, screw: update(p.body.lid.screw ?? defaultScrewSpec()) } },
   });
+}
+
+/** M2 self-tapping, one screw near each end of the plate's top and bottom: no extra hardware to
+ * buy beyond the screws themselves, and enough grip that the plate does not depend on its lip. */
+function defaultPanelScrewSpec(): PanelScrewSpec {
+  return {
+    size: 'M2',
+    insertType: 'self-tap',
+    countPerEnd: 2,
+    headStyle: 'counterbore',
+    postWidth: 6,
+    postDepth: 6,
+  };
+}
+
+/** Edits one field of the panel screw spec, filling in the default first so a control works on a
+ * panel that never carried one. */
+function patchPanelScrew(
+  update: (screw: PanelScrewSpec) => PanelScrewSpec,
+): (panels: PanelSpec) => PanelSpec {
+  return (panels) => ({ ...panels, screw: update(panels.screw ?? defaultPanelScrewSpec()) });
 }
 
 /** Shared shape of the "edit one field of the panel spec" actions above. */

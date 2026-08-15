@@ -12,6 +12,7 @@ import { bodyGeometry, faceLabel, facesForShape, faceSize } from '../csg/faceFra
 import { effectiveSplitHeight } from '../csg/lidSplit';
 import { FAN_PRESETS, fanSpecFor } from '../csg/fanLibrary';
 import { bossRadiusFor } from '../csg/primitives';
+import { MIN_SKIN } from '../csg/printRules';
 import type { MaterialPreset, PreviewTarget } from './Viewport3D';
 import type {
   BoardMountSpec,
@@ -1205,6 +1206,13 @@ export function InspectorPanel({
   const setPanelThickness = useProjectStore((s) => s.setPanelThickness);
   const setPanelFitClearance = useProjectStore((s) => s.setPanelFitClearance);
   const setPanelGrooveDepth = useProjectStore((s) => s.setPanelGrooveDepth);
+  const setPanelScrewEnabled = useProjectStore((s) => s.setPanelScrewEnabled);
+  const setPanelScrewSize = useProjectStore((s) => s.setPanelScrewSize);
+  const setPanelScrewInsertType = useProjectStore((s) => s.setPanelScrewInsertType);
+  const setPanelScrewCountPerEnd = useProjectStore((s) => s.setPanelScrewCountPerEnd);
+  const setPanelScrewHeadStyle = useProjectStore((s) => s.setPanelScrewHeadStyle);
+  const setPanelPostWidth = useProjectStore((s) => s.setPanelPostWidth);
+  const setPanelPostDepth = useProjectStore((s) => s.setPanelPostDepth);
   const setPanelCaptureInLid = useProjectStore((s) => s.setPanelCaptureInLid);
   const setPanelRetainLip = useProjectStore((s) => s.setPanelRetainLip);
 
@@ -2061,7 +2069,7 @@ export function InspectorPanel({
                       valueMm={body.panels.grooveDepth}
                       units={units}
                       minMm={0.2}
-                      maxMm={Math.max(body.wallThickness - 0.8, 0.2)}
+                      maxMm={Math.max(body.wallThickness - MIN_SKIN, 0.2)}
                       onChangeMm={setPanelGrooveDepth}
                     />
                     <UnitNumberField
@@ -2075,10 +2083,10 @@ export function InspectorPanel({
                     />
                     <UnitNumberField
                       label="Retaining lip"
-                      valueMm={body.panels.retainLip ?? 1}
+                      valueMm={body.panels.retainLip ?? MIN_SKIN}
                       units={units}
                       minMm={0}
-                      maxMm={Math.max(body.panels.thickness - 0.8, 0)}
+                      maxMm={Math.max(body.panels.thickness - MIN_SKIN, 0)}
                       stepMm={0.1}
                       onChangeMm={setPanelRetainLip}
                     />
@@ -2091,6 +2099,82 @@ export function InspectorPanel({
                     />
                     <span>Capture plate top in the lid</span>
                   </label>
+                  <label className="field field-checkbox" style={{ marginTop: '8px' }}>
+                    <input
+                      type="checkbox"
+                      checked={body.panels.screw !== undefined}
+                      onChange={(e) => setPanelScrewEnabled(e.target.checked)}
+                    />
+                    <span>Screw the plates down</span>
+                  </label>
+                  {body.panels.screw && (
+                    <>
+                      <p className="field-hint" style={{ marginTop: '4px' }}>
+                        Adds a post in each interior corner behind the plate. Screws hold the plate
+                        independently of its lip, and let a connector panel come off without opening
+                        the lid.
+                      </p>
+                      <FieldsGrid2Col>
+                        <label className="field">
+                          <span>Screw size</span>
+                          <select
+                            value={body.panels.screw.size}
+                            onChange={(e) => setPanelScrewSize(e.target.value as ScrewSize)}
+                          >
+                            <option value="M2">M2</option>
+                            <option value="M2.5">M2.5</option>
+                            <option value="M3">M3</option>
+                          </select>
+                        </label>
+                        <label className="field">
+                          <span>Thread</span>
+                          <select
+                            value={body.panels.screw.insertType}
+                            onChange={(e) => setPanelScrewInsertType(e.target.value as ScrewInsertType)}
+                          >
+                            <option value="self-tap">Self-tap</option>
+                            <option value="heat-set">Heat-set</option>
+                          </select>
+                        </label>
+                        <label className="field">
+                          <span>Screws per end</span>
+                          <select
+                            value={body.panels.screw.countPerEnd}
+                            onChange={(e) => setPanelScrewCountPerEnd(Number(e.target.value) as 1 | 2)}
+                          >
+                            <option value={1}>1</option>
+                            <option value={2}>2</option>
+                          </select>
+                        </label>
+                        <label className="field">
+                          <span>Screw head</span>
+                          <select
+                            value={body.panels.screw.headStyle}
+                            onChange={(e) => setPanelScrewHeadStyle(e.target.value as ScrewHeadStyle)}
+                          >
+                            <option value="counterbore">Sunk flush</option>
+                            <option value="flush">Left proud</option>
+                          </select>
+                        </label>
+                        <UnitNumberField
+                          label="Post width"
+                          valueMm={body.panels.screw.postWidth}
+                          units={units}
+                          minMm={4}
+                          stepMm={0.5}
+                          onChangeMm={setPanelPostWidth}
+                        />
+                        <UnitNumberField
+                          label="Post depth"
+                          valueMm={body.panels.screw.postDepth}
+                          units={units}
+                          minMm={4}
+                          stepMm={0.5}
+                          onChangeMm={setPanelPostDepth}
+                        />
+                      </FieldsGrid2Col>
+                    </>
+                  )}
                 </>
               )}
             </SectionCard>

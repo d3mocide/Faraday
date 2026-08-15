@@ -519,7 +519,7 @@ export function applyScrewBossLidAt(
   const { zBottom, height } = columnSpan(screw, splitHeight);
   const holeDepth =
     screw.insertType === 'heat-set'
-      ? Math.min(spec.heatSetDepth, height - 1)
+      ? Math.min(spec.heatSetDepth + HEAT_SET_RELIEF, height - 1)
       : Math.max(height - 1.5, 1);
   const lidThickness = Math.max(outerHeight - splitHeight, 0.5);
   const boreDepth = counterboreDepth(screw, Math.min(lidThickness, wallThickness));
@@ -569,6 +569,11 @@ export function applyScrewBossLidAt(
   return { base: nextBase, lid: nextLid };
 }
 
+/** Extra depth bored under a heat-set insert. Pressing one in displaces a slug of molten plastic
+ * that has to go somewhere: a socket cut to exactly the insert's length either stops it seating
+ * flush or bulges the boss around it. */
+const HEAT_SET_RELIEF = 1.5;
+
 export function bossRadiusFor(screw: ScrewSpec): number {
   const spec = SCREW_HOLE_SPECS[screw.size];
   const pilotDiameter = screw.insertType === 'heat-set' ? spec.heatSetHoleDiameter : spec.selfTapPilotDiameter;
@@ -599,7 +604,7 @@ function applyExteriorScrewBossLidAt(
   const { zBottom, height } = columnSpan(screw, splitHeight);
   const holeDepth =
     screw.insertType === 'heat-set'
-      ? Math.min(spec.heatSetDepth, height - 1)
+      ? Math.min(spec.heatSetDepth + HEAT_SET_RELIEF, height - 1)
       : Math.max(height - 1.5, 1);
   const lidHeight = Math.max(outerHeight - splitHeight, 0.5);
   // An exterior column is solid all the way up, so the head pocket is only limited by the lid

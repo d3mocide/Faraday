@@ -1,5 +1,6 @@
 import { findConnector } from '../connectors/library';
 import { effectiveSplitHeight } from '../csg/lidSplit';
+import { panelMetrics } from '../csg/parts';
 import { counterboreDepth } from '../csg/primitives';
 import { SCREW_HOLE_SPECS } from '../csg/screwLibrary';
 import type { EnclosureProject, ScrewSpec } from '../types/project';
@@ -77,6 +78,34 @@ export function generateBomCsv(project: EnclosureProject): string {
         quantity: count,
         category: 'Hardware',
         notes: 'Heat-staked into the base bosses before assembly',
+      });
+    }
+  }
+
+  // Screwed slide-in plates: one screw per site, plus an insert each where the posts are bored for
+  // heat-set. Sized off the resolved metrics rather than the raw spec, since both the post depth
+  // and the number of screws per end are clamped to what actually fits the plate.
+  const panels = panelMetrics(body);
+  if (panels?.screw) {
+    const screw = panels.screw;
+    const count = panels.faces.length * 2 * screw.zPositions.length;
+    const length = Math.ceil((panels.thickness - screw.counterboreDepth + screw.boreDepth - 1) / 2) * 2;
+    rows.push({
+      item: `${screw.size}x${length}mm machine screw`,
+      quantity: count,
+      category: 'Hardware',
+      notes:
+        (screw.insertType === 'heat-set'
+          ? 'Threads into a heat-set insert in the panel post'
+          : 'Self-taps into the panel post') +
+        (screw.counterboreDepth > 0 ? '; head sits flush in the plate' : ''),
+    });
+    if (screw.insertType === 'heat-set') {
+      rows.push({
+        item: `${screw.size} heat-set brass insert`,
+        quantity: count,
+        category: 'Hardware',
+        notes: 'Heat-staked into the panel posts before the plates go in',
       });
     }
   }

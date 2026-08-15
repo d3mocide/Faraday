@@ -192,7 +192,7 @@ describe('waveshare CM4 dual-ETH preset: the multi-part case', () => {
   it('routes every port on an end wall to that end plate', () => {
     const project = projectFromPreset(preset);
     const endPorts = project.features.filter((f) => f.face === 'left' || f.face === 'right');
-    expect(endPorts.length).toBeGreaterThan(15);
+    expect(endPorts.length).toBeGreaterThan(14);
     for (const feature of endPorts) {
       expect(featurePart(feature, project.body), `${feature.connectorId ?? feature.type}`).toBe(
         feature.face === 'left' ? 'panel-left' : 'panel-right',

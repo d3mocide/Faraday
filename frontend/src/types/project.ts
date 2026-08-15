@@ -127,6 +127,31 @@ export interface PanelSpec {
    * 0.8mm of thickness.
    */
   retainLip?: number;
+  /**
+   * Screws through the plate's ends into posts standing in the case's interior corners. Absent =
+   * no screws, the groove and its retaining lip do all the work (the original behaviour). Present =
+   * the posts are printed as part of the base, bored for the chosen fastener, and the plate gets
+   * matching clearance holes. Independent of `retainLip`: a plate can have both, which is the
+   * combination worth printing when the case has to survive being opened repeatedly.
+   */
+  screw?: PanelScrewSpec;
+}
+
+/**
+ * How a slide-in plate is screwed down. The screw axis is the panel's own normal, so the post it
+ * threads into is a vertical column in the interior corner -- welded to the adjacent wall along its
+ * full height, which is why it prints without any overhang of its own.
+ */
+export interface PanelScrewSpec {
+  size: ScrewSize;
+  insertType: ScrewInsertType;
+  /** Screws at each end of the plate: 1 at mid-height, or 2 spaced toward its top and bottom. */
+  countPerEnd: 1 | 2;
+  /** 'counterbore' sinks the head into the plate so it finishes flush with the case. */
+  headStyle: ScrewHeadStyle;
+  /** Post footprint: `postWidth` along the face, `postDepth` into the case from the plate. */
+  postWidth: number;
+  postDepth: number;
 }
 
 export interface BoxBody {

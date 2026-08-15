@@ -14,7 +14,15 @@ import {
   buildVentCutout,
 } from './featurePrimitives';
 import { effectiveSplitHeight } from './lidSplit';
-import { orientPanelForPrint, panelChannelCut, panelPlate } from './panels';
+import {
+  orientPanelForPrint,
+  panelChannelCut,
+  panelPlate,
+  panelPlateScrewHoles,
+  panelPostBores,
+  panelPosts,
+  type PanelShells,
+} from './panels';
 import { featurePart, panelMetrics, panelPartId, partLabel, type PartId } from './parts';
 import {
   applyEdgeBevelsBox,
@@ -340,9 +348,32 @@ export function generateEnclosure(
   const panels = new Map<PanelFace, Manifold>();
   if (metrics && body.shape === 'box') {
     const dims = { length: body.outer.length, width: body.outer.width };
+    // Shrunk copies of the outer shell, so the channel's end slots and the plate's rebated ends
+    // both keep a constant distance from the outer surface as it turns a corner -- see PanelShells.
+    const shrunkShell = (delta: number): Manifold =>
+      boxShell(
+        wasm,
+        Math.max(body.outer.length - 2 * delta, 1),
+        Math.max(body.outer.width - 2 * delta, 1),
+        height + 4,
+        shrinkCornerStyle(body.cornerStyle, delta),
+      ).translate(0, 0, -2);
+    const shells: PanelShells = {
+      lip: shrunkShell(metrics.retainLip),
+      rebate: shrunkShell(metrics.retainLip + metrics.clearance / 2),
+    };
     for (const face of metrics.faces) {
       base = base.subtract(
-        panelChannelCut(wasm, dims, metrics, face, metrics.channelBottomZ, splitHeight + 1),
+        panelChannelCut(
+          wasm,
+          dims,
+          metrics,
+          face,
+          metrics.channelBottomZ,
+          splitHeight + 1,
+          true,
+          shells,
+        ),
       );
       if (metrics.lidCaptureDepth > 0) {
         lid = lid.subtract(
@@ -359,7 +390,18 @@ export function generateEnclosure(
           ),
         );
       }
-      panels.set(face, panelPlate(wasm, dims, metrics, face, outerShape));
+      let plate = panelPlate(wasm, dims, metrics, face, outerShape, shells);
+      if (metrics.screw) {
+        // Posts go on after the channel is cut so the cut can't eat them, and their bores go in
+        // after that so a post can never end up solid where a screw has to pass.
+        const posts = panelPosts(wasm, dims, metrics, face);
+        if (posts) base = base.add(posts);
+        const bores = panelPostBores(wasm, dims, metrics, face);
+        if (bores) base = base.subtract(bores);
+        const holes = panelPlateScrewHoles(wasm, dims, metrics, face);
+        if (holes) plate = plate.subtract(holes);
+      }
+      panels.set(face, plate);
     }
   }
 

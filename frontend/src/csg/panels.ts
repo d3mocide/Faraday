@@ -7,6 +7,24 @@ export interface PanelBoxDims {
   width: number;
 }
 
+/**
+ * Copies of the body's outer shell, shrunk inward by a fixed amount, used to keep the channel and
+ * the plate's rebate a *constant* distance from the outer surface wherever they run.
+ *
+ * This is the whole fix for the broken grooves. A slot cut to a constant coordinate leaves a
+ * constant amount of material only against a flat wall: where the wall turns a rounded or
+ * chamfered corner the outer surface has already moved inboard, so the retaining lip tapers into
+ * the arc -- on the Waveshare preset a nominally 1.0mm lip measured 0.40mm at its outer edge, and
+ * broke. Clipping the cut against a shrunk copy of the shell instead means the lip is its nominal
+ * thickness everywhere, corner or not.
+ */
+export interface PanelShells {
+  /** Outer shell shrunk by `retainLip` -- the channel's end slots may not cross this. */
+  lip: Manifold;
+  /** Outer shell shrunk by `retainLip + clearance/2` -- the plate's rebated ends stop here. */
+  rebate: Manifold;
+}
+
 /** Axis-aligned box from two corners, in the same "min/max per axis" form the panel math produces. */
 function boxBetween(
   wasm: ManifoldToplevel,
@@ -105,6 +123,7 @@ export function panelChannelCut(
   z0: number,
   z1: number,
   withLip = true,
+  shells?: PanelShells,
 ): Manifold {
   const b = panelBounds(dims, metrics, face);
   const inner = b.outer - b.sign * (metrics.thickness + metrics.clearance);
@@ -127,7 +146,13 @@ export function panelChannelCut(
 
   for (const end of b.ends) {
     if (!end.hasWall) continue;
-    cut = cut.add(box(slotDepth, sorted(end.cavityEdge, end.bound)));
+    const across = sorted(end.cavityEdge, end.bound);
+    // Clipped against the shrunk shell the slot follows the corner, so the lip left standing
+    // outboard of it is `retainLip` thick along its whole length. Without a shell to clip against
+    // it falls back to a constant-depth slot, which is only equivalent on a sharp-cornered body.
+    cut = cut.add(
+      shells ? box(fullDepth, across).intersect(shells.lip) : box(slotDepth, across),
+    );
   }
   return cut;
 }
@@ -144,6 +169,7 @@ export function panelPlate(
   metrics: PanelMetrics,
   face: PanelFace,
   outerShell: Manifold,
+  shells?: PanelShells,
 ): Manifold {
   const b = panelBounds(dims, metrics, face);
   const half = metrics.clearance / 2;
@@ -165,17 +191,152 @@ export function panelPlate(
       b.outer + b.sign * OVERCUT,
       b.outer - b.sign * (metrics.retainLip + half),
     );
+    const fullDepth = sorted(b.outer + b.sign * OVERCUT, b.outer - b.sign * (metrics.thickness + 1));
     for (const end of b.ends) {
       if (!end.hasWall) continue;
       const rebateAcross = sorted(
         end.cavityEdge - end.sign * 0.2,
         end.bound + end.sign * OVERCUT,
       );
-      plate = plate.subtract(box(rebateDepth, rebateAcross));
+      // Mirrors the channel's own clipping: everything in the end band that sits outboard of the
+      // shrunk shell goes, so the ear follows the corner exactly like the lip it slides behind.
+      plate = plate.subtract(
+        shells
+          ? box(fullDepth, rebateAcross).subtract(shells.rebate)
+          : box(rebateDepth, rebateAcross),
+      );
     }
   }
 
   return plate.intersect(outerShell);
+}
+
+/** A cylinder lying along a horizontal axis, given as two coordinates on that axis. */
+function axialCylinder(
+  wasm: ManifoldToplevel,
+  axis: 'x' | 'y',
+  diameter: number,
+  from: number,
+  to: number,
+  across: number,
+  z: number,
+): Manifold {
+  const cyl = wasm.Manifold.cylinder(Math.abs(to - from), diameter / 2, diameter / 2, 0, false);
+  const start = Math.min(from, to);
+  return axis === 'x'
+    ? cyl.rotate(0, 90, 0).translate(start, across, z)
+    : cyl.rotate(-90, 0, 0).translate(across, start, z);
+}
+
+/** Where each screw through a plate's ends sits: one across-axis coordinate per end, one Z per
+ * screw on that end. */
+function screwSites(b: PanelBounds, metrics: PanelMetrics): Array<{ across: number; z: number }> {
+  const screw = metrics.screw!;
+  const sites: Array<{ across: number; z: number }> = [];
+  for (const end of b.ends) {
+    const across = end.cavityEdge - end.sign * screw.centerInset;
+    for (const z of screw.zPositions) sites.push({ across, z });
+  }
+  return sites;
+}
+
+/**
+ * The posts a screwed plate threads into: a vertical column in the interior corner at each end of
+ * the opening, standing on the floor and welded to the adjacent wall down its whole height -- which
+ * is what makes a horizontal screw hole printable here at all, since the column itself has no
+ * overhang. Unioned into the base *after* the channel is cut, so the channel can't take a bite out
+ * of it.
+ */
+export function panelPosts(
+  wasm: ManifoldToplevel,
+  dims: PanelBoxDims,
+  metrics: PanelMetrics,
+  face: PanelFace,
+): Manifold | null {
+  const screw = metrics.screw;
+  if (!screw) return null;
+  const b = panelBounds(dims, metrics, face);
+  // Front face sits half the fit clearance behind the plate, so the plate still slides freely past
+  // it and the screw closes that gap rather than the post fighting the channel for the space.
+  const front = b.outer - b.sign * (metrics.thickness + metrics.clearance / 2);
+  const through = sorted(front, front - b.sign * screw.postDepth);
+  const z: [number, number] = [0, metrics.splitHeight];
+
+  let posts: Manifold | null = null;
+  for (const end of b.ends) {
+    const across = sorted(end.cavityEdge, end.cavityEdge - end.sign * screw.postWidth);
+    const post =
+      b.axis === 'x'
+        ? boxBetween(wasm, through, across, z)
+        : boxBetween(wasm, across, through, z);
+    posts = posts ? posts.add(post) : post;
+  }
+  return posts;
+}
+
+/** Pilot holes (or heat-set sockets) bored into the posts, along the panel's own normal. */
+export function panelPostBores(
+  wasm: ManifoldToplevel,
+  dims: PanelBoxDims,
+  metrics: PanelMetrics,
+  face: PanelFace,
+): Manifold | null {
+  const screw = metrics.screw;
+  if (!screw) return null;
+  const b = panelBounds(dims, metrics, face);
+  // Starts inside the plate's own slot so the bore always breaks through the post's front face
+  // cleanly, and runs its full depth into the post.
+  const mouth = b.outer - b.sign * metrics.thickness;
+  const tip = b.outer - b.sign * (metrics.thickness + metrics.clearance / 2 + screw.boreDepth);
+
+  let bores: Manifold | null = null;
+  for (const site of screwSites(b, metrics)) {
+    const bore = axialCylinder(wasm, b.axis, screw.boreDiameter, mouth, tip, site.across, site.z);
+    bores = bores ? bores.add(bore) : bore;
+  }
+  return bores;
+}
+
+/** Clearance holes through the plate, with the head's counterbore where one was asked for. */
+export function panelPlateScrewHoles(
+  wasm: ManifoldToplevel,
+  dims: PanelBoxDims,
+  metrics: PanelMetrics,
+  face: PanelFace,
+): Manifold | null {
+  const screw = metrics.screw;
+  if (!screw) return null;
+  const b = panelBounds(dims, metrics, face);
+  const outside = b.outer + b.sign * OVERCUT;
+  const inside = b.outer - b.sign * (metrics.thickness + OVERCUT);
+
+  let holes: Manifold | null = null;
+  for (const site of screwSites(b, metrics)) {
+    let hole = axialCylinder(
+      wasm,
+      b.axis,
+      screw.clearanceDiameter,
+      outside,
+      inside,
+      site.across,
+      site.z,
+    );
+    if (screw.counterboreDepth > 0) {
+      hole = hole.add(
+        axialCylinder(
+          wasm,
+          b.axis,
+          screw.headDiameter + 0.4,
+          outside,
+          b.outer - b.sign * screw.counterboreDepth,
+          site.across,
+          site.z,
+        ),
+      );
+    }
+    holes = holes ? holes.add(hole) : hole;
+  }
+  return holes;
 }
 
 /**

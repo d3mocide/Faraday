@@ -1,6 +1,7 @@
 # Side panels, grooves, and thin-wall guards
 
-**Status:** design proposal, nothing implemented yet.
+**Status:** implemented 2026-08-15 — see §8 for what shipped and where it deviates from the
+proposal below.
 **Written:** 2026-08-15, after the first real print of the Waveshare CM4 Dual ETH preset broke.
 
 The slide-in panel channel (`csg/panels.ts`) produces features that are too thin to print. This
@@ -316,3 +317,80 @@ Fasteners in printed plastic:
 Enclosure panel practice:
 - [3D Printed Electronics Enclosures: Design Tips for Makers — Zbotic](https://zbotic.in/3d-printed-electronics-enclosures-design-tips-for-makers/)
 - [3D Printed Snap-Fit Joints: How to Design Clips That Work — Sovol](https://www.sovol3d.com/blogs/news/3d-printed-snap-fit-joints-how-to-design-clips-that-work)
+
+---
+
+## 8. What shipped, and where it differs from §3–§5
+
+Implemented in one pass on 2026-08-15. The owner's calls on §6: **keep the lip as the default**
+retention with the screw options layered on as toggles; **leave** existing projects and presets on
+the lip; **self-tapping** M2 as the screw default; **clamp** an oversized flange slot rather than
+growing the tab.
+
+### The lip fix is geometric, not a pilaster (deviates from Option A)
+
+§3's Option A proposed adding a post so the groove could be cut into thick material. What actually
+fixed it is simpler and costs no interior volume: the channel's end slots are **intersected with a
+copy of the outer shell shrunk inward by `retainLip`** (`PanelShells` in `csg/panels.ts`), and the
+plate's rebated ends are cut against the same shell shrunk by `retainLip + clearance/2`. The lip
+then follows the corner instead of running into it, so it is its nominal thickness everywhere.
+
+The measured result on the same probe that found the original defect: **0.40 mm → 1.2 mm**, and the
+plate does not get any shorter.
+
+Where a corner treatment is so large that there is no material for a lip at all — a 5 mm chamfer on
+a 3 mm wall, say — the clipping produces *no* lip rather than a fragile one, and
+`PanelMetrics.cornerLipRoom` drives a new `panels:corner-eats-lip` finding that says so. That
+all-or-nothing property is the invariant `test/panels.test.ts` pins down across every corner style.
+
+### Posts came in with the screws, not with the lip
+
+`PanelSpec.screw` (off by default) adds a vertical post in each interior corner behind the plate,
+bored for the fastener, with matching counterbored clearance holes in the plate. Posts are unioned
+*after* the channel is cut and bored after that, so neither the channel nor a solid post can end up
+where the screw has to pass. Because the lip fix no longer needs added material, the posts exist
+only where they earn their keep — and a plate can carry both, which is the combination worth
+printing on a case that gets opened.
+
+### MIN_WALL joined MIN_SKIN
+
+§2 proposed one target. There are two: `MIN_SKIN`/`MIN_WEB` (1.2 mm, three perimeters) is what the
+clamps aim for, and `MIN_WALL` (0.8 mm, two perimeters) is the floor a *result* is allowed to reach
+before the design checks speak up. This matters for the lip/ear budget: a plate needs
+`2 × MIN_SKIN + clearance/2` of thickness before both halves of the joint are at target, and below
+that the two now split what there is evenly rather than one being starved to keep the other whole.
+A 2.4 mm plate at 0.2 mm clearance lands both at 1.15 mm — three times what broke, and quiet.
+
+### Eight presets were wrong, not one
+
+The margin checks fired on far more than the Waveshare case. All fixed:
+
+| Preset | Was | Fix |
+|---|---|---|
+| `waveshare-cm4-dual-eth-wifi6` | 0.19 mm between USB-A #3 and the RJ45 shell | cut as the single window it physically has to be |
+| `waveshare-cm4-dual-eth-wifi6` | left louvres 0.70 mm off the DSI slot | raised 0.5 mm |
+| `beaglebone-black` | Ethernet and Mini-USB openings overlap outright | one window for the pair |
+| `beaglebone-black` | 1.06 mm / 1.05 mm webs on the right wall | USB-A opening trimmed 0.4 mm; microSD dropped 0.2 mm |
+| `pi-cm4-io` | 0.25 mm between the DC jack and rpiboot port | one window for the power/boot pair |
+| `cyd-esp32-2432s028` | rear vent landed exactly on the lid seam | split 18 → 19.5 mm |
+| `raspberry-pi-3/4/5`, `raspberry-pi-hat-stack` | USB stacks 0.60 mm under the seam | split 24 → 25 mm |
+
+### Also done
+
+- `flangeHoleCrossSection()` now clamps every hole style to keep `MIN_SKIN` from the flange's tip,
+  root and side edges. The stock CM4 wall tab's 0.5 mm tip is 1.2 mm.
+- Heat-set bores get `HEAT_SET_RELIEF` (1.5 mm) beyond the insert length, for the plastic the
+  insert displaces.
+- The lateral-wall edge check deliberately measures **only** against the floor and the lid seam. A
+  box's side wall has no edge in the other direction — it turns the corner and carries on as the
+  next wall — so flagging a cutout for being near a corner would have been a false positive.
+
+### Verification
+
+`npm run lint`, `npm run build` and 286 vitest tests (was 271) all pass. New coverage:
+`test/panels.test.ts` (11 tests — the lip probe across corner styles, the all-or-nothing invariant,
+post presence, a clear screw axis through both pieces, and that a screwed plate still lifts out to
+be assembled) and `test/flangeHoles.test.ts` (4). Browser-verified with Playwright: the Waveshare
+preset applies clean, the screw toggle regenerates with visible counterbored holes in both plates,
+and Export produces `case_base`/`case_lid`/`panel_left`/`panel_right` STLs plus a BOM listing
+8 × M2 × 6 mm screws. Zero console errors throughout.
