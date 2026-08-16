@@ -1,6 +1,14 @@
-import { bodyGeometry, faceFrame, supportPadPositions } from '../csg/faceFrame';
-import { panelMetrics } from '../csg/parts';
-import type { BoardMountSpec, EnclosureProject, Feature } from '../types/project';
+import { getFeature2DBounds } from '../csg/blueprint2d';
+import { bodyGeometry, faceFrame, faceSize, supportPadPositions } from '../csg/faceFrame';
+import { featurePart, panelMetrics, partLabel, type PartId } from '../csg/parts';
+import { MIN_SKIN, MIN_WALL, MIN_WEB } from '../csg/printRules';
+import type {
+  BoardMountSpec,
+  EnclosureProject,
+  Face,
+  Feature,
+  FeatureType,
+} from '../types/project';
 
 /**
  * One thing worth telling the user about their design. Advisory only -- nothing here blocks an
@@ -75,6 +83,186 @@ function padRadius(feature: Feature): number {
     : Math.hypot(Math.max(pad.width, 1), Math.max(pad.depth, 1)) / 2;
 }
 
+/** Feature types that remove material right through a wall, so the gap between two of them (or
+ * between one and the edge of its printed piece) is all the material there is. Grip ribs are cut
+ * only part-way into the wall and standoffs add material rather than removing it, so neither
+ * belongs here. */
+const CUTOUT_TYPES: FeatureType[] = ['connector-cutout', 'custom-hole', 'vent', 'fan-mount'];
+
+/** A cutout's extent on its own face, in mm, as an axis-aligned box around its centre. */
+interface CutoutBox {
+  feature: Feature;
+  part: PartId;
+  face: Face;
+  /** mm from the face's centre, along the face's u axis. */
+  minU: number;
+  maxU: number;
+  /** mm from the face's centre, along the face's v axis. */
+  minV: number;
+  maxV: number;
+}
+
+function cutoutBoxes(project: EnclosureProject): CutoutBox[] {
+  const geom = bodyGeometry(project.body);
+  const boxes: CutoutBox[] = [];
+  for (const feature of project.features) {
+    if (feature.hidden || !CUTOUT_TYPES.includes(feature.type)) continue;
+    const [sizeU, sizeV] = faceSize(feature.face, geom);
+    const bounds = getFeature2DBounds(feature, sizeU, sizeV);
+    // Rotated openings are measured by their axis-aligned envelope: it never under-reports a gap,
+    // which is the direction an advisory check should err in.
+    const theta = (feature.rotationDeg * Math.PI) / 180;
+    const cos = Math.abs(Math.cos(theta));
+    const sin = Math.abs(Math.sin(theta));
+    const halfU = (bounds.widthMm * cos + bounds.heightMm * sin) / 2;
+    const halfV = (bounds.widthMm * sin + bounds.heightMm * cos) / 2;
+    boxes.push({
+      feature,
+      part: featurePart(feature, project.body),
+      face: feature.face,
+      minU: bounds.centerMmU - halfU,
+      maxU: bounds.centerMmU + halfU,
+      minV: bounds.centerMmV - halfV,
+      maxV: bounds.centerMmV + halfV,
+    });
+  }
+  return boxes;
+}
+
+/** The span of a face that the printed piece actually has material across, in the same face-centred
+ * mm as CutoutBox. Null where the piece's outline isn't a simple rectangle to measure against. */
+function usableFaceExtent(
+  face: Face,
+  part: PartId,
+  project: EnclosureProject,
+): { minU: number; maxU: number; minV: number; maxV: number } | null {
+  const body = project.body;
+  const geom = bodyGeometry(body);
+  const [sizeU, sizeV] = faceSize(face, geom);
+  const corner =
+    body.shape === 'box' || body.shape === 'wedge' || body.shape === 'stadium'
+      ? body.cornerStyle.type === 'sharp'
+        ? 0
+        : Math.max(body.cornerStyle.radius, 0)
+      : 0;
+
+  const metrics = panelMetrics(body);
+  if (part.startsWith('panel-') && metrics) {
+    // A plate's opening stops at the wall it slides behind, and at the top and bottom of the plate.
+    const halfU = sizeU / 2 - metrics.wallThickness;
+    const height = body.shape === 'wedge' ? body.outer.heightBack : body.outer.height;
+    return {
+      minU: -halfU,
+      maxU: halfU,
+      minV: metrics.plateBottomZ - height / 2,
+      maxV: metrics.plateTopZ - height / 2,
+    };
+  }
+
+  if (face === 'top' || face === 'bottom') {
+    if (geom.shape !== 'box' && geom.shape !== 'stadium' && geom.shape !== 'wedge') return null;
+    return {
+      minU: -(sizeU / 2 - corner),
+      maxU: sizeU / 2 - corner,
+      minV: -(sizeV / 2 - corner),
+      maxV: sizeV / 2 - corner,
+    };
+  }
+
+  if (geom.shape !== 'box') return null;
+  // A lateral wall of the base runs from the floor up to the lid seam; the lid's own wall carries
+  // on above it. Sideways there is no edge to measure against at all -- the wall turns the corner
+  // and carries on as the next wall, so material is continuous however close a cutout gets to it.
+  const height = geom.height;
+  const split = Math.min(Math.max(body.lid.splitHeight, 0), height);
+  const zRange: [number, number] = part === 'lid' ? [split, height] : [0, split];
+  return {
+    minU: -Infinity,
+    maxU: Infinity,
+    minV: zRange[0] - height / 2,
+    maxV: zRange[1] - height / 2,
+  };
+}
+
+/** Clearance between two axis-aligned boxes: the larger per-axis separation, which is negative on
+ * both axes only when the two have merged into one opening. */
+function gapBetween(a: CutoutBox, b: CutoutBox): number {
+  return Math.max(
+    Math.max(b.minU - a.maxU, a.minU - b.maxU),
+    Math.max(b.minV - a.maxV, a.minV - b.maxV),
+  );
+}
+
+function describeFeature(feature: Feature): string {
+  if (feature.type === 'connector-cutout' && feature.connectorId) return feature.connectorId;
+  if (feature.type === 'vent') return 'vent';
+  if (feature.type === 'fan-mount') return 'fan opening';
+  return 'cutout';
+}
+
+/**
+ * Openings that leave less than a printable amount of material between them, or between themselves
+ * and the edge of the piece they are cut into.
+ *
+ * These only ever warn. Where a groove or a slot end is a dimension the generator chose, it gets
+ * clamped silently -- but a port's position is functional, and quietly sliding an Ethernet jack to
+ * buy a millimetre of web would produce a case that no longer fits the board it was measured for.
+ */
+function marginFindings(project: EnclosureProject): DesignCheckFinding[] {
+  const findings: DesignCheckFinding[] = [];
+  const boxes = cutoutBoxes(project);
+
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i];
+      const b = boxes[j];
+      if (a.face !== b.face || a.part !== b.part) continue;
+      const gap = gapBetween(a, b);
+      // Epsilon: these spans are built from board-relative offsets, so an exactly-on-target gap
+      // can land a few ULPs under the threshold.
+      if (gap >= MIN_WEB - 1e-6) continue;
+      findings.push({
+        id: `${a.feature.id}:web:${b.feature.id}`,
+        featureId: a.feature.id,
+        title:
+          gap <= 0
+            ? `${describeFeature(a.feature)} and ${describeFeature(b.feature)} overlap`
+            : `Only ${gap.toFixed(2)}mm of material between two openings`,
+        detail:
+          gap <= 0
+            ? 'They merge into one opening. Move one of them, or make it a single cutout on purpose.'
+            : `A 0.4mm nozzle needs ${MIN_WEB}mm to print a web that holds. Move one opening, or narrow it.`,
+      });
+    }
+  }
+
+  for (const box of boxes) {
+    const extent = usableFaceExtent(box.face, box.part, project);
+    if (!extent) continue;
+    const margin = Math.min(
+      box.minU - extent.minU,
+      extent.maxU - box.maxU,
+      box.minV - extent.minV,
+      extent.maxV - box.maxV,
+    );
+    if (margin >= MIN_SKIN - 1e-6) continue;
+    findings.push({
+      id: `${box.feature.id}:edge-margin`,
+      featureId: box.feature.id,
+      title:
+        margin <= 0
+          ? `${describeFeature(box.feature)} runs off the edge of the ${partLabel(box.part).toLowerCase()}`
+          : `Only ${margin.toFixed(2)}mm between this opening and the edge of the ${partLabel(box.part).toLowerCase()}`,
+      detail:
+        margin <= 0
+          ? 'Part of the opening has no material around it at all. Move it inboard.'
+          : `Openings want ${MIN_SKIN}mm of material to the edge of their piece, or the edge breaks off in handling.`,
+    });
+  }
+
+  return findings;
+}
+
 /**
  * Advisory design checks over the whole project. Deliberately quiet: a rule only fires when the
  * project contains enough information to be sure it's wrong. A support pad in a project with no
@@ -91,15 +279,33 @@ export function runDesignChecks(project: EnclosureProject): DesignCheckFinding[]
   const panels = panelMetrics(project.body);
   const requestedLip =
     project.body.shape === 'box' ? project.body.panels?.retainLip : undefined;
-  if (panels && requestedLip !== 0 && panels.retainLip < 0.4) {
+  const wantsLip = panels !== null && requestedLip !== 0;
+  if (wantsLip && panels.retainLip < MIN_WALL) {
+    const needed = (2 * MIN_SKIN + panels.clearance / 2).toFixed(1);
     findings.push({
       id: 'panels:no-lip',
       title: 'Slide-in plates are too thin to be retained',
       detail:
-        'A plate needs about 1.8mm of thickness to keep a retaining lip and still hold together. ' +
-        'At this thickness nothing stops it sliding straight back out of the case.',
+        `A plate needs ${needed}mm of thickness to give a ${MIN_SKIN}mm retaining lip and still ` +
+        'leave its own rebated end printable. At this thickness the lip is thinner than two ' +
+        'perimeters and will snap off the first time the panel is pulled.' +
+        (panels.screw ? ' The panel screws are still holding it.' : ''),
     });
   }
+  // The corner treatment, not the plate, being what leaves no room. The channel is clipped so it
+  // never produces a part-thickness lip, which means this configuration has no grip at all rather
+  // than a fragile one -- worth saying out loud, since the case still looks right on screen.
+  if (wantsLip && panels.retainLip > 0 && panels.cornerLipRoom < panels.retainLip) {
+    findings.push({
+      id: 'panels:corner-eats-lip',
+      title: "The body's corner style leaves no room to grip the plates",
+      detail:
+        'By the time the wall reaches the plate, the corner has already cut past the channel, so ' +
+        'there is no material to hold the plate in. Reduce the corner radius, thicken the wall, ' +
+        'or switch the panels to screws.',
+    });
+  }
+  findings.push(...marginFindings(project));
 
   const boards = boardFootprints(project);
   if (boards.length === 0) return findings;

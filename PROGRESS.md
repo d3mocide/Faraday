@@ -1736,3 +1736,129 @@ CSG pipeline:
   separate multi-part-enclosure feature, not part of the fastener/resize bug this session targeted.
 - Stadium's edge bevel is a documented approximation (exact on the straight sides, imperfect on the
   rounded caps) rather than a true shape-correct loft — see the Phase B notes above for why.
+
+## Panel groove thin-wall failure: measurement + design proposal (2026-08-15 session)
+
+**Investigation and design note only — no app code changed this session.** The repo owner test
+printed the `waveshare-cm4-dual-eth-wifi6` preset and the slide-in panel grooves broke: *"the seam
+is so thin that the groves broke... we have a few instances of this where the walls are two thin on
+a print and they just disconnect."* Full write-up, with the measured geometry and the options
+considered, is in [`docs/panel-retention.md`](./docs/panel-retention.md). Summary of what was
+found, so a future session doesn't have to re-measure:
+
+- **The retaining lip added in the 2026-08-11 fifth round is 0.40–0.94mm thick, not the 1.0mm it
+  asks for.** Probed off manifold `slice()` cross-sections of the real preset at export quality:
+  the lip lives between `x = 47.70` (outer − `retainLip`) and the case's **rounded corner arc**,
+  which has already curved inward to `x = 48.10` by the time it reaches the channel end at
+  `y = 56.20`. It is 1.2mm wide and 40.8mm tall — one to two extrusion widths of unsupported
+  vertical rib, carrying the plate's entire retention load across its layer lines.
+- **Root cause:** `panelBounds()` in `csg/panels.ts` applies its `cornerInset` term only where a
+  panel meets *another panel*. Where a panel meets a **wall** the channel is driven straight to
+  `acrossHalf - wallThickness + grooveDepth` with no knowledge of the body's corner style, and
+  `panelMetrics()`'s `MIN_PANEL_SKIN = 0.8` is measured against a flat wall that isn't there.
+- **Independent second defect, same print:** the `panel-right` plate has a **0.19mm web** between
+  the third USB-A cutout (`alongMm 14.745`) and the dual-RJ45 shell (`alongMm 35.83`, overridden to
+  33.6mm wide) — a `presets/boards.ts` data bug, not a generator bug. The slicer drops it and the
+  two openings merge into one 42mm slot.
+- **Wall-mount tabs have the same class of problem:** `flangeHoleCrossSection()` never checks its
+  hole against the flange outline, so `CM4_WALL_TAB` (protrusion 10, slot 9 long) leaves **0.5mm**
+  between the slot end and the tab tip. Confirmed by probing the band `y 66.9 → 67.4`.
+- Minor, unrelated to the break: heat-set bores are cut to exactly `heatSetDepth` with no relief
+  for the plastic the insert displaces (`csg/primitives.ts:522,602`).
+
+The proposal is a shared `csg/printRules.ts` (`MIN_SKIN`/`MIN_WEB` = 1.2mm, three perimeters at a
+0.4mm nozzle — 1.0mm is worse than 0.8mm on FDM because it isn't a whole multiple of the extrusion
+width), hard clamps on machine-chosen dimensions, design-check warnings for user-placed cutouts
+(never silently move a connector), an interior **pilaster** at each end of a panel opening so the
+groove is cut into added material rather than a thin wall, and a new `PanelSpec.retention` mode:
+an inset/rebated plate secured with M2 screws into those pilasters. §6 of the design note lists the
+four decisions that need the owner's call before any of it is built.
+
+## Thin-wall guards, corner-aware panel lip, screwed panels (2026-08-15 session, follow-up)
+
+Implementation of the design note from earlier the same day
+([`docs/panel-retention.md`](./docs/panel-retention.md) §8 records the deviations). The owner's
+calls: keep the lip as the default retention with the screws layered on as a toggle, leave existing
+projects and presets on the lip, self-tapping M2, and clamp an oversized flange slot rather than
+growing the tab.
+
+### `csg/printRules.ts` — one place for the printability floor
+
+`NOZZLE` (0.4), `MIN_SKIN`/`MIN_WEB` (1.2mm, three perimeters — what the clamps aim for), `MIN_RIB`
+(1.6), `MIN_WALL` (0.8, two perimeters — the floor a *result* may reach before the design checks
+speak up), and `cornerSurfaceInset(style, distance)`. `MIN_PANEL_SKIN = 0.8` in `parts.ts` and the
+`- 0.8` literals it was mixed with are gone. **1.2 rather than the 1.0mm asked for**: an FDM wall
+wants to be a whole multiple of the extrusion width, so 1.0mm gets two perimeters plus a 0.2mm void
+the slicer cannot fill — weaker than a deliberate 0.8mm wall.
+
+### The lip now follows the corner (the actual fix)
+
+Not the pilaster the design note proposed. `panelChannelCut()` intersects its **end slots** with a
+copy of the outer shell shrunk inward by `retainLip` (`PanelShells`), and `panelPlate()` cuts the
+plate's rebated ends against the same shell shrunk by `retainLip + clearance/2`. The lip is then its
+nominal thickness wherever it runs, corner or not, and the plate does not get any shorter.
+Re-probing the Waveshare preset with the measurement that found the defect: **0.40mm → 1.2mm**.
+
+Where a corner treatment is too big for the wall to grip at all (a 5mm chamfer on a 3mm wall), the
+clipping yields *no* lip rather than a fragile one, and the new `PanelMetrics.cornerLipRoom` drives a
+`panels:corner-eats-lip` finding. That all-or-nothing property is the invariant `test/panels.test.ts`
+pins down across sharp/rounded/chamfered.
+
+Lip/ear budget: a plate needs `2*MIN_SKIN + clearance/2` before both halves of the joint are at
+target; below that they now split what there is evenly instead of one being starved, and
+`panels:no-lip` fires at `MIN_WALL`. A 2.4mm plate at 0.2mm clearance lands both at 1.15mm.
+
+### `PanelSpec.screw` — optional M2 retention (off by default)
+
+A vertical post in each interior corner behind the plate (`panelPosts`), bored for a self-tapping
+pilot or a heat-set socket (`panelPostBores`), with counterbored clearance holes through the plate
+(`panelPlateScrewHoles`). Posts are unioned **after** the channel is cut and bored after that, so
+neither the channel nor a solid post can land where a screw has to pass. Independent of the lip — a
+plate can have both, and a screwed connector panel comes off without removing the lid. Store
+actions, inspector controls, BOM and printability rows all wired.
+
+### Design checks: minimum material between openings
+
+`runDesignChecks()` gained per-part cutout↔cutout and cutout↔part-edge margin rules, reusing
+`getFeature2DBounds`. Warn-only by design: a groove depth is the generator's choice and gets clamped
+silently, but a port's position is functional and silently moving an RJ45 to buy a millimetre would
+produce a case that no longer fits the board. Lateral walls are measured **only** against the floor
+and the lid seam — a box's side wall has no edge in the other direction (it turns the corner and
+carries on), so flagging a cutout for being near a corner would have been a false positive.
+
+### Eight presets were wrong, not one
+
+The new checks fired well beyond the case that was printed. All fixed in `presets/boards.ts`:
+`waveshare-cm4-dual-eth-wifi6` (0.19mm between USB-A #3 and the RJ45 shell → cut as the single
+window it physically has to be; left louvres raised 0.5mm off the DSI slot), `beaglebone-black`
+(Ethernet/Mini-USB openings overlapped outright → one window; USB-A opening trimmed 0.4mm and
+microSD dropped 0.2mm for the two ~1.05mm webs), `pi-cm4-io` (0.25mm between the DC jack and the
+rpiboot port → one window), `cyd-esp32-2432s028` (rear vent landed exactly on the seam → split
+18 → 19.5), and `raspberry-pi-3/4/5` + `raspberry-pi-hat-stack` (USB stacks 0.60mm under the seam →
+split 24 → 25).
+
+### Also
+
+- `flangeHoleCrossSection()` clamps every hole style to keep `MIN_SKIN` from the flange's tip, root
+  and sides. The stock CM4 wall tab's 0.5mm tip is 1.2mm; a slot longer than the tab no longer comes
+  out as an open-ended fork.
+- Heat-set bores get `HEAT_SET_RELIEF` (1.5mm) past the insert length, for the plastic it displaces.
+
+### Verification
+
+- `npm run lint` (clean but for the one pre-existing fast-refresh warning), `npm run build`, and
+  286/286 vitest tests (was 271).
+- New: `test/panels.test.ts` (11) — the lip probe across corner styles, the all-or-nothing
+  invariant, post presence, a clear screw axis through both pieces, and that a screwed plate still
+  lifts straight out so it can be assembled. `test/flangeHoles.test.ts` (4).
+- Browser (Playwright, zero console errors): the Waveshare preset applies clean, the screw toggle
+  regenerates with visible counterbored holes in both plates, and Export produces
+  `case_base`/`case_lid`/`panel_left`/`panel_right` STLs plus a BOM listing 8 × M2 × 6mm screws.
+
+### Known gaps after this session
+
+- The pair/edge margin checks cover `connector-cutout`, `custom-hole`, `vent` and `fan-mount` only,
+  and compare axis-aligned envelopes — a rotated opening is measured by its bounding box, which
+  under-reports the true gap rather than over-reporting it.
+- `usableFaceExtent()` returns null for non-box bodies, so the edge-margin rule is box-only.
+- Panel posts are box-only, like the panels themselves.

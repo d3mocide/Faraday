@@ -177,7 +177,9 @@ export const BOARD_PRESETS: BoardPreset[] = [
     body: {
       outer: { length: 118, width: 78, height: 26 },
       wallThickness: 2.4,
-      splitHeight: 18,
+      // The rear vent band tops out at 18mm; the seam clears it by MIN_SKIN rather than landing
+      // exactly on it, which left a zero-thickness ledge above the vent.
+      splitHeight: 19.5,
       lidType: 'screw-boss',
     },
     boardMount: CYD_MOUNT,
@@ -205,9 +207,9 @@ export const BOARD_PRESETS: BoardPreset[] = [
     label: 'Raspberry Pi 3B',
     notes:
       "Fits the full-size 85x56mm Pi board with the official mounting pattern AND its own IO layout (the 3B's port arrangement differs from the 4B's -- notably Ethernet sits nearest the front edge here, the opposite order from the 4B): micro-USB power, full-size HDMI, combo audio/composite jack, 2x USB dual-stack, Ethernet, underside microSD. The audio/composite jack is really a 4-pole TRRS combo connector; the library's plain 3.5mm TRS entry is the closest available match, not exact. Port centerlines from the official mechanical drawing; heights are approximations -- verify before printing.",
-    // Split height sits above the tallest port opening (the USB stacks top out ~23.4mm), same
-    // margin as the 4B.
-    body: { outer: { length: 115, width: 70, height: 30 }, wallThickness: 2, splitHeight: 24 },
+    // Split height sits above the tallest port opening (the USB stacks top out ~23.4mm) with a
+    // printable ledge left above it, same margin as the 4B.
+    body: { outer: { length: 115, width: 70, height: 30 }, wallThickness: 2, splitHeight: 25 },
     boardMount: PI_FULL_SIZE_MOUNT,
     // Front-edge centerlines (from the board's left edge): micro-USB power 10.6, HDMI 32.0,
     // audio/composite 53.5. Right-edge centerlines (from the board's front edge): Ethernet 10.25,
@@ -230,8 +232,9 @@ export const BOARD_PRESETS: BoardPreset[] = [
     notes:
       'Fits the 85x56mm 4B with the official mounting pattern AND its full IO layout cut into the walls: USB-C, 2x micro-HDMI, audio jack, 2x USB stacks, Ethernet, microSD slot. Port centerlines from the official drawing; heights are approximations — verify before printing.',
     // Split height sits above the tallest port opening (the USB stacks top out ~23.5mm) so every
-    // cutout lands cleanly in the base rather than straddling the lid seam.
-    body: { outer: { length: 115, width: 70, height: 30 }, wallThickness: 2, splitHeight: 24 },
+    // cutout lands cleanly in the base with a printable ledge above it, rather than straddling the
+    // lid seam or leaving a sliver under it.
+    body: { outer: { length: 115, width: 70, height: 30 }, wallThickness: 2, splitHeight: 25 },
     boardMount: PI_FULL_SIZE_MOUNT,
     // Front-edge centerlines (from the board's left edge): USB-C 11.2, HDMI0 26.0, HDMI1 39.5,
     // audio 54.0. Right-edge centerlines (from the board's front edge): USB2 9.0, USB3 27.0,
@@ -254,7 +257,7 @@ export const BOARD_PRESETS: BoardPreset[] = [
       "Same 85x56mm board footprint as the 3B/4B, sized a bit taller to leave headroom for the official active cooler. Includes the official mounting pattern AND its own IO layout: USB-C power, 2x micro-HDMI, 2x USB dual-stack, Ethernet, underside microSD -- the 3.5mm audio jack was removed on the Pi 5, so unlike the 4B there is no audio cutout here. Same Ethernet-nearest-front port order as the 3B (not the 4B's order). Port centerlines from the official mechanical drawing, which also gives real connector-height side views for USB-C/micro-HDMI; heights are approximations elsewhere -- verify before printing.",
     // Split height sits above the tallest port opening (the USB stacks top out ~23.4mm), same
     // margin as the 3B/4B.
-    body: { outer: { length: 115, width: 70, height: 35 }, wallThickness: 2, splitHeight: 24 },
+    body: { outer: { length: 115, width: 70, height: 35 }, wallThickness: 2, splitHeight: 25 },
     boardMount: PI_FULL_SIZE_MOUNT,
     // Front-edge centerlines (from the board's left edge): USB-C 11.2, HDMI0 25.8, HDMI1 39.2.
     // Right-edge centerlines (from the board's front edge): Ethernet 10.2, USB dual-stack #1 29.1,
@@ -275,7 +278,7 @@ export const BOARD_PRESETS: BoardPreset[] = [
     label: 'Raspberry Pi + HAT Stack',
     notes:
       "Extra-tall variant of the Pi 3/4/5 footprint to clear a stacked HAT board on the 40-pin GPIO header (header + HAT + standoffs). Includes the official mounting pattern and inherits the 4B's IO layout (USB-C, 2x micro-HDMI, audio jack, 2x USB dual-stack, Ethernet, underside microSD) -- swap the IO list by hand if you're stacking on a 3B or 5 instead, since their port arrangements differ.",
-    body: { outer: { length: 115, width: 70, height: 45 }, wallThickness: 2, splitHeight: 24 },
+    body: { outer: { length: 115, width: 70, height: 45 }, wallThickness: 2, splitHeight: 25 },
     boardMount: PI_FULL_SIZE_MOUNT,
     io: [
       { connectorId: 'usb-c-panel', face: 'front', alongMm: -31.3, aboveBoardMm: 1.6 },
@@ -346,11 +349,27 @@ export const BOARD_PRESETS: BoardPreset[] = [
     // above the board are datasheet-derived approximations, same tier as the connector library.
     io: [
       { connectorId: 'dc-barrel-5.5x2.1', face: 'left', alongMm: -17.78, aboveBoardMm: 4.0 },
-      { connectorId: 'ethernet-rj45', face: 'left', alongMm: 6.985, aboveBoardMm: 6.8 },
-      { connectorId: 'usb-mini-b', face: 'left', alongMm: 16.8275, aboveBoardMm: 1.6 },
-      { connectorId: 'usb-a-panel', face: 'right', alongMm: -13.97, aboveBoardMm: 4.5 },
+      // Ethernet and the Mini-USB client sit close enough on this board that their two openings
+      // overlap outright -- there is no web to print between them. One window covering both is
+      // what the printed part would end up as anyway, so it is cut that way deliberately.
+      {
+        custom: { shape: 'rect', width: 21.35, height: 13.95 },
+        face: 'left',
+        alongMm: 9.656,
+        aboveBoardMm: 6.575,
+      },
+      // Opening trimmed 0.4mm off the library's generic USB-A width (still 0.6mm clear of a
+      // 12mm plug shell) to leave a printable web between it and the micro-HDMI beside it.
+      {
+        connectorId: 'usb-a-panel',
+        override: { width: 12.6 },
+        face: 'right',
+        alongMm: -13.97,
+        aboveBoardMm: 4.5,
+      },
       { connectorId: 'hdmi-micro', face: 'right', alongMm: -2.159, aboveBoardMm: 1.6 },
-      { connectorId: 'microsd-slot', face: 'right', alongMm: 3.955, aboveBoardMm: -2.5 },
+      // Dropped 0.2mm so the underside card slot keeps a printable web below the micro-HDMI.
+      { connectorId: 'microsd-slot', face: 'right', alongMm: 3.955, aboveBoardMm: -2.7 },
     ],
   },
   {
@@ -370,8 +389,15 @@ export const BOARD_PRESETS: BoardPreset[] = [
       { connectorId: 'ethernet-rj45', face: 'front', alongMm: -6, aboveBoardMm: 6.8 },
       { connectorId: 'usb-a-dual-stack', face: 'front', alongMm: 13, aboveBoardMm: 8.0 },
       { connectorId: 'microsd-slot', face: 'front', alongMm: 41.25, aboveBoardMm: -2.8 },
-      { connectorId: 'dc-barrel-5.5x2.1', face: 'front', alongMm: 65, aboveBoardMm: 4.0 },
-      { connectorId: 'usb-micro-b', face: 'front', alongMm: 73.5, aboveBoardMm: 1.5 },
+      // The DC jack and the rpiboot micro-USB are 0.25mm apart on this board -- below anything a
+      // 0.4mm nozzle can bridge -- so the power/boot pair gets one window rather than two openings
+      // with a sliver between them that the slicer would drop anyway.
+      {
+        custom: { shape: 'rect', width: 16.75, height: 8 },
+        face: 'front',
+        alongMm: 69.375,
+        aboveBoardMm: 4.0,
+      },
     ],
   },
   {
@@ -451,20 +477,15 @@ export const BOARD_PRESETS: BoardPreset[] = [
         alongMm: 4.355,
         aboveBoardMm: 6.75,
       },
+      // The third USB-A and the dual-RJ45 shell beside it leave 0.19mm of wall between their
+      // openings -- half an extrusion width, which is what the first printed plate lost when the
+      // slicer dropped it and the two ports merged into one 42mm slot with nothing holding its
+      // middle. Cut as the single window it physically has to be.
       {
-        connectorId: 'usb-a-panel',
-        override: { width: 8.2, height: 15.5 },
+        custom: { shape: 'rect', width: 41.99, height: 15.7 },
         face: 'right',
-        alongMm: 14.745,
-        aboveBoardMm: 6.75,
-      },
-      // Side-by-side dual RJ45 in one shell: 32.6mm of jack, not two separate cutouts.
-      {
-        connectorId: 'ethernet-rj45',
-        override: { width: 33.6, height: 15.2 },
-        face: 'right',
-        alongMm: 35.83,
-        aboveBoardMm: 7.1,
+        alongMm: 31.6375,
+        aboveBoardMm: 6.85,
       },
       // Left end plate: power in, status LEDs, card slot, display FFC, USB-C, antennas
       { custom: { shape: 'rect', width: 10.5, height: 8 }, face: 'left', alongMm: -39.525, aboveBoardMm: 3.6 },
@@ -487,7 +508,8 @@ export const BOARD_PRESETS: BoardPreset[] = [
       { connectorId: 'sma-bulkhead-female', override: { diameter: 6.4 }, face: 'left', alongMm: 42.725, aboveBoardMm: 26 },
       // Intake louvres at CM4/HAT-sandwich height on the left plate and the front wall, so the
       // lid fan pulls air across the module rather than short-circuiting through the port openings.
-      { vent: cm4IntakeVent(4, 7, 55), rotationDeg: 90, face: 'left', alongMm: 26.225, aboveBoardMm: 8 },
+      // Raised 0.5mm off the DSI slot below it, which it was clearing by 0.7mm.
+      { vent: cm4IntakeVent(4, 7, 55), rotationDeg: 90, face: 'left', alongMm: 26.225, aboveBoardMm: 8.5 },
       { vent: cm4IntakeVent(3, 8, 70), rotationDeg: 90, face: 'front', alongMm: -2.735, aboveBoardMm: 8 },
       // 40mm exhaust fan in the lid, centred over the HAT chamber: ring grille plus its four
       // screw holes on the standard 32mm pitch. Position is X/Y from the board center (a

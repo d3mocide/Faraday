@@ -1,3 +1,4 @@
+import { panelMetrics } from '../csg/parts';
 import type { EnclosureProject } from '../types/project';
 
 export interface PrintabilityStats {
@@ -58,6 +59,15 @@ export function calculatePrintabilityStats(project: EnclosureProject): Printabil
     const insertType = lid.screw.insertType === 'heat-set' ? 'Heat-Set Insert' : 'Self-Tapping Screw';
     fastenersBom.push({ name: `${size} ${insertType}`, quantity: count });
     fastenersBom.push({ name: `${size} × 10mm M3 Screws`, quantity: count });
+  }
+
+  const panels = panelMetrics(body);
+  if (panels?.screw) {
+    const count = panels.faces.length * 2 * panels.screw.zPositions.length;
+    fastenersBom.push({ name: `${panels.screw.size} Panel Screw`, quantity: count });
+    if (panels.screw.insertType === 'heat-set') {
+      fastenersBom.push({ name: `${panels.screw.size} Heat-Set Insert (panels)`, quantity: count });
+    }
   }
 
   if (lid.gasket) {

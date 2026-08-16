@@ -14,6 +14,7 @@ import type {
 import type { MeshData } from '../src/csg/workerProtocol';
 import { fanSpecFor } from '../src/csg/fanLibrary';
 import { bossRadiusFor } from '../src/csg/primitives';
+import { MIN_SKIN } from '../src/csg/printRules';
 import { getTestWasm } from './helpers/wasm';
 import { boundingBox, isWatertight } from './helpers/geometry';
 
@@ -479,10 +480,13 @@ describe('slide-in panels', () => {
     expect(right.size[0]).toBeCloseTo(PANELS.thickness, 1);
     expect(right.max[0]).toBeCloseTo(40, 1);
     // Spans the interior width plus a groove's worth into each side wall, minus the fit clearance.
-    expect(right.size[1]).toBeCloseTo(50 - 2 * 2 + 2 * 1.2 - 0.2, 1);
+    // The requested 1.2mm groove is clamped to 0.8mm here: this box has 2mm walls, and a groove may
+    // never leave less than MIN_SKIN outboard of itself (see panelMetrics).
+    const groove = 2 - MIN_SKIN;
+    expect(right.size[1]).toBeCloseTo(50 - 2 * 2 + 2 * groove - 0.2, 1);
     // Bottom sits in the floor groove; top runs past the split into the lid's capture groove.
-    expect(right.min[2]).toBeCloseTo(2 - 1.2 + 0.1, 1);
-    expect(right.max[2]).toBeCloseTo(24 + 1.2 - 0.1, 1);
+    expect(right.min[2]).toBeCloseTo(2 - groove + 0.1, 1);
+    expect(right.max[2]).toBeCloseTo(24 + groove - 0.1, 1);
   });
 
   it('the base loses the wall the panel replaces', () => {

@@ -10,6 +10,7 @@ import type {
 } from '../types/project';
 import { cornerAnchor, faceFrame, polygonFacetAngleDeg, supportPadPositions, type BodyGeometry } from './faceFrame';
 import { cylinderZ } from './primitives';
+import { MIN_SKIN } from './printRules';
 
 interface HoleDims {
   holeShape: 'circle' | 'rect' | 'dshape';
@@ -452,24 +453,38 @@ function flangeHoleCrossSection(
   holeCenterY: number,
 ): CrossSection | null {
   const { CrossSection } = wasm;
-  const d = Math.max(spec.holeDiameter, 0.5);
   if (spec.hole === 'none') return null;
-  if (spec.hole === 'round') return CrossSection.circle(d / 2).translate(0, holeCenterY);
+
+  // Nothing here used to be checked against the ear it is cut into, so a slot as long as the
+  // mount's reach came out as an open-ended fork, and the stock CM4 wall tab (10mm of reach, a 9mm
+  // slot) left 0.5mm of material at its tip. Everything is now held MIN_SKIN clear of the tip, the
+  // wall root, and both side edges -- clamped rather than warned about, since these are dimensions
+  // for a bracket rather than a port that has to line up with real hardware.
+  const halfWidth = Math.max(spec.width, 1) / 2;
+  const minY = MIN_SKIN;
+  const maxY = Math.max(spec.protrusion, 1) - MIN_SKIN;
+  const span = Math.max(maxY - minY, 0.5);
+  const d = Math.min(Math.max(spec.holeDiameter, 0.5), Math.max(halfWidth * 2 - 2 * MIN_SKIN, 0.5), span);
+  const center = Math.min(Math.max(holeCenterY, minY + d / 2), maxY - d / 2);
+
+  if (spec.hole === 'round') return CrossSection.circle(d / 2).translate(0, center);
 
   // slotLength is the opening's overall length, so the swept centerline is that minus one hole
   // diameter (half a round end at each tip).
-  const travel = Math.max(spec.slotLength - d, 0.1);
+  const length = Math.min(Math.max(spec.slotLength, d), span);
+  const travel = Math.max(length - d, 0.1);
+  const slotCenter = Math.min(Math.max(holeCenterY, minY + length / 2), maxY - length / 2);
   if (spec.hole === 'slot') {
     return CrossSection.square([0.01, travel], true)
       .offset(d / 2, 'Round')
-      .translate(0, holeCenterY);
+      .translate(0, slotCenter);
   }
 
   const neck = Math.max(d * 0.55, 0.5);
-  const head = CrossSection.circle(d / 2).translate(0, holeCenterY + travel / 2);
+  const head = CrossSection.circle(d / 2).translate(0, slotCenter + travel / 2);
   const slot = CrossSection.square([0.01, travel], true)
     .offset(neck / 2, 'Round')
-    .translate(0, holeCenterY);
+    .translate(0, slotCenter);
   return head.add(slot);
 }
 
