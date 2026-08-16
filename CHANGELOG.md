@@ -10,6 +10,50 @@ Each entry here corresponds to a `vX.Y.Z` git tag, which is what triggers
 
 ## [Unreleased]
 
+## [0.1.0-beta.4] - 2026-08-16
+
+Print-quality release: the slide-in panel retaining lip measured 0.40 mm against a nominal 1.0 mm
+and broke on the first real print of the Waveshare CM4 preset. This fixes that, and the same class
+of thin-wall defect everywhere else it turned up — plus optional M2 screws for panels, centralized
+printability rules, and design-check warnings for minimum material between openings.
+
+### Fixed
+
+- **Panel retaining lip no longer collapses at rounded/chamfered corners.** The channel end-slots
+  are now intersected with the outer shell shrunk inward by `retainLip`, so the lip follows the
+  corner geometry instead of running into it. On the preset that failed, the lip went from 0.40 mm
+  to its full nominal 1.2 mm. Where a corner treatment is too large for any grip at all, the
+  clipping produces no lip rather than a fragile one, and a `panels:corner-eats-lip` design-check
+  finding says so.
+- **Flange holes clamped to keep `MIN_SKIN` from the tab's tip, root, and sides.** The stock CM4
+  wall tab left only 0.5 mm at the tip; it now gets 1.2 mm, and a slot longer than the tab no
+  longer comes out as an open-ended fork.
+- **Heat-set bores get 1.5 mm of relief** past the insert length, for the plastic the insert
+  displaces during installation.
+- **Eight board-preset port layouts corrected**: Waveshare CM4 Dual ETH WiFi6 (0.19 mm web between
+  USB-A and RJ45), BeagleBone Black (overlapping Ethernet/Mini-USB cutouts), CM4 IO board
+  (0.25 mm power/boot web), and five presets with a port sitting under 1.2 mm below the lid seam
+  (Raspberry Pi 3B/4B/5 family, Pi HAT stack).
+
+### Added
+
+- **Optional M2 panel screws** (`PanelSpec.screw`, off by default). A vertical post in each
+  interior corner behind the plate, bored for a self-tapping pilot or heat-set socket, with
+  counterbored clearance holes through the plate. Independent of the retaining lip — a screwed
+  connector panel comes off without removing the lid. Inspector controls, BOM rows, and
+  printability checks wired.
+- **Centralized print-rule constants** (`csg/printRules.ts`): `NOZZLE`, `MIN_SKIN`/`MIN_WEB`
+  (1.2 mm — three perimeters at 0.4 mm nozzle), `MIN_RIB`, and `MIN_WALL` (0.8 mm), replacing
+  scattered magic-number literals that never composed.
+- **Design checks for minimum material** between cutouts and between a cutout and the edge of its
+  printed part. Warn-only by design: machine-chosen dimensions (groove depths) are clamped
+  silently, but user-placed port positions produce warnings rather than being moved.
+- **Design-note document** (`docs/panel-retention.md`) recording the failure investigation,
+  measurements, and the options considered before the fix shipped.
+- 15 new automated tests (271 → 286): `test/panels.test.ts` (11 — lip probe across corner styles,
+  all-or-nothing invariant, screw-post presence, clear screw axis through both pieces, screwed
+  plate lift-out assembly) and `test/flangeHoles.test.ts` (4).
+
 ## [0.1.0-beta.3] - 2026-08-15
 
 Bug-fix release: the hexagon/octagon/stadium/wedge body shapes (added in beta.2) had broken lid
