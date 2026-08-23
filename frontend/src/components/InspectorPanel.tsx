@@ -340,13 +340,24 @@ function BoardMountFields({
           onChangeMm={(v) => setBoard({ standoff: { ...board.standoff, outerDiameter: v } })}
         />
       </FieldsGrid2Col>
-      <UnitNumberField
-        label="Screw hole diameter"
-        valueMm={board.standoff.screwHoleDiameter}
-        units={units}
-        minMm={0.5}
-        onChangeMm={(v) => setBoard({ standoff: { ...board.standoff, screwHoleDiameter: v } })}
-      />
+      <FieldsGrid2Col>
+        <UnitNumberField
+          label="Screw hole diameter"
+          valueMm={board.standoff.screwHoleDiameter}
+          units={units}
+          minMm={0.5}
+          onChangeMm={(v) => setBoard({ standoff: { ...board.standoff, screwHoleDiameter: v } })}
+        />
+        <UnitNumberField
+          label="Base flare"
+          valueMm={board.standoff.gusset ?? 0}
+          units={units}
+          minMm={0}
+          maxMm={Math.max(board.standoff.height - 0.5, 0)}
+          stepMm={0.2}
+          onChangeMm={(v) => setBoard({ standoff: { ...board.standoff, gusset: v > 0 ? v : undefined } })}
+        />
+      </FieldsGrid2Col>
 
       <div className="subgroup-title">Mounting Holes ({board.holes.length})</div>
       <div className="hole-table">
@@ -498,6 +509,7 @@ function ExternalMountFields({
   const setMount = (patch: Partial<ExternalMountSpec>) =>
     onUpdateFeature(feature.id, { mount: { ...mount, ...patch } });
   const isFlange = mount.style === 'flange';
+  const isKickstand = mount.style === 'kickstand';
   const isCorner = mount.anchor === 'corner' && isBox && feature.face !== 'top' && feature.face !== 'bottom';
 
   // The four vertical corners of a box, each expressed as a (face, u) pair -- front/back at u=0
@@ -534,10 +546,14 @@ function ExternalMountFields({
           <span>Style</span>
           <select
             value={mount.style}
-            onChange={(e) => setMount({ style: e.target.value as ExternalMountSpec['style'] })}
+            onChange={(e) => {
+              const style = e.target.value as ExternalMountSpec['style'];
+              setMount(style === 'kickstand' ? { style, hole: 'none' } : { style });
+            }}
           >
             <option value="flange">Flange (wall tab)</option>
             <option value="boss">Boss (post/foot)</option>
+            <option value="kickstand">Kickstand (angled prop)</option>
           </select>
         </label>
         <label className="field">
@@ -550,29 +566,31 @@ function ExternalMountFields({
             <option value="corner">Nearest corner</option>
           </select>
         </label>
-        <label className="field">
-          <span>Hole</span>
-          <select
-            value={mount.hole}
-            onChange={(e) => setMount({ hole: e.target.value as ExternalMountSpec['hole'] })}
-          >
-            <option value="none">None</option>
-            <option value="round">Round</option>
-            {isFlange && <option value="slot">Slot</option>}
-            {isFlange && <option value="keyhole">Keyhole</option>}
-          </select>
-        </label>
+        {!isKickstand && (
+          <label className="field">
+            <span>Hole</span>
+            <select
+              value={mount.hole}
+              onChange={(e) => setMount({ hole: e.target.value as ExternalMountSpec['hole'] })}
+            >
+              <option value="none">None</option>
+              <option value="round">Round</option>
+              {isFlange && <option value="slot">Slot</option>}
+              {isFlange && <option value="keyhole">Keyhole</option>}
+            </select>
+          </label>
+        )}
       </FieldsGrid2Col>
       <FieldsGrid2Col>
         <UnitNumberField
-          label={isFlange ? 'Tab width' : 'Post diameter'}
+          label={isFlange ? 'Tab width' : isKickstand ? 'Prop width' : 'Post diameter'}
           valueMm={mount.width}
           units={units}
           minMm={1}
           onChangeMm={(v) => setMount({ width: v })}
         />
         <UnitNumberField
-          label={isFlange ? 'Reach out' : 'Post height'}
+          label={isFlange || isKickstand ? 'Reach out' : 'Post height'}
           valueMm={mount.protrusion}
           units={units}
           minMm={1}
@@ -586,6 +604,28 @@ function ExternalMountFields({
             minMm={0.8}
             onChangeMm={(v) => setMount({ thickness: v })}
           />
+        )}
+        {isKickstand && (
+          <UnitNumberField
+            label="Tip thickness"
+            valueMm={mount.thickness}
+            units={units}
+            minMm={0.8}
+            onChangeMm={(v) => setMount({ thickness: v })}
+          />
+        )}
+        {isKickstand && (
+          <label className="field">
+            <span>Wedge angle</span>
+            <select
+              value={mount.kickstandAngleDeg ?? 50}
+              onChange={(e) => setMount({ kickstandAngleDeg: Number(e.target.value) })}
+            >
+              <option value={30}>30° (Long, gentle ramp)</option>
+              <option value={50}>50° (Standard)</option>
+              <option value={70}>70° (Tall, steep stand)</option>
+            </select>
+          </label>
         )}
         {isFlange && (
           <UnitNumberField
@@ -606,14 +646,16 @@ function ExternalMountFields({
             onChangeMm={(v) => setMount({ holeDiameter: v })}
           />
         )}
-        <UnitNumberField
-          label="Wall brace"
-          valueMm={mount.gusset ?? Math.min(Math.max(mount.protrusion, 1) * 0.45, 4)}
-          units={units}
-          minMm={0}
-          maxMm={Math.max(mount.protrusion - 0.5, 0)}
-          onChangeMm={(v) => setMount({ gusset: v })}
-        />
+        {!isKickstand && (
+          <UnitNumberField
+            label="Wall brace"
+            valueMm={mount.gusset ?? Math.min(Math.max(mount.protrusion, 1) * 0.45, 4)}
+            units={units}
+            minMm={0}
+            maxMm={Math.max(mount.protrusion - 0.5, 0)}
+            onChangeMm={(v) => setMount({ gusset: v })}
+          />
+        )}
         {(mount.hole === 'slot' || mount.hole === 'keyhole') && (
           <UnitNumberField
             label={mount.hole === 'slot' ? 'Slot length' : 'Keyhole travel'}
@@ -623,7 +665,7 @@ function ExternalMountFields({
             onChangeMm={(v) => setMount({ slotLength: v })}
           />
         )}
-        {!isFlange && mount.hole !== 'none' && (
+        {!isFlange && !isKickstand && mount.hole !== 'none' && (
           <UnitNumberField
             label="Hole depth (0 = through)"
             valueMm={mount.holeDepth ?? 0}
@@ -633,12 +675,20 @@ function ExternalMountFields({
           />
         )}
       </FieldsGrid2Col>
-      <p className="field-hint">
-        The wall brace is the sloped blend where the mount meets the case: triangular webs at each
-        end of a flange (clear of the middle, so the screw stays reachable) or a conical collar
-        round a boss. It goes underneath where there's room and on top where there isn't, and its
-        45&deg; slope prints without support. 0 leaves the mount butted flat against the wall.
-      </p>
+      {isKickstand ? (
+        <p className="field-hint">
+          A kickstand is a solid tapered wedge -- the taper itself is what braces it into the wall,
+          so there's no separate wall-brace control. The wedge angle sets how tall/steep vs. long
+          the ramp is; rotate the feature to point the lean in whichever direction props the case up.
+        </p>
+      ) : (
+        <p className="field-hint">
+          The wall brace is the sloped blend where the mount meets the case: triangular webs at each
+          end of a flange (clear of the middle, so the screw stays reachable) or a conical collar
+          round a boss. It goes underneath where there's room and on top where there isn't, and its
+          45&deg; slope prints without support. 0 leaves the mount butted flat against the wall.
+        </p>
+      )}
       {isCorner && (
         <>
           <button type="button" className="btn-secondary" onClick={fillCorners}>
@@ -1201,6 +1251,8 @@ export function InspectorPanel({
   const setGasketEnabled = useProjectStore((s) => s.setGasketEnabled);
   const setGasketWidth = useProjectStore((s) => s.setGasketWidth);
   const setGasketDepth = useProjectStore((s) => s.setGasketDepth);
+  const setSnapFingerCount = useProjectStore((s) => s.setSnapFingerCount);
+  const setCornerSnapEnabled = useProjectStore((s) => s.setCornerSnapEnabled);
   const setPanelsEnabled = useProjectStore((s) => s.setPanelsEnabled);
   const togglePanelFace = useProjectStore((s) => s.togglePanelFace);
   const setPanelThickness = useProjectStore((s) => s.setPanelThickness);
@@ -1556,17 +1608,36 @@ export function InspectorPanel({
                     }
                   />
                 </FieldsGrid2Col>
-                <UnitNumberField
-                  label="Height"
-                  valueMm={selectedFeature.standoff.height}
-                  units={units}
-                  minMm={1}
-                  onChangeMm={(v) =>
-                    onUpdateFeature(selectedFeature.id, {
-                      standoff: { ...selectedFeature.standoff!, height: v },
-                    })
-                  }
-                />
+                <FieldsGrid2Col>
+                  <UnitNumberField
+                    label="Height"
+                    valueMm={selectedFeature.standoff.height}
+                    units={units}
+                    minMm={1}
+                    onChangeMm={(v) =>
+                      onUpdateFeature(selectedFeature.id, {
+                        standoff: { ...selectedFeature.standoff!, height: v },
+                      })
+                    }
+                  />
+                  <UnitNumberField
+                    label="Base flare"
+                    valueMm={selectedFeature.standoff.gusset ?? 0}
+                    units={units}
+                    minMm={0}
+                    maxMm={Math.max(selectedFeature.standoff.height - 0.5, 0)}
+                    stepMm={0.2}
+                    onChangeMm={(v) =>
+                      onUpdateFeature(selectedFeature.id, {
+                        standoff: { ...selectedFeature.standoff!, gusset: v > 0 ? v : undefined },
+                      })
+                    }
+                  />
+                </FieldsGrid2Col>
+                <p className="field-hint">
+                  A conical collar at the base, self-supporting up to the standoff's own width --
+                  prints without support and resists snapping off. 0 leaves a plain cylinder.
+                </p>
               </div>
             )}
             <button
@@ -1997,6 +2068,40 @@ export function InspectorPanel({
                     )}
                   </>
                 )}
+              </>
+            )}
+
+            {lid.type !== 'snap-fit' && (
+              <label className="field field-checkbox">
+                <input
+                  type="checkbox"
+                  checked={lid.snap !== undefined}
+                  onChange={(e) => setCornerSnapEnabled(e.target.checked)}
+                />
+                <span>Corner snap comb</span>
+              </label>
+            )}
+            {(lid.type === 'snap-fit' || lid.snap) && (
+              <>
+                <label className="field">
+                  <span>Fingers per tab</span>
+                  <select
+                    value={lid.snap?.fingerCount ?? 1}
+                    onChange={(e) => setSnapFingerCount(Number(e.target.value) as 1 | 2 | 3)}
+                  >
+                    <option value={1}>1 (single wide tab)</option>
+                    <option value={2}>2</option>
+                    <option value={3}>3</option>
+                  </select>
+                </label>
+                <p className="field-hint">
+                  {lid.type === 'snap-fit'
+                    ? 'Two corner-integrated combs hold the lid on -- no screws or friction lip.'
+                    : 'Adds two corner-integrated snap combs alongside the boss/lip above, for a snap during assembly plus a permanent screwed joint.'}{' '}
+                  Splitting a tab into narrower fingers side by side lowers the insertion force each
+                  one needs to flex and gives redundant catches, instead of one wide tab
+                  concentrating the stress at its root.
+                </p>
               </>
             )}
 

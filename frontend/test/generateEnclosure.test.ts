@@ -962,3 +962,132 @@ describe('Rendering studio: tessellation, edge bevels, corner styles & grip ribs
     }
   });
 });
+
+describe('snap-fit fingers (SnapFitSpec.fingerCount)', () => {
+  // Mirrors the corner-comb placement math in csg/primitives.ts's applySnapFitLid for makeBox's
+  // fixed 80x50 body/2mm walls/3mm corner radius, so the probes below target the comb's actual
+  // position instead of a hardcoded guess.
+  const innerLength = 80 - 2 * 2;
+  const innerWidth = 50 - 2 * 2;
+  const wallGap = 0.2;
+  const tabThickness = Math.min(2, 1.6);
+  const outerY = Math.max(innerWidth / 2 - wallGap, tabThickness + 1);
+  const combWidth = Math.min(Math.max(Math.min(innerLength, innerWidth) * 0.16, 6), 11);
+  const cornerRadius = Math.max(0, 3 - 2); // shrinkCornerStyle's corner-radius-minus-wallThickness
+  const cornerMargin = Math.max(cornerRadius, 3) + combWidth / 2 + 1;
+  const cornerX = Math.max(innerLength / 2 - cornerMargin, combWidth / 2);
+  // Within the tab's engagement depth (splitHeight 24, engagementDepth up to 6) but below the
+  // barb's own ledge (whose gap between fingers is deliberately narrower than SNAP_FINGER_GAP) --
+  // this is deep enough in the tab body that the full finger-to-finger gap is unambiguous.
+  const tabZ = 19;
+
+  it('sits at the corner (not the old wall-midpoint) and is continuous with fingerCount 1', () => {
+    const project = makeBox({ lid: 'snap-fit' });
+    const solids = generateSolids(project);
+    expect(solidAt(solids.lid, [cornerX, outerY, tabZ], 0.6), 'material at the corner').toBe(true);
+    expect(solidAt(solids.lid, [0, outerY, tabZ], 0.6), 'old wall-midpoint position is now empty').toBe(
+      false,
+    );
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  /**
+   * Scans a range of X positions and reports how many separate solid "runs" it finds. Each finger's
+   * own material isn't centered on its nominal `offset + cornerX` centerline -- the tab sits behind
+   * the wall's flush-face reference and the barb pokes a little past it, so the piece's true X extent
+   * is asymmetric around that line -- so probing exact hand-derived centers/midpoints is brittle.
+   * Counting solid runs across a generous span instead only relies on there being real gaps, which is
+   * what "reads as a comb" actually means.
+   */
+  function countSolidRuns(part: Manifold, y: number, z: number, xStart: number, xEnd: number): number {
+    let runs = 0;
+    let prev = false;
+    for (let x = xStart; x <= xEnd; x += 0.2) {
+      const cur = solidAt(part, [x, y, z], 0.3);
+      if (cur && !prev) runs++;
+      prev = cur;
+    }
+    return runs;
+  }
+
+  it('3 fingers leave a real gap between them near the corner, and stay watertight', () => {
+    const project = makeBox({ lid: 'snap-fit' });
+    project.body.lid.snap = { fingerCount: 3 };
+    const solids = generateSolids(project);
+    const runs = countSolidRuns(solids.lid, outerY, tabZ, cornerX - combWidth / 2 - 2, cornerX + combWidth / 2 + 2);
+    expect(runs, 'expected 3 separate fingers with real gaps between them').toBe(3);
+    expect(isWatertight(extractMeshData(solids.base)), 'base watertight').toBe(true);
+    expect(isWatertight(extractMeshData(solids.lid)), 'lid watertight').toBe(true);
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('coexists with screw-boss corner posts (both, per user request)', () => {
+    const project = makeBox({ lid: 'screw-boss' });
+    project.body.lid.snap = { fingerCount: 2 };
+    const solids = generateSolids(project);
+    const runs = countSolidRuns(solids.lid, outerY, tabZ, cornerX - combWidth / 2 - 2, cornerX + combWidth / 2 + 2);
+    expect(runs, 'snap comb present alongside screws').toBe(2);
+    expect(isWatertight(extractMeshData(solids.base)), 'base watertight').toBe(true);
+    expect(isWatertight(extractMeshData(solids.lid)), 'lid watertight').toBe(true);
+    for (const part of Object.values(solids)) part.delete();
+  });
+});
+
+describe('standoff base flare (StandoffSpec.gusset)', () => {
+  const standoffFeature = (gusset: number | undefined): Feature => ({
+    id: 's',
+    type: 'standoff',
+    face: 'bottom',
+    u: 0.5,
+    v: 0.5,
+    rotationDeg: 0,
+    standoff: { outerDiameter: 6, screwHoleDiameter: 2.5, height: 8, gusset },
+  });
+
+  it('flares out near the floor when a gusset is set, and stays watertight', () => {
+    const solids = generateSolids(makeBox({ features: [standoffFeature(3)] }));
+    // Collar: radius flares from outerDiameter/2 + gusset = 6mm at the floor down to
+    // outerDiameter/2 = 3mm by z = floorZ + gusset = 5. A probe at radius 5 only finds material
+    // inside that flared band, not in the plain constant-radius post above it.
+    expect(solidAt(solids.base, [5, 0, 2.5], 0.5), 'flared near the floor').toBe(true);
+    expect(solidAt(solids.base, [5, 0, 8], 0.5), 'plain post above the collar').toBe(false);
+    expect(isWatertight(extractMeshData(solids.base))).toBe(true);
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('stays a plain cylinder when no gusset is set', () => {
+    const solids = generateSolids(makeBox({ features: [standoffFeature(undefined)] }));
+    expect(solidAt(solids.base, [5, 0, 2.5], 0.5), 'no flare without a gusset').toBe(false);
+    for (const part of Object.values(solids)) part.delete();
+  });
+});
+
+describe('kickstand external mount', () => {
+  const kickstandFeature: Feature = {
+    id: 'k',
+    type: 'external-mount',
+    face: 'front',
+    u: 0.5,
+    v: 0.2,
+    rotationDeg: 0,
+    mount: {
+      style: 'kickstand',
+      width: 18,
+      protrusion: 20,
+      thickness: 1.6,
+      hole: 'none',
+      holeDiameter: 0,
+      slotLength: 0,
+      kickstandAngleDeg: 50,
+    },
+  };
+
+  it('is a solid wedge that grows the base outward, and stays watertight', () => {
+    const plain = generateMeshes(makeBox({}));
+    const withKickstand = generateMeshes(makeBox({ features: [kickstandFeature] }));
+    // Same "front sticks out along -Y" convention as a front-wall flange/boss.
+    expect(boundingBox(withKickstand.base).min[1]).toBeLessThan(boundingBox(plain.base).min[1] - 9);
+    expect(isWatertight(withKickstand.base), 'base watertight').toBe(true);
+    expect(isWatertight(withKickstand.lid), 'lid watertight').toBe(true);
+  });
+});

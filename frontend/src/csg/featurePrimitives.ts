@@ -358,7 +358,8 @@ export function buildSupportPad(
   return solid!;
 }
 
-/** One floor-standing standoff solid (boss + screw pilot bore) centered at world (x, y). */
+/** One floor-standing standoff solid (boss + screw pilot bore), optionally flared out at its root
+ * by a conical collar, centered at world (x, y). */
 function standoffAt(
   wasm: ManifoldToplevel,
   spec: NonNullable<Feature['standoff']>,
@@ -368,7 +369,19 @@ function standoffAt(
 ): Manifold {
   const floorZ = wallThickness;
   const height = Math.max(spec.height, 1);
-  const boss = cylinderZ(wasm, spec.outerDiameter, height, floorZ).translate(x, y, 0);
+  let boss = cylinderZ(wasm, spec.outerDiameter, height, floorZ).translate(x, y, 0);
+
+  // Conical collar at the root: same 45-degree self-supporting flare as an external boss's gusset
+  // (bossSolid, below), widening the floor joint instead of leaving a sharp step -- and, printed
+  // as a cone rather than a cylinder, the collar itself needs no support material either.
+  const gusset = Math.min(Math.max(spec.gusset ?? 0, 0), height - 0.5);
+  if (gusset >= 0.5) {
+    const radius = spec.outerDiameter / 2;
+    boss = boss.add(
+      wasm.Manifold.cylinder(gusset, radius + gusset, radius, 0, false).translate(x, y, floorZ),
+    );
+  }
+
   const boreStart = Math.max(floorZ - 0.5, 0);
   const bore = cylinderZ(wasm, spec.screwHoleDiameter, floorZ + height - boreStart + 0.5, boreStart).translate(
     x,
@@ -704,6 +717,40 @@ function bossSolid(
 }
 
 /**
+ * Solid triangular prop leaning out from a face -- a fold-out-style kickstand or a leg on the
+ * underside of the case. Built directly in the target (X = across the mount, Y = the face's other
+ * in-plane axis, Z = outward normal) frame bossSolid also uses, so it needs no extra rotation at
+ * the call site: a trapezoid cross-section (wide at the embedded root, tapered -- never to a knife
+ * edge -- at the tip) swept along X, tilted by `angleDeg` off the outward axis. The taper itself is
+ * what braces it into the wall (the same reasoning as a screw column's sloped foot in
+ * primitives.ts's footSlopeSolid, and why this style has no separate gusset control), so it prints
+ * without support at any angle in the clamped range.
+ */
+function kickstandSolid(wasm: ManifoldToplevel, spec: ExternalMountSpec, wallThickness: number): Manifold {
+  const width = Math.max(spec.width, 1);
+  const protrusion = Math.max(spec.protrusion, 1);
+  const embed = Math.max(wallThickness, 0.4);
+  const angleDeg = Math.min(Math.max(spec.kickstandAngleDeg ?? 50, 20), 70);
+  const rootHeight = protrusion * Math.tan((angleDeg * Math.PI) / 180);
+  const tipThickness = Math.min(Math.max(spec.thickness, 0.8), rootHeight);
+
+  const profile = new wasm.CrossSection([
+    [-rootHeight / 2, -embed],
+    [rootHeight / 2, -embed],
+    [tipThickness / 2, protrusion],
+    [-tipThickness / 2, protrusion],
+  ]);
+  // extrude sweeps the profile along its own Z; rotate(90,0,0).rotate(0,0,90) cycles that sweep
+  // onto world X and the profile's own (x, y) onto world (Y, Z) -- same recipe flangeWeb (below)
+  // uses for the same reason, spelled out in its own comment.
+  return profile
+    .extrude(width)
+    .translate(0, 0, -width / 2)
+    .rotate(90, 0, 0)
+    .rotate(0, 0, 90);
+}
+
+/**
  * Which way a vertical-wall flange's natural +Z has to point for its braces to end up on world
  * `webSide`. The natural frame reaches the wall through two rotations (the `.rotate(90, 0, 0)` at
  * the call site, then orientOutward's own), and the pair does not compose the same way on every
@@ -760,7 +807,9 @@ export function buildExternalMount(
     const solid =
       spec.style === 'boss'
         ? bossSolid(wasm, spec, embed, gusset).rotate(-90, 0, 0)
-        : cornerFlangeSolid(wasm, spec, wallThickness, cornerInset);
+        : spec.style === 'kickstand'
+          ? kickstandSolid(wasm, spec, embed).rotate(-90, 0, 0)
+          : cornerFlangeSolid(wasm, spec, wallThickness, cornerInset);
     const yaw = corner.angleDeg - 90 + (feature.rotationDeg ?? 0);
     return solid.rotate(0, 0, yaw).translate(corner.x, corner.y, corner.z);
   }
@@ -768,6 +817,8 @@ export function buildExternalMount(
   const local =
     spec.style === 'boss'
       ? bossSolid(wasm, spec, wallThickness, gusset)
+      : spec.style === 'kickstand'
+        ? kickstandSolid(wasm, spec, wallThickness)
       : feature.face === 'top' || feature.face === 'bottom'
         ? horizontalFaceFlangeSolid(wasm, spec, wallThickness, gusset).rotate(90, 0, 0)
       // The natural->local rotation below puts natural +Z on -v, so the brace side inverts here.

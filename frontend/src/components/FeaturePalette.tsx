@@ -10,7 +10,7 @@ export type ArmedFeatureTemplate =
   | { type: 'board-mount'; label: string; boardPresetId?: string }
   | { type: 'vent'; label: string }
   | { type: 'custom-hole'; label: string }
-  | { type: 'external-mount'; label: string; mountStyle: 'flange' | 'boss' }
+  | { type: 'external-mount'; label: string; mountStyle: 'flange' | 'boss' | 'kickstand' }
   | { type: 'fan-mount'; label: string; fanSize: number }
   | { type: 'support-pad'; label: string }
   | { type: 'grip-ribs'; label: string };
@@ -459,6 +459,23 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
                   <span className="dim-badge">Post</span>
                 </div>
                 <span className="card-note">Outside standoff: foot, spacer or bolt pillar</span>
+              </button>
+              <button
+                type="button"
+                className={
+                  armed?.type === 'external-mount' && armed.mountStyle === 'kickstand'
+                    ? 'palette-card armed'
+                    : 'palette-card'
+                }
+                onClick={() =>
+                  onArm({ type: 'external-mount', mountStyle: 'kickstand', label: 'Kickstand' })
+                }
+              >
+                <div className="card-top">
+                  <span className="card-name">Kickstand</span>
+                  <span className="dim-badge">Wedge</span>
+                </div>
+                <span className="card-note">Solid angled prop -- fold-out stand or a foot</span>
               </button>
             </div>
           </section>

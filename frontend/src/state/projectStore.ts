@@ -74,6 +74,8 @@ interface ProjectStore {
   setGasketEnabled: (enabled: boolean) => void;
   setGasketWidth: (value: number) => void;
   setGasketDepth: (value: number) => void;
+  setSnapFingerCount: (count: 1 | 2 | 3) => void;
+  setCornerSnapEnabled: (enabled: boolean) => void;
   setPanelsEnabled: (enabled: boolean) => void;
   togglePanelFace: (face: PanelFace) => void;
   setPanelThickness: (value: number) => void;
@@ -273,6 +275,24 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         const gasket = p.body.lid.gasket ?? defaultGasketSpec();
         return { ...p, body: { ...p.body, lid: { ...p.body.lid, gasket: { ...gasket, depth: value } } } };
       }),
+
+    setSnapFingerCount: (count) =>
+      mutate((p) => ({
+        ...p,
+        body: { ...p.body, lid: { ...p.body.lid, snap: { ...p.body.lid.snap, fingerCount: count } } },
+      })),
+
+    // Independent of lid.type -- lets a corner snap comb layer on top of screw-boss or
+    // friction-lip instead of only ever being the sole retention. No-op when lid.type is already
+    // 'snap-fit', since that always gets the comb regardless of this field.
+    setCornerSnapEnabled: (enabled) =>
+      mutate((p) => ({
+        ...p,
+        body: {
+          ...p.body,
+          lid: { ...p.body.lid, snap: enabled ? (p.body.lid.snap ?? {}) : undefined },
+        },
+      })),
 
     // Slide-in panels are a box-body property (a cylinder has no flat wall to replace), so all six
     // actions below no-op on a cylinder -- the inspector only shows the controls for a box.

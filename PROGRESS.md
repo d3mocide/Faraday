@@ -307,10 +307,11 @@ targeted, documented escape hatch — reach for that before revisiting this.
   native compilation, and both `node:22-alpine`/`caddy:2-alpine` publish arm64 images), so it
   should build the same way GitHub Actions' `docker/setup-qemu-action` does it — worth confirming
   once the first real `arm64` image is published and someone can pull it on real arm64 hardware.
-- **Snap-fit's nub/pocket is a plain sphere pair, no lead-in ramp or catching ledge** — see the
-  Phase 5 notes above. Functions as a retention feature but with less holding force than an
-  engineered wedge profile would give; revisit if real-world prints show the lid popping off too
-  easily.
+- ~~Snap-fit's nub/pocket is a plain sphere pair, no lead-in ramp or catching ledge~~ — resolved in
+  the 2026-08-23 session (see Session log): `snapBarbSolid`/`snapPocketSolid` now build a real
+  cantilever ramp/shoulder barb, positioned as a corner-integrated multi-finger comb rather than a
+  wall-midpoint tab, and independent of `lid.type` so it can layer on top of `screw-boss`/
+  `friction-lip` via `LidSpec.snap`.
 - **Cylinder feature placement was verified on `'side'` and `'bottom'`, not explicitly on `'top'`**
   — `'top'` reuses the exact same square-domain convention as `'bottom'` (just `+height` instead of
   `z=0`), so it should work identically, but wasn't separately clicked-and-confirmed this session.
@@ -1862,3 +1863,89 @@ split 24 → 25).
   under-reports the true gap rather than over-reporting it.
 - `usableFaceExtent()` returns null for non-box bodies, so the edge-margin rule is box-only.
 - Panel posts are box-only, like the panels themselves.
+
+- **2026-08-23**: Three fastener/mount features reverse-engineered from a real printed CYD case
+  (user-supplied STL/3MF of a two-part ESP32-2432S028 enclosure), each landing on an existing gap
+  already flagged in this doc:
+  - **Snap-fit cantilever wedge/ledge profile** — `applySnapFitLid`/`Cylinder`/`Polygon` in
+    `csg/primitives.ts` no longer use a sphere nub seating in a sphere pocket (the simplified
+    stand-in this doc flagged since Phase 0/1 and again in the 2026-07-20 sidebar-ideas list). The
+    new `snapBarbSolid`/`snapPocketSolid` build a real cantilever barb: a sloped ramp below the peak
+    cams the arm inward on assembly, a sharp perpendicular shoulder above it is the catch that
+    resists pull-apart. New optional `LidSpec.snap: SnapFitSpec` (`fingerCount?: 1|2|3`, wired to a
+    `setSnapFingerCount` store action and a "Fingers per tab" control in the Lid & Fasteners card)
+    splits each tab position into several narrower fingers side by side — lower insertion force
+    each, redundant catches instead of one wide tab — the multi-tooth comb the reference case uses.
+    `fingerOffsets()` computes per-finger width/offset once and every shape's apply* function loops
+    over it; wedge/stadium get this for free since they already share `applySnapFitLid` with box.
+  - **Standoff base flare** — new optional `StandoffSpec.gusset` (mm) adds a conical collar at a
+    standoff's root, reusing the exact 45-degree-flare technique `ExternalMountSpec.gusset`/
+    `bossSolid` already used for external bosses, just applied to `standoffAt()` in
+    `featurePrimitives.ts` for the interior case. Prints without support and resists snapping off
+    at the base, same reasoning as the reference case's funnel-shaped PCB support boss. Exposed in
+    both the standalone standoff inspector and the board-mount shared standoff fields ("Base
+    flare").
+  - **Kickstand external-mount style** — new `ExternalMountStyle = 'kickstand'` and
+    `ExternalMountSpec.kickstandAngleDeg`. `kickstandSolid()` builds a solid tapered wedge (wide at
+    the embedded root, never a knife-edge tip) directly in the boss-style Z-outward frame, so it
+    needs no separate wall-brace control — the taper itself is what braces it, same idea as a screw
+    column's sloped foot. Wired into `buildExternalMount`'s style dispatch (face and corner-anchor
+    paths), the palette (new "Kickstand" card under Mounting), and `featureFactory.ts`'s defaults.
+    This is the closest match to the reference case's integrated corner wedge; unlike that wedge
+    (a fixed body feature) this is a placeable feature usable on any face of any body shape.
+  - Deliberately not carried over: the reference case's plain corner screw bosses (already covered
+    by `screw-boss` lid corners) and its funnel boss's *full-height* taper (the gusset here is a
+    root collar, not a full cone, matching the scale `bossSolid`'s existing gusset already uses).
+  - Verification: 291/291 vitest tests passing (5 new — finger-gap presence/absence, gusset
+    flare/no-flare, kickstand bbox growth — plus the existing `snap-fit` entries in `LID_TYPES` and
+    `newShapeFasteners.test.ts`'s hex/oct/stadium/wedge matrix exercise the new barb geometry
+    without any changes needed there). `tsc -b`, `oxlint` (clean but for the one pre-existing
+    fast-refresh warning), and `npm run build` all clean. Browser (Playwright, zero console errors):
+    loaded a project JSON exercising all three features at once — 3-finger snap-fit tabs visibly
+    separated with the ramp/shoulder profile on each tooth (exploded view), a standoff with a
+    visibly flared base, and an angled kickstand wedge on the front wall closely resembling the
+    reference photo; confirmed the "Kickstand" palette card arms placement mode.
+
+- **2026-08-23 (same day, follow-up)**: User feedback on the snap-fit rework above: the new barb
+  profile was right, but the *position* still wasn't — it was still centered on a wall's midpoint,
+  not next to a corner the way the reference case actually places it, and it read as loose hanging
+  tabs rather than a "nice groove"/comb notched into the block. Follow-up: "Why not both!" in
+  response to "should the corner comb replace the snap-fit tabs, or coexist with screw bosses"
+  confirmed the comb should be an independent, additive feature layerable on `screw-boss`/
+  `friction-lip`, not just an alternative `lid.type`.
+  - **Corner positioning**: `applySnapFitLid` (box/wedge/stadium) now places its two combs next to a
+    corner (`cornerX` computed from `innerLength/2` minus a margin that clears the corner radius)
+    instead of centered on the wall (`x=0`). Cylinder/polygon combs keep their existing
+    evenly-opposite/facet-centered placement — a cylinder has no corner, and a hex/oct facet already
+    reads as its own short wall next to two vertices.
+  - **Real comb, not separate tabs**: `snapCombFingers()` factors the per-finger tab+barb+pocket
+    construction out of the three per-shape `applySnapFitLid*` functions into one shared helper, so
+    each finger is built once in a canonical frame (local X = width, Y = outward from the wall, Z =
+    absolute height) and every shape just rotates+translates the whole finger into place — the same
+    pattern the single-tab code already proved correct. An earlier attempt at a "flared shared root"
+    (one wide root block behind separate tips, meant to look more like one comb fused at the base)
+    was abandoned: `Manifold.cube(...).rotate(0,0,90)` swaps X/Y extents on a plain axis-aligned box,
+    which broke the intended root width, and the simpler uniform-width-fingers-with-real-gaps
+    version already reads as a comb without needing a fused root.
+  - **Decoupled from `lid.type`**: new independent `LidSpec.snap` now behaves like the existing
+    `LidSpec.gasket` — applied as its own pass in `generateEnclosure.ts` (`lid.type === 'snap-fit' ||
+    lid.snap`) after the screw-boss/friction-lip branch, so a corner comb can sit alongside either.
+    `lid.type === 'snap-fit'` still means "comb only, no boss/skirt" and always gets the comb even
+    without an explicit `lid.snap`. New `setCornerSnapEnabled` store action and a "Corner snap comb"
+    checkbox in the inspector (shown whenever `lid.type !== 'snap-fit'`, since that type always has
+    it) drive `lid.snap` independently of the lid type dropdown.
+  - **Test fix, not an implementation bug**: the finger-gap tests initially probed exact hand-derived
+    coordinates (`cornerX ± pitch/2`) and intermittently failed. Root cause: a finger's own material
+    isn't symmetric around its nominal centerline — the tab sits behind the wall's flush-face
+    reference plane while the barb pokes a little past it — so at a Z probed mid-ramp the visible
+    "center of mass" shifts by a fraction of a millimetre from the nominal centerline. That's
+    expected geometry, not a bug. Rewrote both tests to scan a range and count solid "runs" instead
+    of asserting exact coordinates (`countSolidRuns` in `generateEnclosure.test.ts`), which only
+    depends on real gaps existing between fingers, not on where their asymmetric envelope centers.
+  - Verification: 292/292 vitest tests, `tsc -b`, `oxlint` (clean but for the one pre-existing
+    fast-refresh warning), and `npm run build` all clean. Browser (Playwright, zero console errors):
+    loaded a `screw-boss` lid with `lid.snap = { fingerCount: 3 }` — exploded view confirms a
+    3-finger comb (real gaps between teeth) sitting next to a corner on the lid's underside, a
+    matching pocket-slot pair cut into the base wall at the same corner, and all 4 screw bosses +
+    heat-set inserts still present — screws and snap comb coexisting as the reference case actually
+    does.
