@@ -10,6 +10,31 @@ Each entry here corresponds to a `vX.Y.Z` git tag, which is what triggers
 
 ## [Unreleased]
 
+## [0.1.0-beta.5] - 2026-08-23
+
+Fastener/mounting release, reverse-engineered from a real printed CYD (ESP32-2432S028) case shared
+by a user: a proper cantilever snap-fit profile positioned the way a real design actually places
+it, a self-supporting standoff base, and a new kickstand mount style.
+
+### Added
+
+- **Cantilever snap-fit barb profile**, replacing the sphere nub/pocket placeholder: a sloped ramp
+  cams the tab inward on assembly and a sharp shoulder catches to resist pull-apart. Positioned as a
+  multi-finger comb (`LidSpec.snap.fingerCount`, 1–3) next to a corner instead of centered on a
+  wall — matching where a real design places it — with real gaps cut between fingers so it reads as
+  a comb rather than separate hanging tabs. Applies across box/cylinder/hexagon/octagon/stadium/
+  wedge bodies.
+- **Snap comb is now independent of lid type** (`LidSpec.snap`, works like the existing gasket
+  field): a corner comb can layer on top of `screw-boss` or `friction-lip` instead of only ever
+  being the sole retention, matching the reference case's actual screws-plus-comb design. New
+  "Corner snap comb" inspector checkbox.
+- **Standoff base flare** (`StandoffSpec.gusset`): an optional conical collar at a standoff's root,
+  printing without support and resisting snap-off at the base — the same self-supporting-flare
+  technique external mount bosses already used.
+- **Kickstand external-mount style** (`ExternalMountStyle: 'kickstand'`): a solid tapered wedge prop
+  (never a knife-edge tip) for fold-out stands or feet, placeable on any face of any body shape.
+- 6 new automated tests (286 → 292).
+
 ## [0.1.0-beta.4] - 2026-08-16
 
 Print-quality release: the slide-in panel retaining lip measured 0.40 mm against a nominal 1.0 mm
