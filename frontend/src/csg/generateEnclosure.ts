@@ -284,6 +284,7 @@ export function generateEnclosure(
         splitHeight,
         wallThickness,
         wallGap: Math.max(body.lid.wallGap, 0),
+        snap: body.lid.snap,
       }));
     } else if (body.shape === 'hexagon' || body.shape === 'octagon') {
       ({ base, lid } = applySnapFitLidPolygon(wasm, base, lid, {
@@ -292,6 +293,7 @@ export function generateEnclosure(
         splitHeight,
         wallThickness,
         wallGap: Math.max(body.lid.wallGap, 0),
+        snap: body.lid.snap,
       }));
     } else {
       ({ base, lid } = applySnapFitLidCylinder(wasm, base, lid, {
@@ -299,6 +301,7 @@ export function generateEnclosure(
         splitHeight,
         wallThickness,
         wallGap: Math.max(body.lid.wallGap, 0),
+        snap: body.lid.snap,
       }));
     }
   }

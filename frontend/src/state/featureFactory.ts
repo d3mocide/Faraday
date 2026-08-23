@@ -149,7 +149,9 @@ export function buildFeatureFromTemplate(
 
   if (template.type === 'external-mount') {
     // Flange defaults are a wall-mount ear sized for an M4 screw with a little slot travel; the
-    // boss defaults to an M3 heat-set post. Both are starting points, editable in the inspector.
+    // boss defaults to an M3 heat-set post; the kickstand defaults to a sturdy, moderately steep
+    // prop (see kickstandSolid in featurePrimitives.ts). All three are starting points, editable
+    // in the inspector.
     return {
       id,
       type: 'external-mount',
@@ -169,16 +171,27 @@ export function buildFeatureFromTemplate(
               slotLength: 0,
               holeDepth: 5,
             }
-          : {
-              style: 'flange',
-              width: 16,
-              protrusion: 10,
-              thickness: 3,
-              edgeRadius: 1.5,
-              hole: 'slot',
-              holeDiameter: 4.5,
-              slotLength: 9,
-            },
+          : template.mountStyle === 'kickstand'
+            ? {
+                style: 'kickstand',
+                width: 18,
+                protrusion: 20,
+                thickness: 1.6,
+                hole: 'none',
+                holeDiameter: 0,
+                slotLength: 0,
+                kickstandAngleDeg: 50,
+              }
+            : {
+                style: 'flange',
+                width: 16,
+                protrusion: 10,
+                thickness: 3,
+                edgeRadius: 1.5,
+                hole: 'slot',
+                holeDiameter: 4.5,
+                slotLength: 9,
+              },
     };
   }
 

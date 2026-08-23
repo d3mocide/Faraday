@@ -1862,3 +1862,45 @@ split 24 → 25).
   under-reports the true gap rather than over-reporting it.
 - `usableFaceExtent()` returns null for non-box bodies, so the edge-margin rule is box-only.
 - Panel posts are box-only, like the panels themselves.
+
+- **2026-08-23**: Three fastener/mount features reverse-engineered from a real printed CYD case
+  (user-supplied STL/3MF of a two-part ESP32-2432S028 enclosure), each landing on an existing gap
+  already flagged in this doc:
+  - **Snap-fit cantilever wedge/ledge profile** — `applySnapFitLid`/`Cylinder`/`Polygon` in
+    `csg/primitives.ts` no longer use a sphere nub seating in a sphere pocket (the simplified
+    stand-in this doc flagged since Phase 0/1 and again in the 2026-07-20 sidebar-ideas list). The
+    new `snapBarbSolid`/`snapPocketSolid` build a real cantilever barb: a sloped ramp below the peak
+    cams the arm inward on assembly, a sharp perpendicular shoulder above it is the catch that
+    resists pull-apart. New optional `LidSpec.snap: SnapFitSpec` (`fingerCount?: 1|2|3`, wired to a
+    `setSnapFingerCount` store action and a "Fingers per tab" control in the Lid & Fasteners card)
+    splits each tab position into several narrower fingers side by side — lower insertion force
+    each, redundant catches instead of one wide tab — the multi-tooth comb the reference case uses.
+    `fingerOffsets()` computes per-finger width/offset once and every shape's apply* function loops
+    over it; wedge/stadium get this for free since they already share `applySnapFitLid` with box.
+  - **Standoff base flare** — new optional `StandoffSpec.gusset` (mm) adds a conical collar at a
+    standoff's root, reusing the exact 45-degree-flare technique `ExternalMountSpec.gusset`/
+    `bossSolid` already used for external bosses, just applied to `standoffAt()` in
+    `featurePrimitives.ts` for the interior case. Prints without support and resists snapping off
+    at the base, same reasoning as the reference case's funnel-shaped PCB support boss. Exposed in
+    both the standalone standoff inspector and the board-mount shared standoff fields ("Base
+    flare").
+  - **Kickstand external-mount style** — new `ExternalMountStyle = 'kickstand'` and
+    `ExternalMountSpec.kickstandAngleDeg`. `kickstandSolid()` builds a solid tapered wedge (wide at
+    the embedded root, never a knife-edge tip) directly in the boss-style Z-outward frame, so it
+    needs no separate wall-brace control — the taper itself is what braces it, same idea as a screw
+    column's sloped foot. Wired into `buildExternalMount`'s style dispatch (face and corner-anchor
+    paths), the palette (new "Kickstand" card under Mounting), and `featureFactory.ts`'s defaults.
+    This is the closest match to the reference case's integrated corner wedge; unlike that wedge
+    (a fixed body feature) this is a placeable feature usable on any face of any body shape.
+  - Deliberately not carried over: the reference case's plain corner screw bosses (already covered
+    by `screw-boss` lid corners) and its funnel boss's *full-height* taper (the gusset here is a
+    root collar, not a full cone, matching the scale `bossSolid`'s existing gusset already uses).
+  - Verification: 291/291 vitest tests passing (5 new — finger-gap presence/absence, gusset
+    flare/no-flare, kickstand bbox growth — plus the existing `snap-fit` entries in `LID_TYPES` and
+    `newShapeFasteners.test.ts`'s hex/oct/stadium/wedge matrix exercise the new barb geometry
+    without any changes needed there). `tsc -b`, `oxlint` (clean but for the one pre-existing
+    fast-refresh warning), and `npm run build` all clean. Browser (Playwright, zero console errors):
+    loaded a project JSON exercising all three features at once — 3-finger snap-fit tabs visibly
+    separated with the ramp/shoulder profile on each tooth (exploded view), a standoff with a
+    visibly flared base, and an angled kickstand wedge on the front wall closely resembling the
+    reference photo; confirmed the "Kickstand" palette card arms placement mode.

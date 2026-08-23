@@ -6,6 +6,7 @@ import type {
   ScrewColumnShape,
   ScrewCount,
   ScrewSpec,
+  SnapFitSpec,
 } from '../types/project';
 import { SCREW_HOLE_SPECS, bossOuterDiameter } from './screwLibrary';
 
@@ -939,22 +940,102 @@ export function applyFrictionLipLidStadium(
 
 /**
  * Cantilever snap-fit lid (DESIGN.md §7/§13 stretch goal): a small flexible tab hangs from the
- * underside of the lid into the base cavity, with a rounded nub near its tip that pokes past the
- * tab's own face and seats into a matching pocket cut into the base wall. This models the final
- * assembled state only (two independently-printed solids) -- it doesn't attempt to simulate the
- * tab flexing during insertion, and the nub/pocket are plain spheres rather than a wedge with a
- * lead-in ramp + sharp catching ledge (the textbook cantilever-snap profile), which would hold
- * better but need more per-shape geometry to get right. Same "verify before printing, this is a
- * starting point not an engineered spec" spirit as the connector/screw libraries.
+ * underside of the lid into the base cavity, ending in a barb that pokes past the tab's own face
+ * and seats into a matching pocket cut into the base wall. This models the final assembled state
+ * only (two independently-printed solids) -- it doesn't attempt to simulate the tab flexing during
+ * insertion. The barb is the textbook cantilever-snap profile: a sloped ramp below the peak (the
+ * face that cams the arm inward as the two halves are pressed together) and a sharp perpendicular
+ * shoulder above it (the face that catches on the pocket's own ledge and resists being pulled back
+ * apart) -- see snapBarbSolid. `SnapFitSpec.fingerCount` can split each tab position into several
+ * narrower fingers side by side instead of one wide one: lower insertion force per finger, and
+ * redundant catches instead of one tab concentrating all the stress at its root. Same "verify
+ * before printing, this is a starting point not an engineered spec" spirit as the connector/screw
+ * libraries.
  */
-const SNAP_NUB_RADIUS = 1.0; // mm
-const SNAP_POCKET_CLEARANCE = 0.3; // mm, pocket radius = nub radius + this
+const SNAP_BUMP_DEPTH = 0.8; // mm the barb pokes past the tab's flat outer face
+const SNAP_POCKET_CLEARANCE = 0.3; // mm clearance on every side of the barb's pocket in the base
+const SNAP_FINGER_GAP = 1.0; // mm slot between adjacent fingers when fingerCount > 1
 
 function snapTabGeometry(splitHeight: number, wallThickness: number) {
   const tabThickness = Math.min(wallThickness, 1.6);
   const engagementDepth = Math.min(6, Math.max(splitHeight - wallThickness - 1, 2));
-  const nubZ = splitHeight - engagementDepth + 1;
-  return { tabThickness, engagementDepth, nubZ };
+  const rampSpan = Math.min(2.2, engagementDepth * 0.45);
+  const ledgeSpan = Math.min(0.7, engagementDepth * 0.15);
+  // The barb's peak sits a little above the tab's very tip, leaving a short flush lead-in below
+  // the ramp so the corner isn't a knife edge, and stays clear of the tab's root at the other end.
+  const peakZ = splitHeight - engagementDepth + rampSpan + 0.4;
+  return { tabThickness, engagementDepth, peakZ, rampSpan, ledgeSpan };
+}
+
+/** How many fingers a tab position splits into, and each one's width + centerline offset along the
+ * tab's own width axis (evenly spaced, centered on the position's original centerline). Undefined
+ * or 1 reproduces the original single-tab layout exactly. */
+function fingerOffsets(
+  totalWidth: number,
+  fingerCount: SnapFitSpec['fingerCount'],
+): Array<{ offset: number; width: number }> {
+  const count = Math.min(Math.max(Math.round(fingerCount ?? 1), 1), 3);
+  if (count === 1) return [{ offset: 0, width: totalWidth }];
+  const width = Math.max((totalWidth - (count - 1) * SNAP_FINGER_GAP) / count, 2);
+  const pitch = width + SNAP_FINGER_GAP;
+  const start = (-(count - 1) * pitch) / 2;
+  return Array.from({ length: count }, (_, i) => ({ offset: start + i * pitch, width }));
+}
+
+/**
+ * One cantilever snap barb, built in a canonical orientation (local +X = outward protrusion, local
+ * Z = world height -- already absolute, via `peakZ`) with its width swept along local Y. A ramp
+ * runs from the tab's flat face (X=0) at `peakZ - rampSpan` out to full `SNAP_BUMP_DEPTH` at the
+ * peak (`peakZ`); above the peak the profile holds at full depth for `ledgeSpan` before ending in
+ * the shoulder -- a flat face perpendicular to Z, facing away from the tip, which is the catch.
+ * `outwardAngleDeg` spins the whole thing about Z onto the tab's actual outward direction: since a
+ * Z-rotation only ever mixes X and Y, the Z values already baked into the profile survive
+ * untouched, and the shape is symmetric about its own local Y=0 and X=0 so the rotation is safe to
+ * apply before the caller translates it to the finger's actual (x, y) position.
+ */
+function snapBarbSolid(
+  wasm: ManifoldToplevel,
+  fingerWidth: number,
+  peakZ: number,
+  rampSpan: number,
+  ledgeSpan: number,
+  outwardAngleDeg: number,
+): Manifold {
+  const profile = new wasm.CrossSection([
+    [0, peakZ - rampSpan],
+    [SNAP_BUMP_DEPTH, peakZ],
+    [SNAP_BUMP_DEPTH, peakZ + ledgeSpan],
+    [0, peakZ + ledgeSpan],
+  ]);
+  return profile
+    .extrude(fingerWidth)
+    .translate(0, 0, -fingerWidth / 2)
+    .rotate(90, 0, 0)
+    .rotate(0, 0, 90)
+    .rotate(0, 0, outwardAngleDeg);
+}
+
+/** Clearance pocket for one barb, cut into the base wall -- a plain box a little larger than the
+ * barb's own swept envelope on every side, same canonical-then-rotate construction as the barb
+ * itself so the two always stay registered to each other. */
+function snapPocketSolid(
+  wasm: ManifoldToplevel,
+  fingerWidth: number,
+  peakZ: number,
+  rampSpan: number,
+  ledgeSpan: number,
+  outwardAngleDeg: number,
+): Manifold {
+  const c = SNAP_POCKET_CLEARANCE;
+  const width = fingerWidth + 2 * c;
+  const depth = SNAP_BUMP_DEPTH + 2 * c;
+  const height = rampSpan + ledgeSpan + 2 * c;
+  const pocket = wasm.Manifold.cube([depth, width, height], false).translate(
+    -c,
+    -width / 2,
+    peakZ - rampSpan - c,
+  );
+  return pocket.rotate(0, 0, outwardAngleDeg);
 }
 
 interface SnapFitLidParams {
@@ -963,38 +1044,58 @@ interface SnapFitLidParams {
   splitHeight: number;
   wallThickness: number;
   wallGap: number;
+  snap?: SnapFitSpec;
 }
 
-/** Two tabs, on the midpoints of the front and back walls. */
+/** Two tab positions, on the midpoints of the front and back walls -- each optionally split into
+ * several narrower fingers per SnapFitSpec.fingerCount. */
 export function applySnapFitLid(
   wasm: ManifoldToplevel,
   base: Manifold,
   lid: Manifold,
   params: SnapFitLidParams,
 ): { base: Manifold; lid: Manifold } {
-  const { innerLength, innerWidth, splitHeight, wallThickness, wallGap } = params;
-  const { tabThickness, engagementDepth, nubZ } = snapTabGeometry(splitHeight, wallThickness);
+  const { innerLength, innerWidth, splitHeight, wallThickness, wallGap, snap } = params;
+  const { tabThickness, engagementDepth, peakZ, rampSpan, ledgeSpan } = snapTabGeometry(
+    splitHeight,
+    wallThickness,
+  );
   const tabWidth = Math.min(Math.max(Math.min(innerLength, innerWidth) * 0.25, 6), 14);
   const outerY = Math.max(innerWidth / 2 - wallGap, tabThickness + 1);
+  const fingers = fingerOffsets(tabWidth, snap?.fingerCount);
 
   let nextBase = base;
   let nextLid = lid;
 
   for (const sign of [-1, 1] as const) {
-    const tab = wasm.Manifold.cube([tabWidth, tabThickness, engagementDepth], true).translate(
-      0,
-      sign * (outerY - tabThickness / 2),
-      splitHeight - engagementDepth / 2,
-    );
-    const nub = wasm.Manifold.sphere(SNAP_NUB_RADIUS).translate(0, sign * outerY, nubZ);
-    nextLid = nextLid.add(tab).add(nub);
+    const outwardAngleDeg = sign === 1 ? 90 : -90;
+    const y = sign * (outerY - tabThickness / 2);
+    for (const finger of fingers) {
+      const tab = wasm.Manifold.cube([finger.width, tabThickness, engagementDepth], true).translate(
+        finger.offset,
+        y,
+        splitHeight - engagementDepth / 2,
+      );
+      const barb = snapBarbSolid(
+        wasm,
+        finger.width,
+        peakZ,
+        rampSpan,
+        ledgeSpan,
+        outwardAngleDeg,
+      ).translate(finger.offset, sign * outerY, 0);
+      nextLid = nextLid.add(tab).add(barb);
 
-    const pocket = wasm.Manifold.sphere(SNAP_NUB_RADIUS + SNAP_POCKET_CLEARANCE).translate(
-      0,
-      sign * outerY,
-      nubZ,
-    );
-    nextBase = nextBase.subtract(pocket);
+      const pocket = snapPocketSolid(
+        wasm,
+        finger.width,
+        peakZ,
+        rampSpan,
+        ledgeSpan,
+        outwardAngleDeg,
+      ).translate(finger.offset, sign * outerY, 0);
+      nextBase = nextBase.subtract(pocket);
+    }
   }
 
   return { base: nextBase, lid: nextLid };
@@ -1005,38 +1106,61 @@ interface SnapFitLidCylinderParams {
   splitHeight: number;
   wallThickness: number;
   wallGap: number;
+  snap?: SnapFitSpec;
 }
 
-/** Two tabs, at opposite (0deg/180deg) points around the circumference. */
+/** Two tab positions, at opposite (0deg/180deg) points around the circumference -- each optionally
+ * split into several narrower fingers per SnapFitSpec.fingerCount. */
 export function applySnapFitLidCylinder(
   wasm: ManifoldToplevel,
   base: Manifold,
   lid: Manifold,
   params: SnapFitLidCylinderParams,
 ): { base: Manifold; lid: Manifold } {
-  const { innerDiameter, splitHeight, wallThickness, wallGap } = params;
-  const { tabThickness, engagementDepth, nubZ } = snapTabGeometry(splitHeight, wallThickness);
+  const { innerDiameter, splitHeight, wallThickness, wallGap, snap } = params;
+  const { tabThickness, engagementDepth, peakZ, rampSpan, ledgeSpan } = snapTabGeometry(
+    splitHeight,
+    wallThickness,
+  );
   const tabWidth = Math.min(Math.max(innerDiameter * 0.2, 6), 14);
   const outerR = Math.max(innerDiameter / 2 - wallGap, tabThickness + 1);
+  const fingers = fingerOffsets(tabWidth, snap?.fingerCount);
 
   let nextBase = base;
   let nextLid = lid;
 
   for (const sign of [-1, 1] as const) {
     const x = sign * outerR;
-    // Tab's outward (radial) face sits at |x|=outerR, extending inward by tabThickness -- built
-    // axis-aligned (tangential width along Y, radial thickness along X) since these two positions
-    // are already axis-aligned (0deg/180deg), no Z rotation needed.
-    const tab = wasm.Manifold.cube([tabThickness, tabWidth, engagementDepth], true).translate(
-      x - sign * (tabThickness / 2),
-      0,
-      splitHeight - engagementDepth / 2,
-    );
-    const nub = wasm.Manifold.sphere(SNAP_NUB_RADIUS).translate(x, 0, nubZ);
-    nextLid = nextLid.add(tab).add(nub);
+    const outwardAngleDeg = sign === 1 ? 0 : 180;
+    for (const finger of fingers) {
+      // Tab's outward (radial) face sits at |x|=outerR, extending inward by tabThickness -- built
+      // axis-aligned (tangential width along Y, radial thickness along X) since these two positions
+      // are already axis-aligned (0deg/180deg), no Z rotation needed.
+      const tab = wasm.Manifold.cube([tabThickness, finger.width, engagementDepth], true).translate(
+        x - sign * (tabThickness / 2),
+        finger.offset,
+        splitHeight - engagementDepth / 2,
+      );
+      const barb = snapBarbSolid(
+        wasm,
+        finger.width,
+        peakZ,
+        rampSpan,
+        ledgeSpan,
+        outwardAngleDeg,
+      ).translate(x, finger.offset, 0);
+      nextLid = nextLid.add(tab).add(barb);
 
-    const pocket = wasm.Manifold.sphere(SNAP_NUB_RADIUS + SNAP_POCKET_CLEARANCE).translate(x, 0, nubZ);
-    nextBase = nextBase.subtract(pocket);
+      const pocket = snapPocketSolid(
+        wasm,
+        finger.width,
+        peakZ,
+        rampSpan,
+        ledgeSpan,
+        outwardAngleDeg,
+      ).translate(x, finger.offset, 0);
+      nextBase = nextBase.subtract(pocket);
+    }
   }
 
   return { base: nextBase, lid: nextLid };
@@ -1048,21 +1172,27 @@ interface SnapFitLidPolygonParams {
   splitHeight: number;
   wallThickness: number;
   wallGap: number;
+  snap?: SnapFitSpec;
 }
 
-/** Two tabs, on two opposite facets (facet 0 and its 180-degree-opposite facet). */
+/** Two tab positions, on two opposite facets (facet 0 and its 180-degree-opposite facet) -- each
+ * optionally split into several narrower fingers per SnapFitSpec.fingerCount. */
 export function applySnapFitLidPolygon(
   wasm: ManifoldToplevel,
   base: Manifold,
   lid: Manifold,
   params: SnapFitLidPolygonParams,
 ): { base: Manifold; lid: Manifold } {
-  const { n, innerRadius, splitHeight, wallThickness, wallGap } = params;
-  const { tabThickness, engagementDepth, nubZ } = snapTabGeometry(splitHeight, wallThickness);
+  const { n, innerRadius, splitHeight, wallThickness, wallGap, snap } = params;
+  const { tabThickness, engagementDepth, peakZ, rampSpan, ledgeSpan } = snapTabGeometry(
+    splitHeight,
+    wallThickness,
+  );
   const rFlat = innerRadius * Math.cos(Math.PI / n);
   const phase = n === 6 ? Math.PI / 6 : Math.PI / 8;
   const tabWidth = Math.min(Math.max(rFlat * 0.4, 6), 14);
   const outerR = Math.max(rFlat - wallGap, tabThickness + 1);
+  const fingers = fingerOffsets(tabWidth, snap?.fingerCount);
 
   let nextBase = base;
   let nextLid = lid;
@@ -1072,22 +1202,37 @@ export function applySnapFitLidPolygon(
     const angleDeg = (angle * 180) / Math.PI;
     const nx = Math.cos(angle);
     const ny = Math.sin(angle);
-    // Tab's outward (radial) face sits at radius=outerR, matching the wall it friction-fits
-    // against; local X is thickness (radial), local Y is width (tangential) before the Z-rotate
-    // aligns local X with this facet's own outward direction (nx, ny).
+    // Tangent direction along the facet, for spacing fingers side by side across it.
+    const tx = -ny;
+    const ty = nx;
     const centerR = outerR - tabThickness / 2;
-    const tab = wasm.Manifold.cube([tabThickness, tabWidth, engagementDepth], true)
-      .rotate(0, 0, angleDeg)
-      .translate(nx * centerR, ny * centerR, splitHeight - engagementDepth / 2);
-    const nub = wasm.Manifold.sphere(SNAP_NUB_RADIUS).translate(nx * outerR, ny * outerR, nubZ);
-    nextLid = nextLid.add(tab).add(nub);
+    for (const finger of fingers) {
+      // Tab's outward (radial) face sits at radius=outerR, matching the wall it friction-fits
+      // against; local X is thickness (radial), local Y is width (tangential) before the Z-rotate
+      // aligns local X with this facet's own outward direction (nx, ny).
+      const tab = wasm.Manifold.cube([tabThickness, finger.width, engagementDepth], true)
+        .translate(0, finger.offset, 0)
+        .rotate(0, 0, angleDeg)
+        .translate(nx * centerR, ny * centerR, splitHeight - engagementDepth / 2);
+      const fx = nx * outerR + tx * finger.offset;
+      const fy = ny * outerR + ty * finger.offset;
+      const barb = snapBarbSolid(wasm, finger.width, peakZ, rampSpan, ledgeSpan, angleDeg).translate(
+        fx,
+        fy,
+        0,
+      );
+      nextLid = nextLid.add(tab).add(barb);
 
-    const pocket = wasm.Manifold.sphere(SNAP_NUB_RADIUS + SNAP_POCKET_CLEARANCE).translate(
-      nx * outerR,
-      ny * outerR,
-      nubZ,
-    );
-    nextBase = nextBase.subtract(pocket);
+      const pocket = snapPocketSolid(
+        wasm,
+        finger.width,
+        peakZ,
+        rampSpan,
+        ledgeSpan,
+        angleDeg,
+      ).translate(fx, fy, 0);
+      nextBase = nextBase.subtract(pocket);
+    }
   }
 
   return { base: nextBase, lid: nextLid };

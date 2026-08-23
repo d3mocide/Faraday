@@ -90,12 +90,21 @@ export interface GasketSpec {
   depth: number; // mm, channel depth
 }
 
+/** Only for 'snap-fit'. Each tab position (two on a box/stadium, two on a cylinder, two opposite
+ * facets on a hexagon/octagon) can split into several narrower cantilever fingers side by side,
+ * separated by slots -- lower insertion force per finger and redundant catches instead of one wide
+ * tab concentrating stress at its root. Undefined/1 = the original single-tab behaviour. */
+export interface SnapFitSpec {
+  fingerCount?: 1 | 2 | 3;
+}
+
 export interface LidSpec {
   type: LidType;
   splitHeight: number; // mm from base where the lid separates
   wallGap: number; // mm clearance for the fit (tune per printer)
   screw?: ScrewSpec; // only for 'screw-boss'
   gasket?: GasketSpec; // present = channel cut, absent = no gasket channel
+  snap?: SnapFitSpec; // only for 'snap-fit'
 }
 
 export type BodyShape = 'box' | 'cylinder' | 'hexagon' | 'octagon' | 'stadium' | 'wedge';
@@ -221,6 +230,11 @@ export interface StandoffSpec {
   outerDiameter: number; // mm
   screwHoleDiameter: number; // mm
   height: number; // mm
+  /** Conical collar flaring out from the floor to the standoff's own diameter -- same 45-degree
+   * self-supporting blend as ExternalMountSpec.gusset, applied at the boss's root instead of a
+   * wall. Prints without support and resists snapping off at the base. 0/undefined = a plain
+   * cylinder, the original behaviour. */
+  gusset?: number; // mm
 }
 
 export interface VentSpec {
@@ -243,8 +257,10 @@ export interface BoardMountSpec {
 }
 
 /** 'flange' is a flat ear standing out from a face (wall-mount tab); 'boss' is a cylindrical post
- * along the face's outward normal (external standoff / foot / spacer column). */
-export type ExternalMountStyle = 'flange' | 'boss';
+ * along the face's outward normal (external standoff / foot / spacer column); 'kickstand' is a
+ * solid triangular prop leaning out from the face at an angle -- a fold-out-style stand for
+ * propping the case up on a desk, or a leg/prop on a bottom face. */
+export type ExternalMountStyle = 'flange' | 'boss' | 'kickstand';
 
 /** Hole through an external mount. 'slot' and 'keyhole' both run along the outward direction --
  * a slot for screw-position adjustment, a keyhole so the case can be dropped over a screw head
@@ -288,6 +304,10 @@ export interface ExternalMountSpec {
   gusset?: number;
   /** boss only: blind hole depth measured from the boss's outer end. Undefined = drilled through. */
   holeDepth?: number; // mm
+  /** kickstand only: slope of the wedge's tapered face, measured from the outward direction --
+   * same convention as ScrewSpec.footAngleDeg. A steep angle (higher value) gives a tall, stubby
+   * wedge; a shallow one gives a long, gentle ramp. Undefined = 50deg. Clamped to 20..70. */
+  kickstandAngleDeg?: number;
 }
 
 /** How the air actually gets through a fan opening. 'concentric' is the classic ring grille (open

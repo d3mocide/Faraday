@@ -962,3 +962,86 @@ describe('Rendering studio: tessellation, edge bevels, corner styles & grip ribs
     }
   });
 });
+
+describe('snap-fit fingers (SnapFitSpec.fingerCount)', () => {
+  it('a single tab (the default) is continuous across its width', () => {
+    const project = makeBox({ lid: 'snap-fit' });
+    const solids = generateSolids(project);
+    // Between where finger 1 and 2 would sit on a 3-finger split, a single wide tab still has
+    // material -- see the 3-finger case below for the same point with a real gap there instead.
+    expect(solidAt(solids.lid, [-2.08, 22.8, 21], 0.6), 'continuous tab material').toBe(true);
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('3 fingers leave real gaps between them and stay watertight', () => {
+    const project = makeBox({ lid: 'snap-fit' });
+    project.body.lid.snap = { fingerCount: 3 };
+    const solids = generateSolids(project);
+    expect(solidAt(solids.lid, [-2.08, 22.8, 21], 0.6), 'gap between the outer and middle finger').toBe(
+      false,
+    );
+    expect(solidAt(solids.lid, [0, 22.8, 21], 0.6), 'middle finger present').toBe(true);
+    expect(isWatertight(extractMeshData(solids.base)), 'base watertight').toBe(true);
+    expect(isWatertight(extractMeshData(solids.lid)), 'lid watertight').toBe(true);
+    for (const part of Object.values(solids)) part.delete();
+  });
+});
+
+describe('standoff base flare (StandoffSpec.gusset)', () => {
+  const standoffFeature = (gusset: number | undefined): Feature => ({
+    id: 's',
+    type: 'standoff',
+    face: 'bottom',
+    u: 0.5,
+    v: 0.5,
+    rotationDeg: 0,
+    standoff: { outerDiameter: 6, screwHoleDiameter: 2.5, height: 8, gusset },
+  });
+
+  it('flares out near the floor when a gusset is set, and stays watertight', () => {
+    const solids = generateSolids(makeBox({ features: [standoffFeature(3)] }));
+    // Collar: radius flares from outerDiameter/2 + gusset = 6mm at the floor down to
+    // outerDiameter/2 = 3mm by z = floorZ + gusset = 5. A probe at radius 5 only finds material
+    // inside that flared band, not in the plain constant-radius post above it.
+    expect(solidAt(solids.base, [5, 0, 2.5], 0.5), 'flared near the floor').toBe(true);
+    expect(solidAt(solids.base, [5, 0, 8], 0.5), 'plain post above the collar').toBe(false);
+    expect(isWatertight(extractMeshData(solids.base))).toBe(true);
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('stays a plain cylinder when no gusset is set', () => {
+    const solids = generateSolids(makeBox({ features: [standoffFeature(undefined)] }));
+    expect(solidAt(solids.base, [5, 0, 2.5], 0.5), 'no flare without a gusset').toBe(false);
+    for (const part of Object.values(solids)) part.delete();
+  });
+});
+
+describe('kickstand external mount', () => {
+  const kickstandFeature: Feature = {
+    id: 'k',
+    type: 'external-mount',
+    face: 'front',
+    u: 0.5,
+    v: 0.2,
+    rotationDeg: 0,
+    mount: {
+      style: 'kickstand',
+      width: 18,
+      protrusion: 20,
+      thickness: 1.6,
+      hole: 'none',
+      holeDiameter: 0,
+      slotLength: 0,
+      kickstandAngleDeg: 50,
+    },
+  };
+
+  it('is a solid wedge that grows the base outward, and stays watertight', () => {
+    const plain = generateMeshes(makeBox({}));
+    const withKickstand = generateMeshes(makeBox({ features: [kickstandFeature] }));
+    // Same "front sticks out along -Y" convention as a front-wall flange/boss.
+    expect(boundingBox(withKickstand.base).min[1]).toBeLessThan(boundingBox(plain.base).min[1] - 9);
+    expect(isWatertight(withKickstand.base), 'base watertight').toBe(true);
+    expect(isWatertight(withKickstand.lid), 'lid watertight').toBe(true);
+  });
+});

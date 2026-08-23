@@ -74,6 +74,7 @@ interface ProjectStore {
   setGasketEnabled: (enabled: boolean) => void;
   setGasketWidth: (value: number) => void;
   setGasketDepth: (value: number) => void;
+  setSnapFingerCount: (count: 1 | 2 | 3) => void;
   setPanelsEnabled: (enabled: boolean) => void;
   togglePanelFace: (face: PanelFace) => void;
   setPanelThickness: (value: number) => void;
@@ -273,6 +274,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         const gasket = p.body.lid.gasket ?? defaultGasketSpec();
         return { ...p, body: { ...p.body, lid: { ...p.body.lid, gasket: { ...gasket, depth: value } } } };
       }),
+
+    setSnapFingerCount: (count) =>
+      mutate((p) => ({
+        ...p,
+        body: { ...p.body, lid: { ...p.body.lid, snap: { ...p.body.lid.snap, fingerCount: count } } },
+      })),
 
     // Slide-in panels are a box-body property (a cylinder has no flat wall to replace), so all six
     // actions below no-op on a cylinder -- the inspector only shows the controls for a box.
