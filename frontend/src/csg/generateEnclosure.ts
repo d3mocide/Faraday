@@ -289,6 +289,7 @@ export function generateEnclosure(
         innerLength,
         innerWidth,
         splitHeight,
+        outerHeight: height,
         wallThickness,
         wallGap: Math.max(body.lid.wallGap, 0),
         cornerRadius: innerCornerStyle?.radius ?? 0,
@@ -299,6 +300,7 @@ export function generateEnclosure(
         n: body.shape === 'hexagon' ? 6 : 8,
         innerRadius,
         splitHeight,
+        outerHeight: height,
         wallThickness,
         wallGap: Math.max(body.lid.wallGap, 0),
         snap: body.lid.snap,
@@ -307,6 +309,7 @@ export function generateEnclosure(
       ({ base, lid } = applySnapFitLidCylinder(wasm, base, lid, {
         innerDiameter,
         splitHeight,
+        outerHeight: height,
         wallThickness,
         wallGap: Math.max(body.lid.wallGap, 0),
         snap: body.lid.snap,

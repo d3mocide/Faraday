@@ -1031,6 +1031,50 @@ describe('snap-fit fingers (SnapFitSpec.fingerCount)', () => {
     expect(isWatertight(extractMeshData(solids.lid)), 'lid watertight').toBe(true);
     for (const part of Object.values(solids)) part.delete();
   });
+
+  it('orients tabs and barbs facing the wall and inward into the cavity correctly', () => {
+    const project = makeBox({ lid: 'snap-fit' });
+    const solids = generateSolids(project);
+
+    // Back wall tab: centered near (+cornerX, +outerY)
+    // Tab body extends into interior (Y < outerY, specifically outerY - tabThickness to outerY)
+    expect(solidAt(solids.lid, [cornerX, outerY - 0.5, tabZ], 0.2), 'back tab body interior').toBe(true);
+    // Tab body does not extend deep into cavity beyond tabThickness
+    expect(solidAt(solids.lid, [cornerX, outerY - tabThickness - 1.0, tabZ], 0.2), 'deep interior empty').toBe(false);
+
+    // Front wall tab: centered near (-cornerX, -outerY)
+    // Tab body extends into interior (Y > -outerY, specifically -outerY to -outerY + tabThickness)
+    expect(solidAt(solids.lid, [-cornerX, -outerY + 0.5, tabZ], 0.2), 'front tab body interior').toBe(true);
+    // Front tab does not extend deep into cavity
+    expect(solidAt(solids.lid, [-cornerX, -outerY + tabThickness + 1.0, tabZ], 0.2), 'front deep interior empty').toBe(false);
+
+    // Inside the lid above splitHeight (e.g. z = 26): tab root is solid and welded to the lid
+    expect(solidAt(solids.lid, [cornerX, outerY - 0.5, 26], 0.2), 'tab root solid inside lid skirt').toBe(true);
+    expect(solidAt(solids.lid, [-cornerX, -outerY + 0.5, 26], 0.2), 'front tab root solid inside lid skirt').toBe(true);
+
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('interior screw bosses have solid mating columns in the lid across the split gap', () => {
+    const project = makeBox({ lid: 'screw-boss' });
+    const solids = generateSolids(project);
+
+    // Corner boss position for 80x50 box, 2mm wall, M3 boss
+    const bossR = bossRadiusFor(project.body.lid.screw!);
+    const posX = innerLength / 2 - bossR;
+    const posY = innerWidth / 2 - bossR;
+
+    // At z = 26 (inside the lid between splitHeight 24 and ceiling 28):
+    // The lid has a solid column around the screw axis
+    expect(solidAt(solids.lid, [posX + 1.5, posY, 26], 0.2), 'solid lid boss column').toBe(true);
+    // The clearance hole passes through the center
+    expect(solidAt(solids.lid, [posX, posY, 26], 0.2), 'clearance hole through center').toBe(false);
+
+    expect(isWatertight(extractMeshData(solids.base)), 'base watertight').toBe(true);
+    expect(isWatertight(extractMeshData(solids.lid)), 'lid watertight').toBe(true);
+
+    for (const part of Object.values(solids)) part.delete();
+  });
 });
 
 describe('standoff base flare (StandoffSpec.gusset)', () => {

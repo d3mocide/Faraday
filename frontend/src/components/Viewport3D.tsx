@@ -66,7 +66,7 @@ function partDisplayOffset(
 
 export type MaterialPreset = 'default' | 'tactical-black' | 'gunmetal' | 'olive-drab' | 'radio-orange';
 
-export const MATERIAL_PRESET_CONFIGS: Record<MaterialPreset, { base: number; lid: number; panel: number; roughness: number; metalness: number }> = {
+const MATERIAL_PRESET_CONFIGS: Record<MaterialPreset, { base: number; lid: number; panel: number; roughness: number; metalness: number }> = {
   default: { base: 0x9aa5b1, lid: 0x4fb3a9, panel: 0xc08a3e, roughness: 0.6, metalness: 0.05 },
   'tactical-black': { base: 0x22252a, lid: 0x343942, panel: 0x484f5c, roughness: 0.8, metalness: 0.1 },
   gunmetal: { base: 0x4a525d, lid: 0x626c7a, panel: 0x828e9e, roughness: 0.35, metalness: 0.5 },

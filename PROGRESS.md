@@ -1949,3 +1949,28 @@ split 24 → 25).
     matching pocket-slot pair cut into the base wall at the same corner, and all 4 screw bosses +
     heat-set inserts still present — screws and snap comb coexisting as the reference case actually
     does.
+
+- **2026-08-23 (follow-up)**: Fixed snap-fit parts orientation:
+  - **Root cause**: Discrepancy between the canonical coordinate frame expected by the geometry
+    transformers (`applySnapFitLid`, `applySnapFitLidCylinder`, `applySnapFitLidPolygon`) and the
+    local coordinate frame in which `snapBarbSolid` and `tab` were constructed. Specifically, the
+    transformers assumed that at 0° rotation, local +X is the outward normal (the barb poking into the
+    wall, tab body in negative X) and local Y is the tab width/finger offset along the wall tangent.
+    However, `snapBarbSolid` had an extra 90° Z rotation and `tab` had width on X and thickness on Y,
+    causing the snap tabs to be rotated 90° sideways (protruding into the interior cavity along X
+    rather than lying flat along the front/back walls).
+  - **Fix**: Aligned `snapBarbSolid` and `snapCombFingers` to canonical local frame (local +X = outward
+    normal towards wall, local Y = across the tab width, local Z = height). Applied finger offset
+    translation before angle rotation (`finger.lidPiece.translate(0, finger.offset, 0).rotate(0, 0, angleDeg).translate(...)`),
+    ensuring correct wall-facing tab orientation across all enclosure shapes (box, cylinder, polygon).
+  - **Collapse-to-rail button icon**: Added `padding: 0` and explicit SVG dimensions to `.palette-collapse-btn`
+    in `App.css` (the global `button { padding: 6px 14px }` rule was collapsing the $26\times26\text{px}$ button's
+    inner SVG content box down to 0px width).
+  - **Interior screw boss lid columns**: `applyScrewBossLidAt` now generates matching boss columns inside the
+    lid from `splitHeight` to `outerHeight` with the clearance hole running through. Eliminates the air gap inside
+    deep lids / multi-part cases so tightening screws clamps solidly against the base boss without lid flexing.
+  - **Snap tab lid backing roots**: `applySnapFitLid*` now generates a solid backing root block bridging the
+    hollow lid skirt from `splitHeight` into the lid ceiling (`outerHeight - wallThickness`) and wall, anchoring
+    the cantilever snap tabs solidly to the lid body.
+  - **Verification**: 294/294 vitest tests passing including new assertions for lid boss columns and tab roots,
+    `tsc -b`, `oxlint`, and `npm run build` all clean.

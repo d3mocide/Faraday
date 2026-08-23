@@ -10,6 +10,17 @@ Each entry here corresponds to a `vX.Y.Z` git tag, which is what triggers
 
 ## [Unreleased]
 
+## [0.1.0-beta.5.1] - 2026-08-23
+
+Snap-fit orientation & lid mating column fix:
+
+### Fixed
+
+- **Snap-fit tab orientation**: corrected coordinate rotation so cantilever tabs lie flat against the enclosure wall and barbs protrude outward into the wall pockets across all body shapes (box, cylinder, polygon).
+- **Snap-fit lid roots**: snap tabs now include a solid backing root that extends upward from the parting line through hollow lid skirts into the ceiling, anchoring tabs solidly to the lid body.
+- **Interior screw boss lid columns**: interior screw bosses now generate matching boss columns inside the lid from the split height to the ceiling, eliminating hollow air gaps and preventing lid flexing under screw clamping.
+- **Collapse-to-rail icon button**: added zero padding and explicit SVG dimensions to the palette collapse button so the chevron icon renders correctly.
+
 ## [0.1.0-beta.5] - 2026-08-23
 
 Fastener/mounting release, reverse-engineered from a real printed CYD (ESP32-2432S028) case shared

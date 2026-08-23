@@ -548,11 +548,20 @@ export function applyScrewBossLidAt(
     );
     nextBase = nextBase.subtract(pilotHole);
 
-    const clearanceHole = cylinderZ(wasm, spec.clearanceDiameter, lidThickness, splitHeight).translate(
+    // Matching boss column in the lid spanning from splitHeight to outerHeight
+    const lidColumn = columnSolid(wasm, shape, outerDiameter, lidThickness, splitHeight).translate(
       x,
       y,
       0,
     );
+    nextLid = nextLid.add(lidColumn);
+
+    const clearanceHole = cylinderZ(
+      wasm,
+      spec.clearanceDiameter,
+      lidThickness + 1,
+      splitHeight - 0.5,
+    ).translate(x, y, 0);
     nextLid = nextLid.subtract(clearanceHole);
 
     if (boreDepth > 0) {
@@ -984,13 +993,13 @@ function fingerOffsets(
 
 /**
  * One cantilever snap barb, built in the shared canonical frame every snap-comb piece uses: local
- * X = across the comb (width), local Y = outward from the wall (0 = flush with the comb's own
- * face, positive = poking past it), local Z = world height -- already absolute, via `peakZ`. A ramp
- * runs from the tab's flat face (Y=0) at `peakZ - rampSpan` out to full `SNAP_BUMP_DEPTH` at the
+ * X = outward from the wall (0 = flush with the comb's own face, positive = poking past it into the
+ * wall), local Y = across the comb (width), local Z = world height -- already absolute, via `peakZ`.
+ * A ramp runs from the tab's flat face (X=0) at `peakZ - rampSpan` out to full `SNAP_BUMP_DEPTH` at the
  * peak (`peakZ`); above the peak the profile holds at full depth for `ledgeSpan` before ending in
  * the shoulder -- a flat face perpendicular to Z, facing away from the tip, which is the catch.
- * Building every piece (block, grooves, barbs, pockets) in this one frame lets the caller apply a
- * single rotate+translate to the whole assembled comb rather than positioning each piece itself.
+ * Building every piece (tab, barbs, pockets) in this one frame lets the caller apply a single
+ * rotate+translate to the whole assembled comb rather than positioning each piece itself.
  */
 function snapBarbSolid(
   wasm: ManifoldToplevel,
@@ -1008,8 +1017,7 @@ function snapBarbSolid(
   return profile
     .extrude(fingerWidth)
     .translate(0, 0, -fingerWidth / 2)
-    .rotate(90, 0, 0)
-    .rotate(0, 0, 90);
+    .rotate(90, 0, 0);
 }
 
 /** Clearance pocket for one barb, cut into the base wall -- a plain box a little larger than the
@@ -1059,9 +1067,9 @@ function snapCombFingers(
   const fingers = fingerOffsets(combWidth, fingerCount);
 
   return fingers.map((finger) => {
-    const tab = wasm.Manifold.cube([finger.width, tabThickness, engagementDepth], true).translate(
-      0,
+    const tab = wasm.Manifold.cube([tabThickness, finger.width, engagementDepth], true).translate(
       -tabThickness / 2,
+      0,
       splitHeight - engagementDepth / 2,
     );
     const barb = snapBarbSolid(wasm, finger.width, peakZ, rampSpan, ledgeSpan);
@@ -1077,6 +1085,7 @@ interface SnapFitLidParams {
   innerLength: number;
   innerWidth: number;
   splitHeight: number;
+  outerHeight: number;
   wallThickness: number;
   wallGap: number;
   /** Corner rounding/chamfer size, if any -- keeps the comb clear of the curve so it sits on flat
@@ -1096,7 +1105,16 @@ export function applySnapFitLid(
   lid: Manifold,
   params: SnapFitLidParams,
 ): { base: Manifold; lid: Manifold } {
-  const { innerLength, innerWidth, splitHeight, wallThickness, wallGap, cornerRadius, snap } = params;
+  const {
+    innerLength,
+    innerWidth,
+    splitHeight,
+    outerHeight,
+    wallThickness,
+    wallGap,
+    cornerRadius,
+    snap,
+  } = params;
   const { tabThickness, engagementDepth, peakZ, rampSpan, ledgeSpan } = snapTabGeometry(
     splitHeight,
     wallThickness,
@@ -1119,21 +1137,43 @@ export function applySnapFitLid(
     snap?.fingerCount,
   );
 
+  const lidSkirt = Math.max(outerHeight - splitHeight - wallThickness, 0);
+  const lidRootHeight = lidSkirt > 0 ? lidSkirt + Math.min(wallThickness * 0.5, 0.5) : 0;
+  const wallPenetration = Math.min(wallThickness * 0.5, 0.5);
+  const rootThickness = tabThickness + wallGap + wallPenetration;
+  const lidRoot =
+    lidRootHeight > 0
+      ? wasm.Manifold.cube([rootThickness, combWidth, lidRootHeight], true).translate(
+          -tabThickness + rootThickness / 2,
+          0,
+          splitHeight + lidRootHeight / 2,
+        )
+      : undefined;
+
   let nextBase = base;
   let nextLid = lid;
 
   for (const sign of [-1, 1] as const) {
     const outwardAngleDeg = sign === 1 ? 90 : -90;
+    if (lidRoot) {
+      nextLid = nextLid.add(
+        lidRoot
+          .rotate(0, 0, outwardAngleDeg)
+          .translate(sign * cornerX, sign * outerY, 0),
+      );
+    }
     for (const finger of fingers) {
       nextLid = nextLid.add(
         finger.lidPiece
+          .translate(0, finger.offset, 0)
           .rotate(0, 0, outwardAngleDeg)
-          .translate(sign * cornerX + finger.offset, sign * outerY, 0),
+          .translate(sign * cornerX, sign * outerY, 0),
       );
       nextBase = nextBase.subtract(
         finger.basePocket
+          .translate(0, finger.offset, 0)
           .rotate(0, 0, outwardAngleDeg)
-          .translate(sign * cornerX + finger.offset, sign * outerY, 0),
+          .translate(sign * cornerX, sign * outerY, 0),
       );
     }
   }
@@ -1144,6 +1184,7 @@ export function applySnapFitLid(
 interface SnapFitLidCylinderParams {
   innerDiameter: number;
   splitHeight: number;
+  outerHeight: number;
   wallThickness: number;
   wallGap: number;
   snap?: SnapFitSpec;
@@ -1158,7 +1199,7 @@ export function applySnapFitLidCylinder(
   lid: Manifold,
   params: SnapFitLidCylinderParams,
 ): { base: Manifold; lid: Manifold } {
-  const { innerDiameter, splitHeight, wallThickness, wallGap, snap } = params;
+  const { innerDiameter, splitHeight, outerHeight, wallThickness, wallGap, snap } = params;
   const { tabThickness, engagementDepth, peakZ, rampSpan, ledgeSpan } = snapTabGeometry(
     splitHeight,
     wallThickness,
@@ -1177,18 +1218,43 @@ export function applySnapFitLidCylinder(
     snap?.fingerCount,
   );
 
+  const lidSkirt = Math.max(outerHeight - splitHeight - wallThickness, 0);
+  const lidRootHeight = lidSkirt > 0 ? lidSkirt + Math.min(wallThickness * 0.5, 0.5) : 0;
+  const wallPenetration = Math.min(wallThickness * 0.5, 0.5);
+  const rootThickness = tabThickness + wallGap + wallPenetration;
+  const lidRoot =
+    lidRootHeight > 0
+      ? wasm.Manifold.cube([rootThickness, combWidth, lidRootHeight], true).translate(
+          -tabThickness + rootThickness / 2,
+          0,
+          splitHeight + lidRootHeight / 2,
+        )
+      : undefined;
+
   let nextBase = base;
   let nextLid = lid;
 
   for (const sign of [-1, 1] as const) {
     const outwardAngleDeg = sign === 1 ? 0 : 180;
-    for (const finger of fingers) {
-      // Tangential axis at 0deg/180deg is world Y, matching the tab's own build convention below.
+    if (lidRoot) {
       nextLid = nextLid.add(
-        finger.lidPiece.rotate(0, 0, outwardAngleDeg).translate(sign * outerR, finger.offset, 0),
+        lidRoot
+          .rotate(0, 0, outwardAngleDeg)
+          .translate(sign * outerR, 0, 0),
+      );
+    }
+    for (const finger of fingers) {
+      nextLid = nextLid.add(
+        finger.lidPiece
+          .translate(0, finger.offset, 0)
+          .rotate(0, 0, outwardAngleDeg)
+          .translate(sign * outerR, 0, 0),
       );
       nextBase = nextBase.subtract(
-        finger.basePocket.rotate(0, 0, outwardAngleDeg).translate(sign * outerR, finger.offset, 0),
+        finger.basePocket
+          .translate(0, finger.offset, 0)
+          .rotate(0, 0, outwardAngleDeg)
+          .translate(sign * outerR, 0, 0),
       );
     }
   }
@@ -1200,6 +1266,7 @@ interface SnapFitLidPolygonParams {
   n: 6 | 8;
   innerRadius: number; // inner cavity's own vertex radius (circumradius)
   splitHeight: number;
+  outerHeight: number;
   wallThickness: number;
   wallGap: number;
   snap?: SnapFitSpec;
@@ -1215,7 +1282,7 @@ export function applySnapFitLidPolygon(
   lid: Manifold,
   params: SnapFitLidPolygonParams,
 ): { base: Manifold; lid: Manifold } {
-  const { n, innerRadius, splitHeight, wallThickness, wallGap, snap } = params;
+  const { n, innerRadius, splitHeight, outerHeight, wallThickness, wallGap, snap } = params;
   const { tabThickness, engagementDepth, peakZ, rampSpan, ledgeSpan } = snapTabGeometry(
     splitHeight,
     wallThickness,
@@ -1236,6 +1303,19 @@ export function applySnapFitLidPolygon(
     snap?.fingerCount,
   );
 
+  const lidSkirt = Math.max(outerHeight - splitHeight - wallThickness, 0);
+  const lidRootHeight = lidSkirt > 0 ? lidSkirt + Math.min(wallThickness * 0.5, 0.5) : 0;
+  const wallPenetration = Math.min(wallThickness * 0.5, 0.5);
+  const rootThickness = tabThickness + wallGap + wallPenetration;
+  const lidRoot =
+    lidRootHeight > 0
+      ? wasm.Manifold.cube([rootThickness, combWidth, lidRootHeight], true).translate(
+          -tabThickness + rootThickness / 2,
+          0,
+          splitHeight + lidRootHeight / 2,
+        )
+      : undefined;
+
   let nextBase = base;
   let nextLid = lid;
 
@@ -1244,16 +1324,26 @@ export function applySnapFitLidPolygon(
     const angleDeg = (angle * 180) / Math.PI;
     const nx = Math.cos(angle);
     const ny = Math.sin(angle);
-    // Tangent direction along the facet, for spacing fingers side by side across it -- the offset
-    // has to be rotated into this direction explicitly (rather than added to a world axis
-    // directly, the way the box/cylinder cases can) since a facet sits at an arbitrary angle.
-    const tx = -ny;
-    const ty = nx;
+    if (lidRoot) {
+      nextLid = nextLid.add(
+        lidRoot
+          .rotate(0, 0, angleDeg)
+          .translate(nx * outerR, ny * outerR, 0),
+      );
+    }
     for (const finger of fingers) {
-      const fx = nx * outerR + tx * finger.offset;
-      const fy = ny * outerR + ty * finger.offset;
-      nextLid = nextLid.add(finger.lidPiece.rotate(0, 0, angleDeg).translate(fx, fy, 0));
-      nextBase = nextBase.subtract(finger.basePocket.rotate(0, 0, angleDeg).translate(fx, fy, 0));
+      nextLid = nextLid.add(
+        finger.lidPiece
+          .translate(0, finger.offset, 0)
+          .rotate(0, 0, angleDeg)
+          .translate(nx * outerR, ny * outerR, 0),
+      );
+      nextBase = nextBase.subtract(
+        finger.basePocket
+          .translate(0, finger.offset, 0)
+          .rotate(0, 0, angleDeg)
+          .translate(nx * outerR, ny * outerR, 0),
+      );
     }
   }
 
