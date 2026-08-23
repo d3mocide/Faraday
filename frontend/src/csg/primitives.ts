@@ -983,15 +983,14 @@ function fingerOffsets(
 }
 
 /**
- * One cantilever snap barb, built in a canonical orientation (local +X = outward protrusion, local
- * Z = world height -- already absolute, via `peakZ`) with its width swept along local Y. A ramp
- * runs from the tab's flat face (X=0) at `peakZ - rampSpan` out to full `SNAP_BUMP_DEPTH` at the
+ * One cantilever snap barb, built in the shared canonical frame every snap-comb piece uses: local
+ * X = across the comb (width), local Y = outward from the wall (0 = flush with the comb's own
+ * face, positive = poking past it), local Z = world height -- already absolute, via `peakZ`. A ramp
+ * runs from the tab's flat face (Y=0) at `peakZ - rampSpan` out to full `SNAP_BUMP_DEPTH` at the
  * peak (`peakZ`); above the peak the profile holds at full depth for `ledgeSpan` before ending in
  * the shoulder -- a flat face perpendicular to Z, facing away from the tip, which is the catch.
- * `outwardAngleDeg` spins the whole thing about Z onto the tab's actual outward direction: since a
- * Z-rotation only ever mixes X and Y, the Z values already baked into the profile survive
- * untouched, and the shape is symmetric about its own local Y=0 and X=0 so the rotation is safe to
- * apply before the caller translates it to the finger's actual (x, y) position.
+ * Building every piece (block, grooves, barbs, pockets) in this one frame lets the caller apply a
+ * single rotate+translate to the whole assembled comb rather than positioning each piece itself.
  */
 function snapBarbSolid(
   wasm: ManifoldToplevel,
@@ -999,7 +998,6 @@ function snapBarbSolid(
   peakZ: number,
   rampSpan: number,
   ledgeSpan: number,
-  outwardAngleDeg: number,
 ): Manifold {
   const profile = new wasm.CrossSection([
     [0, peakZ - rampSpan],
@@ -1011,31 +1009,68 @@ function snapBarbSolid(
     .extrude(fingerWidth)
     .translate(0, 0, -fingerWidth / 2)
     .rotate(90, 0, 0)
-    .rotate(0, 0, 90)
-    .rotate(0, 0, outwardAngleDeg);
+    .rotate(0, 0, 90);
 }
 
 /** Clearance pocket for one barb, cut into the base wall -- a plain box a little larger than the
- * barb's own swept envelope on every side, same canonical-then-rotate construction as the barb
- * itself so the two always stay registered to each other. */
+ * barb's own swept envelope on every side, in the same canonical frame as snapBarbSolid so the two
+ * stay registered to each other under whatever rotate+translate the caller applies afterward. */
 function snapPocketSolid(
   wasm: ManifoldToplevel,
   fingerWidth: number,
   peakZ: number,
   rampSpan: number,
   ledgeSpan: number,
-  outwardAngleDeg: number,
 ): Manifold {
   const c = SNAP_POCKET_CLEARANCE;
   const width = fingerWidth + 2 * c;
   const depth = SNAP_BUMP_DEPTH + 2 * c;
   const height = rampSpan + ledgeSpan + 2 * c;
-  const pocket = wasm.Manifold.cube([depth, width, height], false).translate(
-    -c,
-    -width / 2,
-    peakZ - rampSpan - c,
-  );
-  return pocket.rotate(0, 0, outwardAngleDeg);
+  return wasm.Manifold.cube([depth, width, height], false).translate(-c, -width / 2, peakZ - rampSpan - c);
+}
+
+/**
+ * One comb position's fingers, each still built centered on its own local origin (offset=0) --
+ * exactly the shape snapBarbSolid/snapPocketSolid already use -- so every per-shape apply* function
+ * below rotates and translates one finger at a time by a world-space delta that includes `offset`,
+ * the same pattern already proven correct for a single tab. (A single shared block spanning every
+ * finger, rotated as one piece, does *not* compose the same way once fingers are offset before a
+ * non-trivial rotation -- rotating an offset point scales its offset by the rotation instead of
+ * preserving it -- so each finger's own geometry has to travel through rotate+translate as one
+ * already-positioned-at-zero piece, same as the barb.)
+ *
+ * Each finger is a uniform-width tab (its own width, real gaps to its neighbours the full
+ * engagement depth) with its own barb -- the same construction a single-tab position already used,
+ * just repeated per finger. `SNAP_FINGER_GAP`-wide slots cut clean through the tab thickness
+ * between fingers are the "comb notched into a block" look, without needing the fingers to also
+ * fuse into a shared base above the slots.
+ */
+function snapCombFingers(
+  wasm: ManifoldToplevel,
+  combWidth: number,
+  tabThickness: number,
+  engagementDepth: number,
+  splitHeight: number,
+  peakZ: number,
+  rampSpan: number,
+  ledgeSpan: number,
+  fingerCount: SnapFitSpec['fingerCount'],
+): Array<{ offset: number; lidPiece: Manifold; basePocket: Manifold }> {
+  const fingers = fingerOffsets(combWidth, fingerCount);
+
+  return fingers.map((finger) => {
+    const tab = wasm.Manifold.cube([finger.width, tabThickness, engagementDepth], true).translate(
+      0,
+      -tabThickness / 2,
+      splitHeight - engagementDepth / 2,
+    );
+    const barb = snapBarbSolid(wasm, finger.width, peakZ, rampSpan, ledgeSpan);
+    return {
+      offset: finger.offset,
+      lidPiece: tab.add(barb),
+      basePocket: snapPocketSolid(wasm, finger.width, peakZ, rampSpan, ledgeSpan),
+    };
+  });
 }
 
 interface SnapFitLidParams {
@@ -1044,57 +1079,62 @@ interface SnapFitLidParams {
   splitHeight: number;
   wallThickness: number;
   wallGap: number;
+  /** Corner rounding/chamfer size, if any -- keeps the comb clear of the curve so it sits on flat
+   * wall, same margin idea as a screw-boss corner. 0 for a sharp corner. */
+  cornerRadius: number;
   snap?: SnapFitSpec;
 }
 
-/** Two tab positions, on the midpoints of the front and back walls -- each optionally split into
- * several narrower fingers per SnapFitSpec.fingerCount. */
+/** Two corner-integrated combs, diagonally opposite -- one on the front wall next to its left
+ * corner, one on the back wall next to its right corner -- rather than centered on a wall. This is
+ * where a real cantilever-comb reference design actually puts them: right next to a corner post,
+ * not floating at a wall's midpoint. Each optionally splits into several narrower fingers per
+ * SnapFitSpec.fingerCount (see snapCombFingers for the per-finger construction). */
 export function applySnapFitLid(
   wasm: ManifoldToplevel,
   base: Manifold,
   lid: Manifold,
   params: SnapFitLidParams,
 ): { base: Manifold; lid: Manifold } {
-  const { innerLength, innerWidth, splitHeight, wallThickness, wallGap, snap } = params;
+  const { innerLength, innerWidth, splitHeight, wallThickness, wallGap, cornerRadius, snap } = params;
   const { tabThickness, engagementDepth, peakZ, rampSpan, ledgeSpan } = snapTabGeometry(
     splitHeight,
     wallThickness,
   );
-  const tabWidth = Math.min(Math.max(Math.min(innerLength, innerWidth) * 0.25, 6), 14);
+  const combWidth = Math.min(Math.max(Math.min(innerLength, innerWidth) * 0.16, 6), 11);
   const outerY = Math.max(innerWidth / 2 - wallGap, tabThickness + 1);
-  const fingers = fingerOffsets(tabWidth, snap?.fingerCount);
+  // Stays clear of the corner's own curve, with a little extra so the comb reads as sitting *next
+  // to* the corner rather than merging into it.
+  const cornerMargin = Math.max(cornerRadius, 3) + combWidth / 2 + 1;
+  const cornerX = Math.max(innerLength / 2 - cornerMargin, combWidth / 2);
+  const fingers = snapCombFingers(
+    wasm,
+    combWidth,
+    tabThickness,
+    engagementDepth,
+    splitHeight,
+    peakZ,
+    rampSpan,
+    ledgeSpan,
+    snap?.fingerCount,
+  );
 
   let nextBase = base;
   let nextLid = lid;
 
   for (const sign of [-1, 1] as const) {
     const outwardAngleDeg = sign === 1 ? 90 : -90;
-    const y = sign * (outerY - tabThickness / 2);
     for (const finger of fingers) {
-      const tab = wasm.Manifold.cube([finger.width, tabThickness, engagementDepth], true).translate(
-        finger.offset,
-        y,
-        splitHeight - engagementDepth / 2,
+      nextLid = nextLid.add(
+        finger.lidPiece
+          .rotate(0, 0, outwardAngleDeg)
+          .translate(sign * cornerX + finger.offset, sign * outerY, 0),
       );
-      const barb = snapBarbSolid(
-        wasm,
-        finger.width,
-        peakZ,
-        rampSpan,
-        ledgeSpan,
-        outwardAngleDeg,
-      ).translate(finger.offset, sign * outerY, 0);
-      nextLid = nextLid.add(tab).add(barb);
-
-      const pocket = snapPocketSolid(
-        wasm,
-        finger.width,
-        peakZ,
-        rampSpan,
-        ledgeSpan,
-        outwardAngleDeg,
-      ).translate(finger.offset, sign * outerY, 0);
-      nextBase = nextBase.subtract(pocket);
+      nextBase = nextBase.subtract(
+        finger.basePocket
+          .rotate(0, 0, outwardAngleDeg)
+          .translate(sign * cornerX + finger.offset, sign * outerY, 0),
+      );
     }
   }
 
@@ -1109,8 +1149,9 @@ interface SnapFitLidCylinderParams {
   snap?: SnapFitSpec;
 }
 
-/** Two tab positions, at opposite (0deg/180deg) points around the circumference -- each optionally
- * split into several narrower fingers per SnapFitSpec.fingerCount. */
+/** Two combs, at opposite (0deg/180deg) points around the circumference -- a cylinder has no
+ * corner to sit next to, so this keeps the existing evenly-opposite placement, just built via the
+ * shared snapCombFingers helper instead of positioning each tab/barb/pocket separately. */
 export function applySnapFitLidCylinder(
   wasm: ManifoldToplevel,
   base: Manifold,
@@ -1122,44 +1163,33 @@ export function applySnapFitLidCylinder(
     splitHeight,
     wallThickness,
   );
-  const tabWidth = Math.min(Math.max(innerDiameter * 0.2, 6), 14);
+  const combWidth = Math.min(Math.max(innerDiameter * 0.16, 6), 11);
   const outerR = Math.max(innerDiameter / 2 - wallGap, tabThickness + 1);
-  const fingers = fingerOffsets(tabWidth, snap?.fingerCount);
+  const fingers = snapCombFingers(
+    wasm,
+    combWidth,
+    tabThickness,
+    engagementDepth,
+    splitHeight,
+    peakZ,
+    rampSpan,
+    ledgeSpan,
+    snap?.fingerCount,
+  );
 
   let nextBase = base;
   let nextLid = lid;
 
   for (const sign of [-1, 1] as const) {
-    const x = sign * outerR;
     const outwardAngleDeg = sign === 1 ? 0 : 180;
     for (const finger of fingers) {
-      // Tab's outward (radial) face sits at |x|=outerR, extending inward by tabThickness -- built
-      // axis-aligned (tangential width along Y, radial thickness along X) since these two positions
-      // are already axis-aligned (0deg/180deg), no Z rotation needed.
-      const tab = wasm.Manifold.cube([tabThickness, finger.width, engagementDepth], true).translate(
-        x - sign * (tabThickness / 2),
-        finger.offset,
-        splitHeight - engagementDepth / 2,
+      // Tangential axis at 0deg/180deg is world Y, matching the tab's own build convention below.
+      nextLid = nextLid.add(
+        finger.lidPiece.rotate(0, 0, outwardAngleDeg).translate(sign * outerR, finger.offset, 0),
       );
-      const barb = snapBarbSolid(
-        wasm,
-        finger.width,
-        peakZ,
-        rampSpan,
-        ledgeSpan,
-        outwardAngleDeg,
-      ).translate(x, finger.offset, 0);
-      nextLid = nextLid.add(tab).add(barb);
-
-      const pocket = snapPocketSolid(
-        wasm,
-        finger.width,
-        peakZ,
-        rampSpan,
-        ledgeSpan,
-        outwardAngleDeg,
-      ).translate(x, finger.offset, 0);
-      nextBase = nextBase.subtract(pocket);
+      nextBase = nextBase.subtract(
+        finger.basePocket.rotate(0, 0, outwardAngleDeg).translate(sign * outerR, finger.offset, 0),
+      );
     }
   }
 
@@ -1175,8 +1205,10 @@ interface SnapFitLidPolygonParams {
   snap?: SnapFitSpec;
 }
 
-/** Two tab positions, on two opposite facets (facet 0 and its 180-degree-opposite facet) -- each
- * optionally split into several narrower fingers per SnapFitSpec.fingerCount. */
+/** Two combs, on two opposite facets (facet 0 and its 180-degree-opposite facet) -- a hexagon/
+ * octagon facet reads as its own short "wall" already close to two vertices, so (unlike the box)
+ * this keeps the original facet-centered placement, just built via the shared snapCombFingers
+ * helper instead of positioning each tab/barb/pocket separately. */
 export function applySnapFitLidPolygon(
   wasm: ManifoldToplevel,
   base: Manifold,
@@ -1190,9 +1222,19 @@ export function applySnapFitLidPolygon(
   );
   const rFlat = innerRadius * Math.cos(Math.PI / n);
   const phase = n === 6 ? Math.PI / 6 : Math.PI / 8;
-  const tabWidth = Math.min(Math.max(rFlat * 0.4, 6), 14);
+  const combWidth = Math.min(Math.max(rFlat * 0.32, 6), 11);
   const outerR = Math.max(rFlat - wallGap, tabThickness + 1);
-  const fingers = fingerOffsets(tabWidth, snap?.fingerCount);
+  const fingers = snapCombFingers(
+    wasm,
+    combWidth,
+    tabThickness,
+    engagementDepth,
+    splitHeight,
+    peakZ,
+    rampSpan,
+    ledgeSpan,
+    snap?.fingerCount,
+  );
 
   let nextBase = base;
   let nextLid = lid;
@@ -1202,36 +1244,16 @@ export function applySnapFitLidPolygon(
     const angleDeg = (angle * 180) / Math.PI;
     const nx = Math.cos(angle);
     const ny = Math.sin(angle);
-    // Tangent direction along the facet, for spacing fingers side by side across it.
+    // Tangent direction along the facet, for spacing fingers side by side across it -- the offset
+    // has to be rotated into this direction explicitly (rather than added to a world axis
+    // directly, the way the box/cylinder cases can) since a facet sits at an arbitrary angle.
     const tx = -ny;
     const ty = nx;
-    const centerR = outerR - tabThickness / 2;
     for (const finger of fingers) {
-      // Tab's outward (radial) face sits at radius=outerR, matching the wall it friction-fits
-      // against; local X is thickness (radial), local Y is width (tangential) before the Z-rotate
-      // aligns local X with this facet's own outward direction (nx, ny).
-      const tab = wasm.Manifold.cube([tabThickness, finger.width, engagementDepth], true)
-        .translate(0, finger.offset, 0)
-        .rotate(0, 0, angleDeg)
-        .translate(nx * centerR, ny * centerR, splitHeight - engagementDepth / 2);
       const fx = nx * outerR + tx * finger.offset;
       const fy = ny * outerR + ty * finger.offset;
-      const barb = snapBarbSolid(wasm, finger.width, peakZ, rampSpan, ledgeSpan, angleDeg).translate(
-        fx,
-        fy,
-        0,
-      );
-      nextLid = nextLid.add(tab).add(barb);
-
-      const pocket = snapPocketSolid(
-        wasm,
-        finger.width,
-        peakZ,
-        rampSpan,
-        ledgeSpan,
-        angleDeg,
-      ).translate(fx, fy, 0);
-      nextBase = nextBase.subtract(pocket);
+      nextLid = nextLid.add(finger.lidPiece.rotate(0, 0, angleDeg).translate(fx, fy, 0));
+      nextBase = nextBase.subtract(finger.basePocket.rotate(0, 0, angleDeg).translate(fx, fy, 0));
     }
   }
 

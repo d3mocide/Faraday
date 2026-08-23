@@ -1252,6 +1252,7 @@ export function InspectorPanel({
   const setGasketWidth = useProjectStore((s) => s.setGasketWidth);
   const setGasketDepth = useProjectStore((s) => s.setGasketDepth);
   const setSnapFingerCount = useProjectStore((s) => s.setSnapFingerCount);
+  const setCornerSnapEnabled = useProjectStore((s) => s.setCornerSnapEnabled);
   const setPanelsEnabled = useProjectStore((s) => s.setPanelsEnabled);
   const togglePanelFace = useProjectStore((s) => s.togglePanelFace);
   const setPanelThickness = useProjectStore((s) => s.setPanelThickness);
@@ -2070,7 +2071,17 @@ export function InspectorPanel({
               </>
             )}
 
-            {lid.type === 'snap-fit' && (
+            {lid.type !== 'snap-fit' && (
+              <label className="field field-checkbox">
+                <input
+                  type="checkbox"
+                  checked={lid.snap !== undefined}
+                  onChange={(e) => setCornerSnapEnabled(e.target.checked)}
+                />
+                <span>Corner snap comb</span>
+              </label>
+            )}
+            {(lid.type === 'snap-fit' || lid.snap) && (
               <>
                 <label className="field">
                   <span>Fingers per tab</span>
@@ -2084,6 +2095,9 @@ export function InspectorPanel({
                   </select>
                 </label>
                 <p className="field-hint">
+                  {lid.type === 'snap-fit'
+                    ? 'Two corner-integrated combs hold the lid on -- no screws or friction lip.'
+                    : 'Adds two corner-integrated snap combs alongside the boss/lip above, for a snap during assembly plus a permanent screwed joint.'}{' '}
                   Splitting a tab into narrower fingers side by side lowers the insertion force each
                   one needs to flex and gives redundant catches, instead of one wide tab
                   concentrating the stress at its root.

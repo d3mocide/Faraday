@@ -276,7 +276,14 @@ export function generateEnclosure(
         wallGap: Math.max(body.lid.wallGap, 0),
       });
     }
-  } else if (body.lid.type === 'snap-fit') {
+  }
+
+  // Corner snap comb: independent of lid.type (like the gasket channel below), so it can layer on
+  // top of screw-boss or friction-lip instead of only ever being the sole retention -- a real
+  // cantilever-comb reference design uses corner screws *and* a corner snap comb together.
+  // lid.type === 'snap-fit' still means "snap comb only, no boss/skirt", so it always applies the
+  // comb even without an explicit lid.snap.
+  if (body.lid.type === 'snap-fit' || body.lid.snap) {
     if (body.shape === 'box' || body.shape === 'wedge' || body.shape === 'stadium') {
       ({ base, lid } = applySnapFitLid(wasm, base, lid, {
         innerLength,
@@ -284,6 +291,7 @@ export function generateEnclosure(
         splitHeight,
         wallThickness,
         wallGap: Math.max(body.lid.wallGap, 0),
+        cornerRadius: innerCornerStyle?.radius ?? 0,
         snap: body.lid.snap,
       }));
     } else if (body.shape === 'hexagon' || body.shape === 'octagon') {

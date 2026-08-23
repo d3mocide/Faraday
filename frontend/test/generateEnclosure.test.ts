@@ -964,23 +964,69 @@ describe('Rendering studio: tessellation, edge bevels, corner styles & grip ribs
 });
 
 describe('snap-fit fingers (SnapFitSpec.fingerCount)', () => {
-  it('a single tab (the default) is continuous across its width', () => {
+  // Mirrors the corner-comb placement math in csg/primitives.ts's applySnapFitLid for makeBox's
+  // fixed 80x50 body/2mm walls/3mm corner radius, so the probes below target the comb's actual
+  // position instead of a hardcoded guess.
+  const innerLength = 80 - 2 * 2;
+  const innerWidth = 50 - 2 * 2;
+  const wallGap = 0.2;
+  const tabThickness = Math.min(2, 1.6);
+  const outerY = Math.max(innerWidth / 2 - wallGap, tabThickness + 1);
+  const combWidth = Math.min(Math.max(Math.min(innerLength, innerWidth) * 0.16, 6), 11);
+  const cornerRadius = Math.max(0, 3 - 2); // shrinkCornerStyle's corner-radius-minus-wallThickness
+  const cornerMargin = Math.max(cornerRadius, 3) + combWidth / 2 + 1;
+  const cornerX = Math.max(innerLength / 2 - cornerMargin, combWidth / 2);
+  // Within the tab's engagement depth (splitHeight 24, engagementDepth up to 6) but below the
+  // barb's own ledge (whose gap between fingers is deliberately narrower than SNAP_FINGER_GAP) --
+  // this is deep enough in the tab body that the full finger-to-finger gap is unambiguous.
+  const tabZ = 19;
+
+  it('sits at the corner (not the old wall-midpoint) and is continuous with fingerCount 1', () => {
     const project = makeBox({ lid: 'snap-fit' });
     const solids = generateSolids(project);
-    // Between where finger 1 and 2 would sit on a 3-finger split, a single wide tab still has
-    // material -- see the 3-finger case below for the same point with a real gap there instead.
-    expect(solidAt(solids.lid, [-2.08, 22.8, 21], 0.6), 'continuous tab material').toBe(true);
+    expect(solidAt(solids.lid, [cornerX, outerY, tabZ], 0.6), 'material at the corner').toBe(true);
+    expect(solidAt(solids.lid, [0, outerY, tabZ], 0.6), 'old wall-midpoint position is now empty').toBe(
+      false,
+    );
     for (const part of Object.values(solids)) part.delete();
   });
 
-  it('3 fingers leave real gaps between them and stay watertight', () => {
+  /**
+   * Scans a range of X positions and reports how many separate solid "runs" it finds. Each finger's
+   * own material isn't centered on its nominal `offset + cornerX` centerline -- the tab sits behind
+   * the wall's flush-face reference and the barb pokes a little past it, so the piece's true X extent
+   * is asymmetric around that line -- so probing exact hand-derived centers/midpoints is brittle.
+   * Counting solid runs across a generous span instead only relies on there being real gaps, which is
+   * what "reads as a comb" actually means.
+   */
+  function countSolidRuns(part: Manifold, y: number, z: number, xStart: number, xEnd: number): number {
+    let runs = 0;
+    let prev = false;
+    for (let x = xStart; x <= xEnd; x += 0.2) {
+      const cur = solidAt(part, [x, y, z], 0.3);
+      if (cur && !prev) runs++;
+      prev = cur;
+    }
+    return runs;
+  }
+
+  it('3 fingers leave a real gap between them near the corner, and stay watertight', () => {
     const project = makeBox({ lid: 'snap-fit' });
     project.body.lid.snap = { fingerCount: 3 };
     const solids = generateSolids(project);
-    expect(solidAt(solids.lid, [-2.08, 22.8, 21], 0.6), 'gap between the outer and middle finger').toBe(
-      false,
-    );
-    expect(solidAt(solids.lid, [0, 22.8, 21], 0.6), 'middle finger present').toBe(true);
+    const runs = countSolidRuns(solids.lid, outerY, tabZ, cornerX - combWidth / 2 - 2, cornerX + combWidth / 2 + 2);
+    expect(runs, 'expected 3 separate fingers with real gaps between them').toBe(3);
+    expect(isWatertight(extractMeshData(solids.base)), 'base watertight').toBe(true);
+    expect(isWatertight(extractMeshData(solids.lid)), 'lid watertight').toBe(true);
+    for (const part of Object.values(solids)) part.delete();
+  });
+
+  it('coexists with screw-boss corner posts (both, per user request)', () => {
+    const project = makeBox({ lid: 'screw-boss' });
+    project.body.lid.snap = { fingerCount: 2 };
+    const solids = generateSolids(project);
+    const runs = countSolidRuns(solids.lid, outerY, tabZ, cornerX - combWidth / 2 - 2, cornerX + combWidth / 2 + 2);
+    expect(runs, 'snap comb present alongside screws').toBe(2);
     expect(isWatertight(extractMeshData(solids.base)), 'base watertight').toBe(true);
     expect(isWatertight(extractMeshData(solids.lid)), 'lid watertight').toBe(true);
     for (const part of Object.values(solids)) part.delete();
