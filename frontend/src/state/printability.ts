@@ -1,5 +1,7 @@
 import { panelMetrics } from '../csg/parts';
+import { printRulesForProfile } from '../csg/printRules';
 import type { EnclosureProject } from '../types/project';
+import { manufacturingProfileForProject } from './manufacturingProfiles';
 
 export interface PrintabilityStats {
   outerVolumeCm3: number;
@@ -8,10 +10,13 @@ export interface PrintabilityStats {
   estimatedPrintTimeHours: number;
   fastenersBom: { name: string; quantity: number }[];
   overhangWarnings: string[];
+  profile: { label: string; calibrated: boolean; minSkin: number; lineWidth: number; targetPerimeters: number };
 }
 
 export function calculatePrintabilityStats(project: EnclosureProject): PrintabilityStats {
   const { body, features } = project;
+  const profile = manufacturingProfileForProject(project);
+  const rules = printRulesForProfile(profile);
   const wall = body.wallThickness;
   const lid = body.lid;
 
@@ -61,7 +66,7 @@ export function calculatePrintabilityStats(project: EnclosureProject): Printabil
     fastenersBom.push({ name: `${size} × 10mm M3 Screws`, quantity: count });
   }
 
-  const panels = panelMetrics(body);
+  const panels = panelMetrics(body, rules);
   if (panels?.screw) {
     const count = panels.faces.length * 2 * panels.screw.zPositions.length;
     fastenersBom.push({ name: `${panels.screw.size} Panel Screw`, quantity: count });
@@ -95,5 +100,12 @@ export function calculatePrintabilityStats(project: EnclosureProject): Printabil
     estimatedPrintTimeHours: Math.max(0.5, estimatedPrintTimeHours),
     fastenersBom,
     overhangWarnings,
+    profile: {
+      label: profile.label,
+      calibrated: profile.calibrated,
+      minSkin: rules.minSkin,
+      lineWidth: rules.lineWidth,
+      targetPerimeters: profile.targetPerimeters,
+    },
   };
 }

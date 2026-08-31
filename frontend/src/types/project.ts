@@ -40,9 +40,44 @@ export interface TessellationSpec {
   exportSegments: number; // e.g. 32..256, default 64
 }
 
+/** A bounded, versioned print-process starting point. It owns printer-dependent guards and
+ * defaults, but it is deliberately not a claim that any uncalibrated printer/material combination
+ * will achieve a given fit. Existing projects without a profile resolve to the legacy 0.4mm rules
+ * so importing them preserves their generated geometry. */
+export type ManufacturingProfileId =
+  | 'fdm-legacy-0.4'
+  | 'fdm-daily-pla-0.4'
+  | 'fdm-daily-petg-0.4';
+
+export interface ManufacturingProfile {
+  id: ManufacturingProfileId;
+  label: string;
+  process: 'fdm';
+  material: 'pla' | 'petg';
+  nozzleDiameter: number;
+  lineWidth: number;
+  layerHeight: number;
+  targetPerimeters: number;
+  minPerimeters: number;
+  supportFreeOverhangDeg: number;
+  /** A fit must be confirmed with the target printer, material and slicer before it is trusted. */
+  calibrated: boolean;
+}
+
 export type ScrewSize = 'M2' | 'M2.5' | 'M3' | 'M4';
 export type ScrewInsertType = 'heat-set' | 'self-tap';
 export type ScrewCount = 4 | 6 | 8;
+/** Bounded starter recipes, named so a project can say what hardware assumption shaped its bosses.
+ * They are intentionally not a claim of calibration for a particular insert vendor or printer. */
+export type FastenerRecipeId =
+  | 'starter-m2-heat-set'
+  | 'starter-m2-self-tap'
+  | 'starter-m2.5-heat-set'
+  | 'starter-m2.5-self-tap'
+  | 'starter-m3-heat-set'
+  | 'starter-m3-self-tap'
+  | 'starter-m4-heat-set'
+  | 'starter-m4-self-tap';
 
 /** Column cross-section shape. 'round' and 'square' are classic; 'hex', 'octagon', and 'rounded-square' offer elegant CAD mounting options. */
 export type ScrewColumnShape = 'round' | 'square' | 'hex' | 'octagon' | 'rounded-square';
@@ -61,6 +96,9 @@ export interface ScrewSpec {
   size: ScrewSize;
   insertType: ScrewInsertType;
   count: ScrewCount;
+  /** Optional for legacy project JSON. When absent, the matching starter recipe is resolved from
+   * size + insert type and keeps the prior geometry exactly. */
+  recipeId?: FastenerRecipeId;
   placement?: ScrewPlacement; // undefined = 'interior'
   shape?: ScrewColumnShape; // undefined = 'round'
   headStyle?: ScrewHeadStyle; // undefined = 'flush'
@@ -81,7 +119,11 @@ export interface ScrewSpec {
   footAngleDeg?: number;
 }
 
-export type LidType = 'friction-lip' | 'screw-boss' | 'snap-fit';
+/** How the removable lid is retained. `slide-rail` is available on flat-sided bodies; `bayonet`
+ * is deliberately cylinder-only, where its turn-to-lock motion is physically meaningful. */
+export type LidType = 'friction-lip' | 'screw-boss' | 'snap-fit' | 'slide-rail' | 'bayonet';
+/** Surface language for an otherwise functional lid. Undefined keeps legacy/plain output. */
+export type LidSurfaceTreatment = 'plain' | 'refined' | 'field-marked';
 
 /** Phase 5 stretch feature (DESIGN.md §13): an O-ring/cord seal channel cut into the base's top
  * rim, independent of lid.type -- any lid type can be combined with a gasket channel. */
@@ -98,13 +140,32 @@ export interface SnapFitSpec {
   fingerCount?: 1 | 2 | 3;
 }
 
+/** A captive cover that slides along the body length in two external U-channels. The open end is
+ * intentionally removable; a flat-ended body can include a hard stop for its closed position. */
+export interface SlideRailSpec {
+  railDepth?: number; // mm below the lid plate; undefined = a profile-safe derived depth
+}
+
+/** Cylinder-only quarter-turn closure. Three lugs pass through the gaps between base shelves, then
+ * rotate beneath them; no flexible ring or unsupported printed thread is assumed. */
+export interface BayonetSpec {
+  lugCount?: 2 | 3 | 4;
+  turnDeg?: 30 | 45 | 60;
+}
+
 export interface LidSpec {
   type: LidType;
   splitHeight: number; // mm from base where the lid separates
   wallGap: number; // mm clearance for the fit (tune per printer)
+  /** `refined` cuts a profile-safe recessed field into a box lid. `field-marked` also adds a
+   * shallow seam accent around the lid perimeter. Both are intentionally opt-in so existing
+   * project geometry and visual identity do not change on import. */
+  surfaceTreatment?: LidSurfaceTreatment;
   screw?: ScrewSpec; // only for 'screw-boss'
   gasket?: GasketSpec; // present = channel cut, absent = no gasket channel
   snap?: SnapFitSpec; // only for 'snap-fit'
+  slideRail?: SlideRailSpec; // only for 'slide-rail'
+  bayonet?: BayonetSpec; // only for cylinder 'bayonet'
 }
 
 export type BodyShape = 'box' | 'cylinder' | 'hexagon' | 'octagon' | 'stadium' | 'wedge';
@@ -245,6 +306,18 @@ export interface VentSpec {
   slotSpacing: number;
 }
 
+/** Friction-fit board retention: an L-shaped guide post at each of the board's 4 corners, hugging
+ * both edges with a small clearance gap so the board drops in from above and is held in X/Y by the
+ * posts (Z comes from the lid, or from resting on the posts' own top land). The screwless
+ * alternative to holes + standoffs for boards with no documented mounting-hole pattern. */
+export interface CornerGuideSpec {
+  height: number; // mm, guide arm height -- normally boardThickness + clearance
+  legLength: number; // mm, how far each L arm runs along the board edge from the corner
+  armThickness: number; // mm, wall thickness of each L arm
+  clearance: number; // mm, gap between the board edge and the guide's inner face
+  chamfer?: number; // mm, lead-in chamfer at the top of each arm. 0/undefined = square top.
+}
+
 /** A PCB footprint mounted on the interior floor: an outline (rendered as a ghost board in the
  * viewport, never exported) plus a mounting-hole pattern that generates one standoff per hole.
  * Hole offsets are mm from the board's center, x along the floor's u axis, y along v. */
@@ -254,6 +327,13 @@ export interface BoardMountSpec {
   boardThickness: number; // mm, ghost render only
   holes: Array<{ x: number; y: number }>; // mm offsets from board center
   standoff: StandoffSpec; // shared by every hole
+  /** Friction-fit corner posts, as an alternative or supplement to holes+standoff. When set and
+   * `holes` is empty, no hole-based standoff is generated -- see buildBoardMount. */
+  cornerGuides?: CornerGuideSpec;
+  /** `auto` adds a thin wall tie to a floor post only when a box wall is close enough to reinforce
+   * it without turning the board cavity into a solid block. Undefined keeps legacy post-only
+   * geometry so existing projects are unchanged. */
+  mountStrategy?: 'manual' | 'auto';
 }
 
 /** 'flange' is a flat ear standing out from a face (wall-mount tab); 'boss' is a cylindrical post
@@ -368,6 +448,9 @@ export interface SupportPadSpec {
   pitch?: number;
   /** Which of the floor's axes the row runs along, before the feature's own rotation. */
   axis?: 'u' | 'v';
+  /** Replaces a repeated rectangular pad row with one continuous low rail. This spreads a board
+   * edge load across its span; leave it off where underside components need the gaps. */
+  continuous?: boolean;
 }
 
 export interface GripRibsSpec {
@@ -398,6 +481,13 @@ export interface ConnectorSizeOverride {
   height?: number; // mm (for 'dshape': the across-flat dimension)
 }
 
+/** A shallow exterior rim around a connector or custom opening. It is additive, profile-derived
+ * local reinforcement rather than a blanket wall-thickness increase. */
+export interface PortFrameSpec {
+  border?: number; // mm, undefined = active profile rib floor
+  depth?: number; // mm proud of the outer wall, undefined = active profile skin floor
+}
+
 export interface Feature {
   id: string;
   type: FeatureType;
@@ -407,6 +497,10 @@ export interface Feature {
   rotationDeg: number; // rotation about the face normal
   connectorId?: string; // ref into ConnectorLibraryEntry, for 'connector-cutout'
   connectorOverride?: ConnectorSizeOverride; // for 'connector-cutout'
+  /** Identifies subtractive openings deliberately joined by overlapping relief cuts into one
+   * compound opening. It preserves no narrow printable web between adjacent physical ports. */
+  mergedOpeningGroup?: string;
+  portFrame?: PortFrameSpec; // connector-cutout/custom-hole only
   standoff?: StandoffSpec;
   vent?: VentSpec;
   custom?: { shape: 'circle' | 'rect'; width: number; height?: number };
@@ -448,6 +542,8 @@ export interface EnclosureProject {
   createdAt: string;
   updatedAt: string;
   tessellation?: TessellationSpec;
+  /** Optional for backward-compatible project JSON. Undefined resolves to fdm-legacy-0.4. */
+  manufacturingProfile?: ManufacturingProfileId;
   body: EnclosureBody;
   features: Feature[];
 }

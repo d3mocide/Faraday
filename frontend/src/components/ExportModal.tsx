@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CsgWorkerClient } from '../csg/CsgWorkerClient';
-import { exportEnclosureZip } from '../export/stlExport';
+import { exportCalibrationPackZip, exportEnclosureZip } from '../export/stlExport';
+import { exportEnclosure3mf } from '../export/threeMfExport';
 import type { EnclosureProject } from '../types/project';
 
 interface ExportModalProps {
@@ -13,6 +14,8 @@ export function ExportModal({ client, project, onClose }: ExportModalProps) {
   const [status, setStatus] = useState('Starting export...');
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [calibrationStatus, setCalibrationStatus] = useState<string | null>(null);
+  const [threeMfStatus, setThreeMfStatus] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,9 +43,41 @@ export function ExportModal({ client, project, onClose }: ExportModalProps) {
           <p>{done ? 'Download started.' : status}</p>
         )}
         {(done || error) && (
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
+          <>
+            {!error && (
+              <>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    setCalibrationStatus('Generating calibration pack...');
+                    exportCalibrationPackZip(client, project, setCalibrationStatus).catch((err: Error) =>
+                      setCalibrationStatus(`Calibration export failed: ${err.message}`),
+                    );
+                  }}
+                >
+                  Download calibration pack
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    setThreeMfStatus('Generating 3MF...');
+                    exportEnclosure3mf(client, project, setThreeMfStatus).catch((err: Error) =>
+                      setThreeMfStatus(`3MF export failed: ${err.message}`),
+                    );
+                  }}
+                >
+                  Download 3MF
+                </button>
+              </>
+            )}
+            {calibrationStatus && <p>{calibrationStatus}</p>}
+            {threeMfStatus && <p>{threeMfStatus}</p>}
+            <button type="button" onClick={onClose}>
+              Close
+            </button>
+          </>
         )}
       </div>
     </div>

@@ -1,6 +1,6 @@
 import type { EnclosureProject } from '../types/project';
 import type { CsgQuality } from './generateEnclosure';
-import type { CsgRequest, CsgResponse, PartMesh } from './workerProtocol';
+import type { CalibrationCouponMesh, CalibrationRequest, CsgRequest, CsgResponse, PartMesh } from './workerProtocol';
 import type { PartId } from './parts';
 
 /** Every printed piece of one generated enclosure, in a stable order: base, lid, then any
@@ -9,12 +9,16 @@ export interface EnclosureMeshes {
   parts: PartMesh[];
 }
 
+export interface CalibrationMeshes {
+  coupons: CalibrationCouponMesh[];
+}
+
 export function findPart(meshes: EnclosureMeshes | null, id: PartId): PartMesh | undefined {
   return meshes?.parts.find((p) => p.id === id);
 }
 
 interface PendingEntry {
-  resolve: (r: EnclosureMeshes) => void;
+  resolve: (r: EnclosureMeshes | CalibrationMeshes) => void;
   reject: (e: Error) => void;
   timer: ReturnType<typeof setTimeout> | null;
 }
@@ -45,6 +49,8 @@ export class CsgWorkerClient {
       this.settle(msg.id);
       if (msg.type === 'result') {
         entry.resolve({ parts: msg.parts });
+      } else if (msg.type === 'calibration-result') {
+        entry.resolve({ coupons: msg.coupons });
       } else {
         entry.reject(new Error(msg.message));
       }
@@ -73,9 +79,38 @@ export class CsgWorkerClient {
           new Error('Geometry generation timed out. Your last change may have produced an invalid shape.'),
         );
       }, DEFAULT_TIMEOUTS[quality]);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, {
+        resolve: (value) => {
+          if ('parts' in value) resolve(value);
+          else reject(new Error('Geometry worker returned calibration data for an enclosure request.'));
+        },
+        reject,
+        timer,
+      });
     });
     const request: CsgRequest = { id, project, quality };
+    this.worker.postMessage(request);
+    return { id, result };
+  }
+
+  generateCalibration(project: EnclosureProject): { id: number; result: Promise<CalibrationMeshes> } {
+    const id = this.nextId++;
+    const result = new Promise<CalibrationMeshes>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (!this.pending.has(id)) return;
+        this.settle(id);
+        reject(new Error('Calibration geometry generation timed out.'));
+      }, DEFAULT_TIMEOUTS.export);
+      this.pending.set(id, {
+        resolve: (value) => {
+          if ('coupons' in value) resolve(value);
+          else reject(new Error('Geometry worker returned enclosure data for a calibration request.'));
+        },
+        reject,
+        timer,
+      });
+    });
+    const request: CalibrationRequest = { id, type: 'calibration', project };
     this.worker.postMessage(request);
     return { id, result };
   }

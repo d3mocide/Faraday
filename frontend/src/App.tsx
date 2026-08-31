@@ -13,6 +13,7 @@ import { useProjectStore } from './state/projectStore';
 import { BlueprintModal } from './components/BlueprintModal';
 import { CommandPalette } from './components/CommandPalette';
 import { CaliperTool, type CaliperMeasurement } from './components/CaliperTool';
+import { DesignChecksTray } from './components/DesignChecksTray';
 import type { Face } from './types/project';
 
 function App() {
@@ -29,6 +30,7 @@ function App() {
   const [exportOpen, setExportOpen] = useState(false);
   const [armed, setArmed] = useState<ArmedFeatureTemplate | null>(null);
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
+  const [featureEditorHost, setFeatureEditorHost] = useState<HTMLDivElement | null>(null);
 
   const [lidView, setLidView] = useState<LidView>('assembled');
   const [showHandles, setShowHandles] = useState(true);
@@ -193,6 +195,7 @@ function App() {
           previewTarget={previewTarget}
           flaggedFeatureIds={flaggedFeatureIds}
         />
+        <div ref={setFeatureEditorHost} className="viewport-feature-editor-host" />
         {error && (
           <div className="viewport-error" role="alert">
             <span className="viewport-error-text">
@@ -205,10 +208,11 @@ function App() {
             )}
           </div>
         )}
+        <DesignChecksTray findings={findings} onSelectFeature={setSelectedFeatureId} />
       </div>
       <InspectorPanel
         selectedFeatureId={selectedFeatureId}
-        findings={findings}
+        featureEditorHost={featureEditorHost}
         shadingMode={shadingMode}
         onChangeShadingMode={setShadingMode}
         materialPreset={materialPreset}

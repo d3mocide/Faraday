@@ -1,9 +1,11 @@
 import { findConnector } from '../connectors/library';
 import { effectiveSplitHeight } from '../csg/lidSplit';
 import { panelMetrics } from '../csg/parts';
+import { printRulesForProfile } from '../csg/printRules';
 import { counterboreDepth } from '../csg/primitives';
-import { SCREW_HOLE_SPECS } from '../csg/screwLibrary';
+import { fastenerRecipeForScrew } from '../fasteners/library';
 import type { EnclosureProject, ScrewSpec } from '../types/project';
+import { manufacturingProfileForProject } from '../state/manufacturingProfiles';
 
 interface BomRow {
   item: string;
@@ -34,7 +36,7 @@ function screwLengthMm(project: EnclosureProject, screw: ScrewSpec): number {
   const columnHeight = Math.min(screw.columnHeight ?? splitHeight, splitHeight);
   const engagement =
     screw.insertType === 'heat-set'
-      ? SCREW_HOLE_SPECS[screw.size].heatSetDepth
+      ? fastenerRecipeForScrew(screw).dimensions.heatSetDepth
       : Math.max(Math.min(columnHeight - 1.5, 8), 2);
   return Math.ceil((through + engagement) / 2) * 2;
 }
@@ -64,20 +66,22 @@ export function generateBomCsv(project: EnclosureProject): string {
   if (body.lid.type === 'screw-boss' && body.lid.screw) {
     const screw = body.lid.screw;
     const { size, insertType, count } = screw;
+    const recipe = fastenerRecipeForScrew(screw);
     rows.push({
       item: `${size}x${screwLengthMm(project, screw)}mm machine screw`,
       quantity: count,
       category: 'Hardware',
       notes:
         (insertType === 'heat-set' ? 'Threads into a heat-set insert in the base boss' : 'Self-taps into the base boss') +
-        (screw.headStyle === 'counterbore' ? '; head sits in a counterbore in the lid' : ''),
+        (screw.headStyle === 'counterbore' ? '; head sits in a counterbore in the lid' : '') +
+        `; ${recipe.label} (${recipe.calibrated ? 'calibrated' : 'uncalibrated'})`,
     });
     if (insertType === 'heat-set') {
       rows.push({
         item: `${size} heat-set brass insert`,
         quantity: count,
         category: 'Hardware',
-        notes: 'Heat-staked into the base bosses before assembly',
+        notes: `Heat-staked into the base bosses before assembly; ${recipe.label} is uncalibrated — print a coupon first`,
       });
     }
   }
@@ -85,7 +89,7 @@ export function generateBomCsv(project: EnclosureProject): string {
   // Screwed slide-in plates: one screw per site, plus an insert each where the posts are bored for
   // heat-set. Sized off the resolved metrics rather than the raw spec, since both the post depth
   // and the number of screws per end are clamped to what actually fits the plate.
-  const panels = panelMetrics(body);
+  const panels = panelMetrics(body, printRulesForProfile(manufacturingProfileForProject(project)));
   if (panels?.screw) {
     const screw = panels.screw;
     const count = panels.faces.length * 2 * screw.zPositions.length;

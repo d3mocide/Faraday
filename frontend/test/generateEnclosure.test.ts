@@ -14,6 +14,7 @@ import type {
 import type { MeshData } from '../src/csg/workerProtocol';
 import { fanSpecFor } from '../src/csg/fanLibrary';
 import { bossRadiusFor } from '../src/csg/primitives';
+import { slideRailPlateThickness } from '../src/csg/slideRailMetrics';
 import { MIN_SKIN } from '../src/csg/printRules';
 import { getTestWasm } from './helpers/wasm';
 import { boundingBox, isWatertight } from './helpers/geometry';
@@ -97,6 +98,101 @@ function generateMeshes(project: EnclosureProject) {
 
 const LID_TYPES: LidType[] = ['friction-lip', 'screw-boss', 'snap-fit'];
 const GASKET: GasketSpec = { width: 2, depth: 1.5 };
+
+describe('new closure recipes', () => {
+  it('builds a flat-body slide rail lid with a wider rail envelope and watertight parts', () => {
+    const plain = generateMeshes(makeBox({ lid: 'friction-lip' }));
+    const sliding = generateMeshes(makeBox({ lid: 'slide-rail' }));
+    expect(isWatertight(sliding.base), 'slide base watertight').toBe(true);
+    expect(isWatertight(sliding.lid), 'slide lid watertight').toBe(true);
+    expect(boundingBox(sliding.lid).size[1], 'external rails enlarge the slide lid').toBeGreaterThan(
+      boundingBox(plain.lid).size[1],
+    );
+  });
+
+  it('keeps the base wall continuous from the floor up to the cover, with no open gap at the seam', () => {
+    // Regression for a bug where applySlideRailLid discarded the raw split lid piece (the box
+    // wall/roof above splitHeight) and replaced it with only a flat plate + external rails,
+    // leaving the region between the base wall's top (splitHeight) and the plate's underside
+    // completely open on the main footprint -- a real hole through the case, not just a cosmetic
+    // gap, visible at any splitHeight below (height - plateThickness).
+    const project = makeBox({ lid: 'slide-rail' });
+    const body = project.body;
+    if (body.shape !== 'box') throw new Error('unreachable');
+    const { length, width, height } = body.outer;
+    const splitHeight = body.lid.splitHeight;
+    const plateThickness = slideRailPlateThickness(body.wallThickness);
+    const railTop = height - plateThickness;
+
+    const result = generateEnclosure(wasm, project, 'export');
+    const parts = new Map(result.parts.map((part) => [part.id, part.manifold]));
+    const base = parts.get('base')!;
+    const lid = parts.get('lid')!;
+
+    // Probe right against the outer wall face (away from the corners and from the side rails,
+    // which sit further out in Y), at a few heights spanning the gap the bug left open.
+    const probeY = width / 2 - 0.2;
+    for (const z of [splitHeight + 0.5, (splitHeight + railTop) / 2, railTop - 0.2]) {
+      const probe = wasm.Manifold.cube([Math.min(length, 20), 0.4, 0.4], true).translate(0, probeY, z);
+      const hit = base.intersect(probe).volume() + lid.intersect(probe).volume();
+      expect(hit, `wall material must be present at y=${probeY}, z=${z}`).toBeGreaterThan(0);
+      probe.delete();
+    }
+
+    for (const part of result.parts) part.manifold.delete();
+  });
+
+  it('parks the captive slide lid without volumetric interference', () => {
+    const result = generateEnclosure(wasm, makeBox({ lid: 'slide-rail' }), 'export');
+    const parts = new Map(result.parts.map((part) => [part.id, part.manifold]));
+    const clash = parts.get('base')!.intersect(parts.get('lid')!);
+    expect(clash.volume(), 'parked slide cover must not have volumetric interference').toBeLessThan(0.001);
+    clash.delete();
+    for (const part of result.parts) part.manifold.delete();
+  });
+
+  it('captures the slide lid against lift and stops it at the closed end', () => {
+    const result = generateEnclosure(wasm, makeBox({ lid: 'slide-rail' }), 'export');
+    const parts = new Map(result.parts.map((part) => [part.id, part.manifold]));
+    const base = parts.get('base')!;
+    const lid = parts.get('lid')!;
+    const lifted = lid.translate(0, 0, 0.4);
+    const liftClash = base.intersect(lifted);
+    expect(liftClash.isEmpty(), 'hooks must strike the base flanges before the cover can lift').toBe(false);
+    liftClash.delete();
+    lifted.delete();
+
+    const opened = lid.translate(-10, 0, 0);
+    const openClash = base.intersect(opened);
+    expect(openClash.volume(), 'open-direction travel must remain clear inside the channels').toBeLessThan(0.001);
+    openClash.delete();
+    opened.delete();
+
+    const pushedClosed = lid.translate(0.4, 0, 0);
+    const stopClash = base.intersect(pushedClosed);
+    expect(stopClash.isEmpty(), 'closed-position stop must strike the base back wall').toBe(false);
+    stopClash.delete();
+    pushedClosed.delete();
+    for (const part of result.parts) part.manifold.delete();
+  });
+
+  it('builds a cylindrical bayonet with locked lugs and shelf-entry gaps', () => {
+    const bayonet = generateMeshes(makeCylinder({ lid: 'bayonet' }));
+    expect(isWatertight(bayonet.base), 'bayonet base watertight').toBe(true);
+    expect(isWatertight(bayonet.lid), 'bayonet lid watertight').toBe(true);
+    // The lugs extend below the nominal seam; an ordinary cylinder lid has no material there.
+    expect(boundingBox(bayonet.lid).min[2]).toBeLessThan(30 - 0.5);
+  });
+
+  it('parks the bayonet lugs on their shelves without intersecting the base', () => {
+    const result = generateEnclosure(wasm, makeCylinder({ lid: 'bayonet' }), 'export');
+    const parts = new Map(result.parts.map((part) => [part.id, part.manifold]));
+    const clash = parts.get('base')!.intersect(parts.get('lid')!);
+    expect(clash.volume(), 'locked bayonet must not have volumetric interference').toBeLessThan(0.001);
+    clash.delete();
+    for (const part of result.parts) part.manifold.delete();
+  });
+});
 
 describe('box enclosure: watertight + dimensions across the lid/gasket matrix', () => {
   for (const lid of LID_TYPES) {
@@ -221,6 +317,23 @@ describe('each feature type keeps both pieces watertight', () => {
         },
       },
     },
+    {
+      name: 'board mount, corner guides only (no holes)',
+      feature: {
+        ...base,
+        id: 'g',
+        type: 'board-mount',
+        face: 'bottom',
+        board: {
+          boardWidth: 40,
+          boardDepth: 24,
+          boardThickness: 1.6,
+          holes: [],
+          standoff: { outerDiameter: 6, screwHoleDiameter: 2.2, height: 4 },
+          cornerGuides: { height: 5, legLength: 6, armThickness: 1.6, clearance: 0.25, chamfer: 1 },
+        },
+      },
+    },
   ];
 
   for (const { name, feature } of cases) {
@@ -235,6 +348,54 @@ describe('each feature type keeps both pieces watertight', () => {
     const { base: baseMesh, lid } = generateMeshes(makeBox({ features: cases.map((c) => c.feature) }));
     expect(isWatertight(baseMesh), 'base watertight').toBe(true);
     expect(isWatertight(lid), 'lid watertight').toBe(true);
+  });
+});
+
+describe('board-mount corner guides', () => {
+  // 40x24 board, centered (u=v=0.5 -> world origin) on the default 80x50x30 body (wallThickness 2).
+  // True corner at (20, 12); the guide sits `clearance` (0.25) further out, so its elbow -- the
+  // area both L arms overlap -- spans roughly x in [18.65, 20.25], y in [10.65, 12.25].
+  const wallThickness = 2;
+  const cornerGuides = { height: 5, legLength: 6, armThickness: 1.6, clearance: 0.25, chamfer: 1 };
+  const feature: Feature = {
+    id: 'g',
+    type: 'board-mount',
+    face: 'bottom',
+    u: 0.5,
+    v: 0.5,
+    rotationDeg: 0,
+    board: {
+      boardWidth: 40,
+      boardDepth: 24,
+      boardThickness: 1.6,
+      holes: [],
+      standoff: { outerDiameter: 6, screwHoleDiameter: 2.2, height: 4 },
+      cornerGuides,
+    },
+  };
+
+  it('is solid at each corner elbow, within the guide height', () => {
+    const solids = generateSolids(makeBox({ features: [feature] }));
+    const z = wallThickness + cornerGuides.height / 2;
+    const points: Array<[number, number]> = [
+      [19.5, 11.5],
+      [-19.5, 11.5],
+      [-19.5, -11.5],
+      [19.5, -11.5],
+    ];
+    for (const [x, y] of points) {
+      expect(solidAt(solids.base, [x, y, z]), `corner elbow at (${x}, ${y})`).toBe(true);
+    }
+    for (const solid of Object.values(solids)) solid.delete();
+  });
+
+  it('stops at the guide height and leaves the board center empty (no fallback standoff)', () => {
+    const solids = generateSolids(makeBox({ features: [feature] }));
+    expect(solidAt(solids.base, [19.5, 11.5, wallThickness + cornerGuides.height + 2]), 'above guide height').toBe(
+      false,
+    );
+    expect(solidAt(solids.base, [0, 0, wallThickness + 1]), 'board center, no fallback standoff').toBe(false);
+    for (const solid of Object.values(solids)) solid.delete();
   });
 });
 

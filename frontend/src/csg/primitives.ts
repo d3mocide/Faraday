@@ -8,7 +8,10 @@ import type {
   ScrewSpec,
   SnapFitSpec,
 } from '../types/project';
-import { SCREW_HOLE_SPECS, bossOuterDiameter } from './screwLibrary';
+import { fastenerRecipeForScrew } from '../fasteners/library';
+import type { ResolvedLidField, ResolvedLidSeamReveal } from './lidTreatment';
+import { bossOuterDiameter } from './screwLibrary';
+import { resolveSlideRailMetrics, slideRailPlateThickness } from './slideRailMetrics';
 
 export function footprintCrossSection(
   wasm: ManifoldToplevel,
@@ -91,6 +94,41 @@ export function footprintCrossSection(
     [-hl, -hw + radius],
   ];
   return new CrossSection(points);
+}
+
+/** Cuts a shallow, rounded rectangular field down from the lid's outer face. The resolver has
+ * already limited its depth to preserve the active profile's skin and kept its boundary clear of
+ * lid-screw head pockets. */
+export function applyRecessedLidField(
+  wasm: ManifoldToplevel,
+  lid: Manifold,
+  outerHeight: number,
+  field: ResolvedLidField,
+): Manifold {
+  const radius = Math.min(field.cornerRadius, field.length / 2 - 0.01, field.width / 2 - 0.01);
+  const cross =
+    radius > 0
+      ? wasm.CrossSection.square([field.length - 2 * radius, field.width - 2 * radius], true).offset(radius, 'Round')
+      : wasm.CrossSection.square([field.length, field.width], true);
+  const cut = cross.extrude(field.depth + 0.2).translate(0, 0, outerHeight - field.depth);
+  return lid.subtract(cut);
+}
+
+/** Carves a narrow exterior ring into a box lid, leaving at least the profile's requested side
+ * wall skin. The band is positioned above the mechanical split, so it is visual language rather
+ * than a substitute for clearance or mating geometry. */
+export function applyLidSeamReveal(
+  wasm: ManifoldToplevel,
+  lid: Manifold,
+  length: number,
+  width: number,
+  cornerStyle: CornerStyle,
+  reveal: ResolvedLidSeamReveal,
+): Manifold {
+  const outer = footprintCrossSection(wasm, length, width, cornerStyle);
+  const inset = outer.offset(-reveal.depth, 'Round');
+  const band = outer.subtract(inset).extrude(reveal.height + 0.1).translate(0, 0, reveal.bottomZ);
+  return lid.subtract(band);
 }
 
 export function boxShell(
@@ -512,7 +550,7 @@ export function applyScrewBossLidAt(
   wallThickness: number,
   walls: FootWalls,
 ): { base: Manifold; lid: Manifold } {
-  const spec = SCREW_HOLE_SPECS[screw.size];
+  const spec = fastenerRecipeForScrew(screw).dimensions;
   const pilotDiameter =
     screw.insertType === 'heat-set' ? spec.heatSetHoleDiameter : spec.selfTapPilotDiameter;
   const outerDiameter = bossOuterDiameter(pilotDiameter);
@@ -585,7 +623,7 @@ export function applyScrewBossLidAt(
 const HEAT_SET_RELIEF = 1.5;
 
 export function bossRadiusFor(screw: ScrewSpec): number {
-  const spec = SCREW_HOLE_SPECS[screw.size];
+  const spec = fastenerRecipeForScrew(screw).dimensions;
   const pilotDiameter = screw.insertType === 'heat-set' ? spec.heatSetHoleDiameter : spec.selfTapPilotDiameter;
   return bossOuterDiameter(pilotDiameter) / 2;
 }
@@ -606,7 +644,7 @@ function applyExteriorScrewBossLidAt(
   positions: Array<[number, number]>,
   walls: FootWalls,
 ): { base: Manifold; lid: Manifold } {
-  const spec = SCREW_HOLE_SPECS[screw.size];
+  const spec = fastenerRecipeForScrew(screw).dimensions;
   const pilotDiameter =
     screw.insertType === 'heat-set' ? spec.heatSetHoleDiameter : spec.selfTapPilotDiameter;
   const outerDiameter = bossOuterDiameter(pilotDiameter);
@@ -947,6 +985,169 @@ export function applyFrictionLipLidStadium(
   return lid.add(skirt);
 }
 
+interface SlideRailLidParams {
+  length: number;
+  width: number;
+  height: number;
+  splitHeight: number;
+  wallThickness: number;
+  wallGap: number;
+  railDepth?: number;
+  closedEndStop?: boolean;
+}
+
+/**
+ * A flat, captive slide cover for rectangular-family bodies. The base grows a pair of outside
+ * flanges; the lid has a real U-channel on each side, with its lower hook passing *under* the
+ * flange. The cover can therefore translate along X but cannot lift away in Z. The front remains
+ * open for insertion/removal, so this is a calibrated slide fit rather than a claim of a sealed or
+ * high-retention latch.
+ */
+export function applySlideRailLid(
+  wasm: ManifoldToplevel,
+  base: Manifold,
+  params: SlideRailLidParams,
+): { base: Manifold; lid: Manifold } {
+  const { length, width, height, splitHeight, wallThickness, wallGap } = params;
+  const plateThickness = slideRailPlateThickness(wallThickness);
+  const rail = resolveSlideRailMetrics({
+    splitHeight,
+    wallThickness,
+    wallGap,
+    railDepth: params.railDepth,
+  });
+  const { channelClearance, flangeThickness, hookThickness, flangeZ, hookZ, railBottom } = rail;
+  const flangeProjection = Math.max(Math.min(wallThickness, 1.6), 1.2);
+  const railThickness = Math.max(Math.min(wallThickness, 1.6), 1.2);
+  // Overlap the mating cubes into their parent walls/rails. A merely coplanar union can look
+  // connected in a preview while exporting as separate shells.
+  const wallOverlap = Math.min(wallThickness * 0.25, 0.5);
+  const railOverlap = Math.min(railThickness * 0.25, 0.4);
+  const railLength = Math.max(length - wallThickness * 2, 8);
+  const railTop = height - plateThickness;
+  const railHeight = Math.max(railTop - railBottom, 1);
+  const plateWidth = width + 2 * (flangeProjection + channelClearance + railThickness);
+  const plate = wasm.Manifold.cube([length, plateWidth, plateThickness], true).translate(
+    0,
+    0,
+    height - plateThickness / 2,
+  );
+
+  let lid = plate;
+  let nextBase = base;
+
+  for (const sign of [-1, 1] as const) {
+    const flangeWidth = flangeProjection + wallOverlap;
+    const flangeY = sign * (width / 2 + flangeProjection / 2 - wallOverlap / 2);
+    nextBase = nextBase.add(
+      wasm.Manifold.cube([railLength, flangeWidth, flangeThickness], true).translate(0, flangeY, flangeZ),
+    );
+
+    const railY = sign * (width / 2 + flangeProjection + channelClearance + railThickness / 2);
+    lid = lid.add(
+      wasm.Manifold.cube([railLength, railThickness, railHeight], true).translate(0, railY, railBottom + railHeight / 2),
+    );
+    const hookWidth = flangeProjection + railOverlap;
+    const hookY = sign * (width / 2 + channelClearance + hookWidth / 2);
+    lid = lid.add(
+      wasm.Manifold.cube([railLength, hookWidth, hookThickness], true).translate(0, hookY, hookZ),
+    );
+  }
+
+  if (params.closedEndStop) {
+    const stopThickness = Math.max(Math.min(wallThickness, 1.6), 1.2);
+    // Drop below the seam so the stop overlaps the base's back wall vertically. It remains clear
+    // in X at the parked position, but a further closing slide produces a real face-to-face stop.
+    const stopBottom = Math.max(splitHeight - wallThickness, 0);
+    const stopTop = railTop + 0.05;
+    const stopHeight = Math.max(stopTop - stopBottom, 0.5);
+    // Leave a full wall thickness at each end of the stop clear of rounded inside corners.
+    const stopWidth = Math.max(width - 2 * (2 * wallThickness + channelClearance), 4);
+    // The stop faces the base's inside back wall with a clearance gap at the parked position.
+    // It gives the user a repeatable closed position without pretending the open end is latched.
+    const stopBackFace = length / 2 - wallThickness - channelClearance;
+    lid = lid.add(
+      wasm.Manifold.cube([stopThickness, stopWidth, stopHeight], true).translate(
+        stopBackFace - stopThickness / 2,
+        0,
+        stopBottom + stopHeight / 2,
+      ),
+    );
+  }
+
+  return { base: nextBase, lid };
+}
+
+interface BayonetLidCylinderParams {
+  innerDiameter: number;
+  splitHeight: number;
+  outerHeight: number;
+  wallThickness: number;
+  wallGap: number;
+  lugCount?: 2 | 3 | 4;
+  turnDeg?: 30 | 45 | 60;
+}
+
+/**
+ * Cylinder-only turn-to-lock closure. A lid lug lowers through the gap between base shelves, then
+ * turns under an offset shelf. The exported solids show the final locked state; lugs are suspended
+ * from the lid roof inside the cavity, so no rotating wall tab can scrape through the base wall.
+ */
+export function applyBayonetLidCylinder(
+  wasm: ManifoldToplevel,
+  base: Manifold,
+  lid: Manifold,
+  params: BayonetLidCylinderParams,
+): { base: Manifold; lid: Manifold } {
+  const count = Math.min(Math.max(Math.round(params.lugCount ?? 3), 2), 4);
+  const turnDeg = params.turnDeg ?? 30;
+  const innerR = Math.max(params.innerDiameter / 2, 2);
+  const lugHeight = Math.min(1.4, Math.max(params.wallThickness * 0.65, 0.9));
+  const lugRadial = Math.min(params.wallThickness * 0.7, 1.2);
+  const lugTangential = Math.min(Math.max(params.innerDiameter * 0.16, 7), 12);
+  const shelfHeight = Math.max(lugHeight * 0.65, 0.7);
+  const lugZ = params.splitHeight - lugHeight / 2 - 1.0;
+  const shelfZ = lugZ - lugHeight / 2 - shelfHeight / 2;
+  const clearance = Math.max(params.wallGap, 0.15);
+  const radialCenter = innerR - lugRadial * 1.5 - clearance;
+  const shelfRadial = lugRadial * 2 + clearance;
+  const shelfCenter = innerR - shelfRadial / 2;
+  let nextBase = base;
+  let nextLid = lid;
+
+  for (let i = 0; i < count; i += 1) {
+    const insertionAngle = (i * 360) / count;
+    const lockAngle = insertionAngle + turnDeg;
+    const lug = wasm.Manifold.cube([lugRadial, lugTangential, lugHeight], true).translate(radialCenter, 0, lugZ);
+    const tetherBottom = lugZ + lugHeight / 2;
+    const tetherTop = Math.max(params.outerHeight - params.wallThickness + 0.05, tetherBottom + 0.4);
+    const tether = wasm.Manifold.cube([lugRadial, lugTangential, tetherTop - tetherBottom], true).translate(
+      radialCenter,
+      0,
+      tetherBottom + (tetherTop - tetherBottom) / 2,
+    );
+    nextLid = nextLid.add(lug.add(tether).rotate(0, 0, lockAngle));
+
+    const shelf = wasm.Manifold.cube([shelfRadial, lugTangential + 1.2, shelfHeight], true).translate(
+      shelfCenter,
+      0,
+      shelfZ,
+    );
+    nextBase = nextBase.add(shelf.rotate(0, 0, lockAngle));
+
+    // A shallow positive stop at the end of each shelf gives the user a repeatable lock angle
+    // without turning the mechanism into a fragile snap. It stays inside the base wall.
+    const stop = wasm.Manifold.cube([shelfRadial, 0.8, lugHeight + shelfHeight], true).translate(
+      shelfCenter,
+      lugTangential / 2 + 0.4,
+      shelfZ + shelfHeight / 2,
+    );
+    nextBase = nextBase.add(stop.rotate(0, 0, lockAngle));
+  }
+
+  return { base: nextBase, lid: nextLid };
+}
+
 /**
  * Cantilever snap-fit lid (DESIGN.md §7/§13 stretch goal): a small flexible tab hangs from the
  * underside of the lid into the base cavity, ending in a barb that pokes past the tab's own face
@@ -961,15 +1162,17 @@ export function applyFrictionLipLidStadium(
  * before printing, this is a starting point not an engineered spec" spirit as the connector/screw
  * libraries.
  */
-const SNAP_BUMP_DEPTH = 0.8; // mm the barb pokes past the tab's flat outer face
-const SNAP_POCKET_CLEARANCE = 0.3; // mm clearance on every side of the barb's pocket in the base
+const SNAP_BUMP_DEPTH = 0.5; // mm the barb pokes past the tab's flat outer face
+const SNAP_POCKET_CLEARANCE = 0.25; // mm clearance on every side of the barb's pocket in the base
 const SNAP_FINGER_GAP = 1.0; // mm slot between adjacent fingers when fingerCount > 1
 
 function snapTabGeometry(splitHeight: number, wallThickness: number) {
-  const tabThickness = Math.min(wallThickness, 1.6);
-  const engagementDepth = Math.min(6, Math.max(splitHeight - wallThickness - 1, 2));
-  const rampSpan = Math.min(2.2, engagementDepth * 0.45);
-  const ledgeSpan = Math.min(0.7, engagementDepth * 0.15);
+  const tabThickness = Math.min(wallThickness, 1.3);
+  // A long, thinner arm is the principal FDM-safe lever: it lowers root strain far more
+  // effectively than multiplying fingers. Keep enough straight lead-in below the barb.
+  const engagementDepth = Math.min(10, Math.max(splitHeight - wallThickness - 1, 4));
+  const rampSpan = Math.min(1.8, engagementDepth * 0.3);
+  const ledgeSpan = Math.min(0.55, engagementDepth * 0.1);
   // The barb's peak sits a little above the tab's very tip, leaving a short flush lead-in below
   // the ramp so the corner isn't a knife edge, and stays clear of the tab's root at the other end.
   const peakZ = splitHeight - engagementDepth + rampSpan + 0.4;
@@ -1067,6 +1270,10 @@ function snapCombFingers(
   const fingers = fingerOffsets(combWidth, fingerCount);
 
   return fingers.map((finger) => {
+    // The tapered barb below already unloads the free end; retain a rectangular arm here because
+    // this piece must fuse through the lid's printed shell. A fully tapered arm needs a swept
+    // root fillet rather than a bare polygon extrusion, which is intentionally a future recipe
+    // rather than a visually plausible but disconnected solid.
     const tab = wasm.Manifold.cube([tabThickness, finger.width, engagementDepth], true).translate(
       -tabThickness / 2,
       0,

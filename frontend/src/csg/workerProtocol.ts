@@ -23,6 +23,19 @@ export interface CsgRequest {
   quality: CsgQuality;
 }
 
+export interface CalibrationRequest {
+  id: number;
+  type: 'calibration';
+  project: EnclosureProject;
+}
+
+export interface CalibrationCouponMesh {
+  id: string;
+  label: string;
+  mesh: MeshData;
+}
+
 export type CsgResponse =
   | { id: number; type: 'result'; parts: PartMesh[] }
+  | { id: number; type: 'calibration-result'; coupons: CalibrationCouponMesh[] }
   | { id: number; type: 'error'; message: string };

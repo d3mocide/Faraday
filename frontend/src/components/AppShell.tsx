@@ -2,6 +2,7 @@ import { useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { BoardPresetPicker } from './BoardPresetPicker';
 import { exportProjectJson, parseProjectJsonFile } from '../export/projectJson';
 import { useProjectStore } from '../state/projectStore';
+import { createDefaultProject } from '../state/defaultProject';
 
 import type { LidView } from './Viewport3D';
 
@@ -99,7 +100,13 @@ export function AppShell({
 
   const [presetsOpen, setPresetsOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleClearWorkspace = () => {
+    loadProject(createDefaultProject());
+    setConfirmClearOpen(false);
+  };
 
   const handleNameChange = (e: ChangeEvent<HTMLInputElement>) => {
     setProjectName(e.target.value);
@@ -169,6 +176,13 @@ export function AppShell({
           </button>
           <button type="button" onClick={handleLoadClick} title="Open Project JSON">
             Load
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmClearOpen(true)}
+            title="Reset to a blank project -- undoable with Ctrl+Z"
+          >
+            Clear
           </button>
           <input
             ref={fileInputRef}
@@ -292,6 +306,25 @@ export function AppShell({
       )}
       <main className="app-main">{children}</main>
       {presetsOpen && <BoardPresetPicker onClose={() => setPresetsOpen(false)} />}
+      {confirmClearOpen && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal">
+            <h3>Clear workspace?</h3>
+            <p>
+              This replaces the current project with a blank one. Nothing on disk is touched, and
+              Ctrl+Z brings the current design right back.
+            </p>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setConfirmClearOpen(false)}>
+                Cancel
+              </button>
+              <button type="button" className="btn-danger-outline" onClick={handleClearWorkspace}>
+                Clear Workspace
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

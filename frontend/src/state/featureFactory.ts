@@ -49,8 +49,14 @@ export function buildPresetFeatures(preset: BoardPreset): Feature[] {
   }
 
   const { length, width, height } = preset.body.outer;
+  // A guide-only board (corner guides, no holes) rests at the guide height, not the (unused, for
+  // that case) hole standoff height -- IO ports measured "above the board" need the real one.
+  const restHeight =
+    preset.boardMount?.cornerGuides && preset.boardMount.holes.length === 0
+      ? preset.boardMount.cornerGuides.height
+      : preset.boardMount?.standoff.height;
   const boardTopZ = preset.boardMount
-    ? preset.body.wallThickness + preset.boardMount.standoff.height + preset.boardMount.boardThickness
+    ? preset.body.wallThickness + restHeight! + preset.boardMount.boardThickness
     : preset.body.wallThickness;
   for (const port of preset.io ?? []) {
     // Horizontal faces have two in-plane axes and no "height above the board" to speak of, so they
@@ -68,6 +74,7 @@ export function buildPresetFeatures(preset: BoardPreset): Feature[] {
       rotationDeg: port.rotationDeg ?? 0,
       connectorId: port.connectorId,
       connectorOverride: port.override ? structuredClone(port.override) : undefined,
+      mergedOpeningGroup: port.mergedOpeningGroup,
       custom: port.custom ? structuredClone(port.custom) : undefined,
       vent: port.vent ? structuredClone(port.vent) : undefined,
       fan: port.fan ? structuredClone(port.fan) : undefined,

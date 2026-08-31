@@ -1,5 +1,5 @@
 import { bodyGeometry, faceFrame } from '../csg/faceFrame';
-import type { BoardMountSpec, EnclosureBody, Feature } from '../types/project';
+import type { BoardMountSpec, EnclosureBody, Feature, SupportPadSpec } from '../types/project';
 
 /**
  * Works out where a board needs propping up and returns a ready-to-place support-pad row.
@@ -18,6 +18,18 @@ export interface OverhangSupport {
   feature: Feature;
 }
 
+/** A support row in world space, before it is materialized as a user-editable Feature. Keeping
+ * this derivation separate lets the automatic mount resolver use the same structural reasoning
+ * without inventing a persisted feature or an ID during each CSG regeneration. */
+export interface DerivedOverhangSupport {
+  edge: OverhangSupport['edge'];
+  unsupportedMm: number;
+  centerX: number;
+  centerY: number;
+  rotationDeg: number;
+  pad: SupportPadSpec;
+}
+
 /** Below this, an edge is close enough to a hole that a pad wouldn't earn its filament. */
 const MIN_OVERHANG_MM = 15;
 /** How far the pads sit in from the board's outline, so they bear on the PCB and not on air. */
@@ -25,11 +37,11 @@ const EDGE_INSET_MM = 1;
 /** Corners are held by the board's own stiffness, so the row stops short of them. */
 const CORNER_MARGIN_MM = 8;
 
-export function planOverhangSupport(
+export function deriveOverhangSupport(
   board: BoardMountSpec,
   boardFeature: Pick<Feature, 'u' | 'v' | 'rotationDeg'>,
   body: EnclosureBody,
-): OverhangSupport | null {
+): DerivedOverhangSupport | null {
   if (board.holes.length === 0) return null;
 
   const halfW = board.boardWidth / 2;
@@ -63,6 +75,35 @@ export function planOverhangSupport(
   const worldX = boardX + localX * Math.cos(theta) - localY * Math.sin(theta);
   const worldY = boardY + localX * Math.sin(theta) + localY * Math.cos(theta);
 
+  return {
+    edge: worst.edge,
+    unsupportedMm: worst.gap,
+    centerX: worldX,
+    centerY: worldY,
+    rotationDeg: boardFeature.rotationDeg + (worst.axis === 'y' ? 90 : 0),
+    pad: {
+      shape: 'rect',
+      width: padWidth,
+      depth: padDepth,
+      height: board.standoff.height,
+      count,
+      pitch,
+      axis: 'v',
+      continuous: true,
+    },
+  };
+}
+
+/** Materializes the derived support as an editable feature for the explicit inspector action. */
+export function planOverhangSupport(
+  board: BoardMountSpec,
+  boardFeature: Pick<Feature, 'u' | 'v' | 'rotationDeg'>,
+  body: EnclosureBody,
+): OverhangSupport | null {
+  const derived = deriveOverhangSupport(board, boardFeature, body);
+  if (!derived) return null;
+
+  const geom = bodyGeometry(body);
   const [faceWidth, faceDepth] = [
     geom.shape === 'box' || geom.shape === 'stadium' || geom.shape === 'wedge'
       ? geom.length
@@ -77,26 +118,16 @@ export function planOverhangSupport(
   ];
 
   return {
-    edge: worst.edge,
-    unsupportedMm: worst.gap,
+    edge: derived.edge,
+    unsupportedMm: derived.unsupportedMm,
     feature: {
       id: crypto.randomUUID(),
       type: 'support-pad',
       face: 'bottom',
-      u: worldX / faceWidth + 0.5,
-      v: worldY / faceDepth + 0.5,
-      // The pad's own width runs across the edge it props, so a row along the board's Y edge is
-      // turned 90 degrees relative to one along its X edge.
-      rotationDeg: boardFeature.rotationDeg + (worst.axis === 'y' ? 90 : 0),
-      pad: {
-        shape: 'rect',
-        width: padWidth,
-        depth: padDepth,
-        height: board.standoff.height,
-        count,
-        pitch,
-        axis: 'v',
-      },
+      u: derived.centerX / faceWidth + 0.5,
+      v: derived.centerY / faceDepth + 0.5,
+      rotationDeg: derived.rotationDeg,
+      pad: derived.pad,
     },
   };
 }

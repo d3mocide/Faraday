@@ -2,15 +2,19 @@ import type { CrossSection, Manifold, ManifoldToplevel } from 'manifold-3d';
 import type {
   ConnectorLibraryEntry,
   ConnectorSizeOverride,
+  CornerGuideSpec,
   ExternalMountSpec,
   Face,
   FanMountSpec,
   Feature,
   VentSpec,
 } from '../types/project';
+import { findConnector } from '../connectors/library';
 import { cornerAnchor, faceFrame, polygonFacetAngleDeg, supportPadPositions, type BodyGeometry } from './faceFrame';
+import type { ResolvedBoardMountPlan, ResolvedBoardPost } from './mountPlan';
 import { cylinderZ } from './primitives';
 import { MIN_SKIN } from './printRules';
+import type { PrintRules } from './printRules';
 
 interface HoleDims {
   holeShape: 'circle' | 'rect' | 'dshape';
@@ -162,6 +166,35 @@ export function buildCustomHole(
       : { holeShape: 'rect', width: spec.width, height: spec.height ?? spec.width };
   const cross = holeCrossSection(wasm, dims).rotate(feature.rotationDeg);
   return extrudeThroughWall(cross, feature, geom, wallThickness);
+}
+
+/** Adds a thin external frame around a functional opening. It preserves the exact opening itself,
+ * so hardware-owned port dimensions never move; only the surrounding local material is added. */
+export function buildPortFrame(
+  wasm: ManifoldToplevel,
+  feature: Feature,
+  geom: BodyGeometry,
+  rules: PrintRules,
+): Manifold | null {
+  if (!feature.portFrame) return null;
+  let dims: HoleDims;
+  if (feature.type === 'connector-cutout' && feature.connectorId) {
+    const entry = findConnector(feature.connectorId);
+    if (!entry) return null;
+    dims = connectorDims(entry, feature.connectorOverride);
+  } else if (feature.type === 'custom-hole' && feature.custom) {
+    dims = feature.custom.shape === 'circle'
+      ? { holeShape: 'circle', diameter: feature.custom.width }
+      : { holeShape: 'rect', width: feature.custom.width, height: feature.custom.height ?? feature.custom.width };
+  } else {
+    return null;
+  }
+  const inner = holeCrossSection(wasm, dims).rotate(feature.rotationDeg);
+  const border = Math.max(feature.portFrame.border ?? rules.minRib, rules.minRib);
+  const depth = Math.max(feature.portFrame.depth ?? rules.minSkin, rules.minSkin);
+  const ring = inner.offset(border, 'Round').subtract(inner);
+  const [x, y, z] = faceFrame(feature.face, geom).toWorld(feature.u, feature.v);
+  return orientOutward(ring.extrude(depth), feature.face, feature.u, geom).translate(x, y, z);
 }
 
 function ventCrossSection(wasm: ManifoldToplevel, spec: VentSpec): CrossSection {
@@ -343,19 +376,56 @@ export function buildSupportPad(
   const spec = feature.pad;
   if (!spec) throw new Error('support-pad feature is missing its pad spec');
   const height = Math.max(spec.height, 0.5);
+  const positions = supportPadPositions(feature, geom);
+
+  const rail = continuousSupportRail(wasm, spec, positions, wallThickness, height);
+  if (rail) return rail;
 
   let solid: Manifold | null = null;
-  for (const [x, y] of supportPadPositions(feature, geom)) {
-    const pillar =
-      spec.shape === 'round'
-        ? cylinderZ(wasm, Math.max(spec.width, 1), height, wallThickness).translate(x, y, 0)
-        : wasm.CrossSection.square([Math.max(spec.width, 1), Math.max(spec.depth, 1)], true)
-            .rotate(feature.rotationDeg)
-            .extrude(height)
-            .translate(x, y, wallThickness);
+  for (const [x, y] of positions) {
+    const pillar = supportPadAt(wasm, spec, x, y, feature.rotationDeg, wallThickness, height);
     solid = solid ? solid.add(pillar) : pillar;
   }
   return solid!;
+}
+
+function supportPadAt(
+  wasm: ManifoldToplevel,
+  spec: NonNullable<Feature['pad']>,
+  x: number,
+  y: number,
+  rotationDeg: number,
+  wallThickness: number,
+  height = Math.max(spec.height, 0.5),
+): Manifold {
+  return spec.shape === 'round'
+    ? cylinderZ(wasm, Math.max(spec.width, 1), height, wallThickness).translate(x, y, 0)
+    : wasm.CrossSection.square([Math.max(spec.width, 1), Math.max(spec.depth, 1)], true)
+        .rotate(rotationDeg)
+        .extrude(height)
+        .translate(x, y, wallThickness);
+}
+
+/** A continuous rectangular version of a repeated support-pad row. The actual row direction is
+ * measured from the resolved positions so board rotation is faithfully carried into the rail. */
+function continuousSupportRail(
+  wasm: ManifoldToplevel,
+  spec: NonNullable<Feature['pad']>,
+  positions: Array<[number, number]>,
+  wallThickness: number,
+  height: number,
+): Manifold | null {
+  if (!spec.continuous || spec.shape !== 'rect' || positions.length < 2) return null;
+  const [firstX, firstY] = positions[0];
+  const [lastX, lastY] = positions[positions.length - 1];
+  const span = Math.hypot(lastX - firstX, lastY - firstY);
+  const angleDeg = (Math.atan2(lastY - firstY, lastX - firstX) * 180) / Math.PI;
+  const along = spec.axis === 'v' ? Math.max(spec.depth, 1) : Math.max(spec.width, 1);
+  const across = spec.axis === 'v' ? Math.max(spec.width, 1) : Math.max(spec.depth, 1);
+  return wasm.CrossSection.square([span + along, across], true)
+    .rotate(angleDeg)
+    .extrude(height)
+    .translate((firstX + lastX) / 2, (firstY + lastY) / 2, wallThickness);
 }
 
 /** One floor-standing standoff solid (boss + screw pilot bore), optionally flared out at its root
@@ -389,6 +459,49 @@ function standoffAt(
     0,
   );
   return boss.subtract(bore);
+}
+
+/** A vertical, profile-thickness web that joins a board standoff to the nearest box cavity wall.
+ * It deliberately leaves the rest of the floor open for cables and airflow: this is a wall tie,
+ * not a solid block filling the entire corner. It is only selected by an explicit board-mount auto
+ * strategy and only when the post is already close enough to that wall. */
+function wallTieAt(
+  wasm: ManifoldToplevel,
+  post: ResolvedBoardPost,
+  standoff: NonNullable<Feature['standoff']>,
+  wallThickness: number,
+): Manifold | null {
+  const tie = post.tie;
+  if (!tie) return null;
+
+  // The plan already proved that this is a nearby box wall. The 0.2mm overlap fuses the web to
+  // both the boss and case wall without materially shrinking the cavity.
+  const overlap = 0.2;
+  const { x, y } = post;
+  const radius = Math.max(standoff.outerDiameter, 1) / 2;
+  const rib = tie.ribWidth;
+  const height = tie.height;
+  const floorZ = wallThickness;
+
+  if (tie.axis === 'x') {
+    const postEdge = x + tie.sign * (radius - overlap);
+    const wallEdge = tie.wall + tie.sign * overlap;
+    const minX = Math.min(postEdge, wallEdge);
+    return wasm.Manifold.cube([Math.abs(wallEdge - postEdge), rib, height], false).translate(
+      minX,
+      y - rib / 2,
+      floorZ,
+    );
+  }
+
+  const postEdge = y + tie.sign * (radius - overlap);
+  const wallEdge = tie.wall + tie.sign * overlap;
+  const minY = Math.min(postEdge, wallEdge);
+  return wasm.Manifold.cube([rib, Math.abs(wallEdge - postEdge), height], false).translate(
+    x - rib / 2,
+    minY,
+    floorZ,
+  );
 }
 
 /** Builds a floor-mounted standoff (boss + screw pilot bore) for a standoff feature. Always rises from the base floor. */
@@ -828,30 +941,135 @@ export function buildExternalMount(
 }
 
 
-/** Builds a board-mount feature: one standoff per mounting hole, the whole pattern positioned at
- * the feature's floor location and spun about it by rotationDeg. The board outline itself is a
- * viewport-only ghost (never part of the printed geometry). */
+/** One friction-fit corner guide: an L-shaped post that hugs a board's corner along the inside
+ * faces of its two arms. Built with its own corner at the local origin and both arms running
+ * toward the board center, then rotated to the correct one of the four 90-degree corner
+ * orientations and moved outward from the board's true corner by `clearance` so the board drops in
+ * without binding on the way down. `cornerX`/`cornerY` are the true (un-offset) corner position in
+ * board-local coordinates; `signX`/`signY` (each +/-1) select which corner. */
+function cornerGuidePost(
+  wasm: ManifoldToplevel,
+  spec: CornerGuideSpec,
+  cornerX: number,
+  cornerY: number,
+  signX: 1 | -1,
+  signY: 1 | -1,
+  wallThickness: number,
+): Manifold {
+  const { CrossSection } = wasm;
+  const arm = Math.max(spec.armThickness, 0.6);
+  const leg = Math.max(spec.legLength, arm + 1);
+  const height = Math.max(spec.height, 0.5);
+
+  // Canonical shape for the (+x, +y) corner: corner at the local origin, both arms running toward
+  // -X/-Y (i.e. toward the board center). The other three corners are the same shape rotated by a
+  // multiple of 90 degrees -- an L bracket cycles through all four corner orientations under pure
+  // rotation, so there's no need for a second, mirrored polygon.
+  const points: [number, number][] = [
+    [0, 0],
+    [-leg, 0],
+    [-leg, -arm],
+    [-arm, -arm],
+    [-arm, -leg],
+    [0, -leg],
+  ];
+  const cross = new CrossSection(points);
+
+  const chamfer = Math.min(Math.max(spec.chamfer ?? 0, 0), height - 0.5);
+  const straightHeight = height - chamfer;
+  let solid = cross.extrude(Math.max(straightHeight, 0.1));
+  if (chamfer >= 0.5) {
+    // Lead-in: flares the post outward slightly as it nears the top (scaled about the corner
+    // point, which is the shape's own extreme outer point, so this only ever widens the inner gap,
+    // never closes it), so a board dropping in from above rides over the guide instead of catching
+    // its edge on a sharp rim -- same "no native fillets, shape the extrude instead" house style as
+    // standoffAt's conical root collar and wedgeShell's sloped ceiling.
+    const flare = 1 + chamfer / Math.max(leg, arm);
+    const cap = cross.extrude(chamfer, undefined, undefined, [flare, flare]).translate(0, 0, straightHeight);
+    solid = solid.add(cap);
+  }
+
+  const rotationDeg = signX === 1 ? (signY === 1 ? 0 : 270) : signY === 1 ? 90 : 180;
+  return solid
+    .rotate(0, 0, rotationDeg)
+    .translate(cornerX + signX * spec.clearance, cornerY + signY * spec.clearance, wallThickness);
+}
+
+/** Builds a board-mount feature: one standoff per mounting hole, plus (if the board specifies
+ * corner guides) one L-shaped friction post at each of the board's four corners, the whole pattern
+ * positioned at the feature's floor location and spun about it by rotationDeg. The board outline
+ * itself is a viewport-only ghost (never part of the printed geometry). */
 export function buildBoardMount(
   wasm: ManifoldToplevel,
   feature: Feature,
   geom: BodyGeometry,
   wallThickness: number,
+  plan: ResolvedBoardMountPlan,
 ): Manifold {
   const board = feature.board;
   if (!board) throw new Error('board-mount feature is missing its board spec');
-
   const [cx, cy] = faceFrame('bottom', geom).toWorld(feature.u, feature.v);
-  const theta = (feature.rotationDeg * Math.PI) / 180;
-  const cos = Math.cos(theta);
-  const sin = Math.sin(theta);
 
-  const standoffs = board.holes.map(({ x, y }) =>
-    standoffAt(wasm, board.standoff, cx + x * cos - y * sin, cy + x * sin + y * cos, wallThickness),
-  );
-  if (standoffs.length === 0) {
+  const solids: Manifold[] = [];
+  for (const post of plan.posts) {
+    solids.push(standoffAt(wasm, board.standoff, post.x, post.y, wallThickness));
+    const tie = wallTieAt(wasm, post, board.standoff, wallThickness);
+    if (tie) solids.push(tie);
+  }
+
+  if (plan.undersideSupport) {
+    const support = plan.undersideSupport;
+    const count = Math.max(support.pad.count ?? 1, 1);
+    const pitch = count > 1 ? Math.max(support.pad.pitch ?? 0, 0) : 0;
+    const theta = (support.rotationDeg * Math.PI) / 180;
+    const positions: Array<[number, number]> = [];
+    for (let index = 0; index < count; index++) {
+      const offset = (index - (count - 1) / 2) * pitch;
+      const localX = support.pad.axis === 'u' ? offset : 0;
+      const localY = support.pad.axis === 'u' ? 0 : offset;
+      const x = support.centerX + localX * Math.cos(theta) - localY * Math.sin(theta);
+      const y = support.centerY + localX * Math.sin(theta) + localY * Math.cos(theta);
+      positions.push([x, y]);
+    }
+    const rail = continuousSupportRail(
+      wasm,
+      support.pad,
+      positions,
+      wallThickness,
+      Math.max(support.pad.height, 0.5),
+    );
+    if (rail) {
+      solids.push(rail);
+    } else {
+      for (const [x, y] of positions) {
+        solids.push(supportPadAt(wasm, support.pad, x, y, support.rotationDeg, wallThickness));
+      }
+    }
+  }
+
+  if (board.cornerGuides) {
+    const hx = board.boardWidth / 2;
+    const hy = board.boardDepth / 2;
+    const corners: Array<[1 | -1, 1 | -1]> = [
+      [1, 1],
+      [-1, 1],
+      [-1, -1],
+      [1, -1],
+    ];
+    let guides: Manifold | null = null;
+    for (const [signX, signY] of corners) {
+      const post = cornerGuidePost(wasm, board.cornerGuides, signX * hx, signY * hy, signX, signY, wallThickness);
+      guides = guides ? guides.add(post) : post;
+    }
+    if (guides) {
+      solids.push((feature.rotationDeg ? guides.rotate(0, 0, feature.rotationDeg) : guides).translate(cx, cy, 0));
+    }
+  }
+
+  if (solids.length === 0) {
     return standoffAt(wasm, board.standoff, cx, cy, wallThickness);
   }
-  return wasm.Manifold.union(standoffs);
+  return wasm.Manifold.union(solids);
 }
 
 /** Builds a grip-ribs feature: parallel recessed tactile grip slots cut into a wall face. */

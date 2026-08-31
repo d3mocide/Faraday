@@ -9,7 +9,7 @@ import type {
 } from '../types/project';
 import { bodyGeometry, faceFrame } from './faceFrame';
 import { effectiveSplitHeight } from './lidSplit';
-import { cornerSurfaceInset, MIN_SKIN } from './printRules';
+import { cornerSurfaceInset, LEGACY_PRINT_RULES, type PrintRules } from './printRules';
 import { SCREW_HOLE_SPECS } from './screwLibrary';
 
 /** Every printed piece an enclosure can produce. Panels are identified by the wall they replace. */
@@ -35,7 +35,7 @@ export function partLabel(id: PartId): string {
  * take the original single-piece code path everywhere.
  *
  * `grooveDepth` is capped so the channel never eats a wall or the floor completely: at most
- * `wallThickness - MIN_SKIN`, leaving that much material outboard of the groove to actually hold
+ * `wallThickness - minSkin`, leaving the active profile's structural skin outboard of the groove to actually hold
  * the plate in.
  */
 /** Everything the CSG needs to put screws through a plate's ends, already clamped. */
@@ -97,15 +97,14 @@ export interface PanelMetrics {
   cornerLipRoom: number;
 }
 
-/** Three perimeters at a 0.4mm nozzle. The lip is the only thing holding an unscrewed plate in, so
- * it gets the structural floor rather than the absolute minimum a slicer can extrude. */
-const DEFAULT_RETAIN_LIP = MIN_SKIN;
-
+/** The lip is the only thing holding an unscrewed plate in, so it gets the active profile's
+ * structural floor rather than the absolute minimum a slicer can extrude. */
 function panelScrewMetrics(
   spec: PanelScrewSpec | undefined,
   thickness: number,
   plateBottomZ: number,
   plateTopZ: number,
+  rules: PrintRules,
 ): PanelScrewMetrics | null {
   if (!spec) return null;
   const hole = SCREW_HOLE_SPECS[spec.size];
@@ -114,14 +113,14 @@ function panelScrewMetrics(
   // A heat-set insert pushes a slug of molten plastic ahead of it, so the socket is bored deeper
   // than the insert is long; a self-tapping screw wants a couple of diameters of thread to bite.
   const boreDepth = heatSet ? hole.heatSetDepth + 1.5 : Math.max(boreDiameter * 3, 4);
-  const postDepth = Math.max(spec.postDepth, boreDepth + MIN_SKIN);
+  const postDepth = Math.max(spec.postDepth, boreDepth + rules.minSkin);
   // Wide enough that the bore, and the head sunk into the plate above it, both keep their skin.
-  const postWidth = Math.max(spec.postWidth, boreDiameter + 2 * MIN_SKIN, hole.headDiameter + 2 * MIN_SKIN);
+  const postWidth = Math.max(spec.postWidth, boreDiameter + 2 * rules.minSkin, hole.headDiameter + 2 * rules.minSkin);
   const counterboreDepth =
-    spec.headStyle === 'counterbore' ? Math.max(Math.min(thickness - MIN_SKIN, 1.6), 0) : 0;
+    spec.headStyle === 'counterbore' ? Math.max(Math.min(thickness - rules.minSkin, 1.6), 0) : 0;
 
   // Keep the head's counterbore clear of the plate's top and bottom edges.
-  const edgeInset = Math.max(hole.headDiameter / 2 + MIN_SKIN, 4);
+  const edgeInset = Math.max(hole.headDiameter / 2 + rules.minSkin, 4);
   const span = plateTopZ - plateBottomZ;
   const mid = (plateBottomZ + plateTopZ) / 2;
   const zPositions =
@@ -144,16 +143,16 @@ function panelScrewMetrics(
   };
 }
 
-export function panelMetrics(body: EnclosureBody): PanelMetrics | null {
+export function panelMetrics(body: EnclosureBody, rules: PrintRules = LEGACY_PRINT_RULES): PanelMetrics | null {
   if (body.shape !== 'box' || !body.panels || body.panels.faces.length === 0) return null;
   const spec = body.panels;
   const wallThickness = Math.max(body.wallThickness, 0.4);
   const splitHeight = effectiveSplitHeight(body);
-  const thickness = Math.max(spec.thickness, MIN_SKIN);
+  const thickness = Math.max(spec.thickness, rules.minSkin);
   const clearance = Math.min(Math.max(spec.fitClearance, 0), 1.5);
   const grooveDepth = Math.min(
     Math.max(spec.grooveDepth, 0.2),
-    Math.max(wallThickness - MIN_SKIN, 0.2),
+    Math.max(wallThickness - rules.minSkin, 0.2),
   );
   // The lip eats into the plate's thickness (the ends are rebated to slide behind it), so it can
   // never take so much that the rebated end stops being printable. The lip is also what the
@@ -161,15 +160,15 @@ export function panelMetrics(body: EnclosureBody): PanelMetrics | null {
   // intersects them with a shell shrunk by exactly this much so the lip keeps its full thickness
   // around a rounded or chamfered corner instead of tapering into the arc.
   // The fit clearance comes out of the same budget: the plate's rebated ear has to clear the lip
-  // by clearance/2 and still keep its own skin, so a plate needs 2*MIN_SKIN + clearance/2 of
+  // by clearance/2 and still keep its own skin, so a plate needs 2*minSkin + clearance/2 of
   // thickness before both halves of the joint are at full strength. Below that the two share what
   // there is, and runDesignChecks speaks up once either drops under MIN_WALL.
   const lipBudget = Math.max(thickness - clearance / 2, 0);
   const retainLip = Math.min(
-    Math.max(spec.retainLip ?? DEFAULT_RETAIN_LIP, 0),
+    Math.max(spec.retainLip ?? rules.minSkin, 0),
     // Give the ear its full skin where the plate can afford it, and split the budget evenly where
     // it can't -- starving one half of a joint to keep the other at target helps nobody.
-    Math.max(lipBudget - MIN_SKIN, lipBudget / 2),
+    Math.max(lipBudget - rules.minSkin, lipBudget / 2),
   );
   const channelBottomZ = wallThickness - grooveDepth;
   // The lid's cavity ceiling: how far the capture pocket can bite up from the seam before it runs
@@ -195,7 +194,7 @@ export function panelMetrics(body: EnclosureBody): PanelMetrics | null {
     // With lid capture the plate runs on past the base's rim into a matching groove in the lid's
     // underside; without it the plate stops flush with the rim and the flat lid holds it down.
     plateTopZ,
-    screw: panelScrewMetrics(spec.screw, thickness, plateBottomZ, plateTopZ),
+    screw: panelScrewMetrics(spec.screw, thickness, plateBottomZ, plateTopZ, rules),
     // Measured at the outermost point of the grip -- the far edge of the groove, which is the part
     // of the wall closest to the corner and therefore the first to run out of material.
     cornerLipRoom: Math.max(
@@ -222,6 +221,7 @@ export function isPanelFace(face: Face, metrics: PanelMetrics | null): face is P
 export function featurePart(
   feature: Pick<Feature, 'type' | 'face' | 'u' | 'v' | 'mount'>,
   body: EnclosureBody,
+  rules: PrintRules = LEGACY_PRINT_RULES,
 ): PartId {
   if (feature.type === 'standoff' || feature.type === 'board-mount' || feature.type === 'support-pad') {
     return 'base';
@@ -232,7 +232,7 @@ export function featurePart(
   const splitHeight = effectiveSplitHeight(body);
   const z = faceFrame(feature.face, bodyGeometry(body)).toWorld(feature.u, feature.v)[2];
 
-  const metrics = panelMetrics(body);
+  const metrics = panelMetrics(body, rules);
   // A corner-anchored mount hangs off the corner post, which is base/lid material -- panels stop
   // short of the corners, so it must never be routed to one even when its face is a panel face.
   const cornerAnchored = feature.type === 'external-mount' && feature.mount?.anchor === 'corner';

@@ -4,8 +4,9 @@ import type { ManifoldToplevel } from 'manifold-3d';
 import wasmUrl from 'manifold-3d/manifold.wasm?url';
 import { garbageCollectManifold, cleanup } from 'manifold-3d/lib/garbage-collector';
 import { generateEnclosure, orientPartForPrint } from './generateEnclosure';
+import { generateCalibrationCoupons } from './calibrationCoupons';
 import { extractMeshData } from './manifoldToGeometry';
-import type { CsgRequest, CsgResponse, PartMesh } from './workerProtocol';
+import type { CalibrationRequest, CsgRequest, CsgResponse, PartMesh } from './workerProtocol';
 
 let wasmPromise: Promise<ManifoldToplevel> | null = null;
 
@@ -20,10 +21,26 @@ function getWasm(): Promise<ManifoldToplevel> {
   return wasmPromise;
 }
 
-self.onmessage = async (event: MessageEvent<CsgRequest>) => {
-  const { id, project, quality } = event.data;
+self.onmessage = async (event: MessageEvent<CsgRequest | CalibrationRequest>) => {
+  const request = event.data;
+  const { id, project } = request;
   try {
     const wasm = await getWasm();
+    if (!('quality' in request)) {
+      const coupons = generateCalibrationCoupons(wasm, project).map((coupon) => {
+        const mesh = extractMeshData(coupon.manifold);
+        coupon.manifold.delete();
+        return { id: coupon.id, label: coupon.label, mesh };
+      });
+      const response: CsgResponse = { id, type: 'calibration-result', coupons };
+      self.postMessage(
+        response,
+        coupons.flatMap((coupon) => [coupon.mesh.positions.buffer, coupon.mesh.indices.buffer]),
+      );
+      return;
+    }
+
+    const { quality } = request;
     const result = generateEnclosure(wasm, project, quality);
 
     const parts: PartMesh[] = result.parts.map((part) => ({

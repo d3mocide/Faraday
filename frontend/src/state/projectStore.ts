@@ -5,9 +5,12 @@ import type {
   EdgeBevelSpec,
   EnclosureBody,
   EnclosureProject,
+  FastenerRecipeId,
   Feature,
   GasketSpec,
   LidType,
+  LidSurfaceTreatment,
+  ManufacturingProfileId,
   PanelFace,
   PanelScrewSpec,
   PanelSpec,
@@ -22,6 +25,8 @@ import type {
 } from '../types/project';
 import { loadAutosavedProject } from './autosave';
 import { createDefaultProject } from './defaultProject';
+import { fastenerRecipe } from '../fasteners/library';
+import { lidSplitRange } from '../csg/lidSplit';
 
 export interface BoardPresetBody {
   outer: { length: number; width: number; height: number };
@@ -50,6 +55,7 @@ interface ProjectStore {
   future: EnclosureProject[];
   setProjectName: (name: string) => void;
   setUnits: (units: Units) => void;
+  setManufacturingProfile: (profile: ManufacturingProfileId) => void;
   setBodyShape: (shape: BodyShape) => void;
   setBodyDimension: (
     key: 'length' | 'width' | 'height' | 'diameter' | 'radius' | 'heightFront' | 'heightBack',
@@ -59,10 +65,12 @@ interface ProjectStore {
   setCornerStyleType: (type: CornerStyleType) => void;
   setCornerRadius: (radius: number) => void;
   setLidType: (type: LidType) => void;
+  setLidSurfaceTreatment: (treatment: LidSurfaceTreatment) => void;
   setSplitHeight: (value: number) => void;
   setWallGap: (value: number) => void;
   setScrewSize: (size: ScrewSize) => void;
   setScrewInsertType: (insertType: ScrewInsertType) => void;
+  setScrewRecipe: (recipeId: FastenerRecipeId) => void;
   setScrewCount: (count: ScrewCount) => void;
   setScrewEdgeInset: (edgeInset: number | undefined) => void;
   setScrewPlacement: (placement: ScrewPlacement) => void;
@@ -101,6 +109,9 @@ interface ProjectStore {
   applyBoardPreset: (preset: BoardPresetBody, features?: Feature[]) => void;
   undo: () => void;
   redo: () => void;
+  /** Jumps straight to a given point in history (a reference from `past`/`future`, as surfaced by
+   * the History tab) rather than replaying undo()/redo() one step at a time. */
+  jumpToHistory: (target: EnclosureProject) => void;
 }
 
 function touch(project: EnclosureProject): EnclosureProject {
@@ -141,6 +152,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
 
     setUnits: (units) => mutate((p) => ({ ...p, units })),
 
+    setManufacturingProfile: (manufacturingProfile) => mutate((p) => ({ ...p, manufacturingProfile })),
+
     // Switching shape changes which fields `outer`/`cornerStyle` even have, so old feature
     // placements (face + u/v meant for the previous shape's geometry) can't be trusted to still
     // make sense -- cleared here, same precedent as applyBoardPreset.
@@ -154,7 +167,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
             ? current.outer.height
             : current.outer.height;
         const wallThickness = current.wallThickness;
-        const lid = current.lid;
+        const supportsSlideRail = shape === 'box' || shape === 'stadium' || shape === 'wedge';
+        const lid =
+          (current.lid.type === 'bayonet' && shape !== 'cylinder') ||
+          (current.lid.type === 'slide-rail' && !supportsSlideRail)
+            ? { ...current.lid, type: 'friction-lip' as const }
+            : current.lid;
 
         let body: EnclosureBody;
         if (shape === 'cylinder') {
@@ -211,24 +229,62 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
       ),
 
     setLidType: (type) =>
-      mutate((p) => ({ ...p, body: { ...p.body, lid: { ...p.body.lid, type } } })),
+      mutate((p) => {
+        const lid = { ...p.body.lid, type };
+        const body = { ...p.body, lid };
+        const { min, max } = lidSplitRange(body);
+        return {
+          ...p,
+          body: { ...body, lid: { ...lid, splitHeight: Math.min(Math.max(lid.splitHeight, min), max) } },
+        };
+      }),
+
+    setLidSurfaceTreatment: (surfaceTreatment) =>
+      mutate((p) => ({ ...p, body: { ...p.body, lid: { ...p.body.lid, surfaceTreatment } } })),
 
     setSplitHeight: (value) =>
-      mutate((p) => ({ ...p, body: { ...p.body, lid: { ...p.body.lid, splitHeight: value } } })),
+      mutate((p) => {
+        const { min, max } = lidSplitRange(p.body);
+        return {
+          ...p,
+          body: { ...p.body, lid: { ...p.body.lid, splitHeight: Math.min(Math.max(value, min), max) } },
+        };
+      }),
 
-    setWallGap: (value) =>
-      mutate((p) => ({ ...p, body: { ...p.body, lid: { ...p.body.lid, wallGap: value } } })),
+    setWallGap: (wallGap) =>
+      mutate((p) => {
+        const lid = { ...p.body.lid, wallGap };
+        const body = { ...p.body, lid };
+        const { min, max } = lidSplitRange(body);
+        return {
+          ...p,
+          body: { ...body, lid: { ...lid, splitHeight: Math.min(Math.max(lid.splitHeight, min), max) } },
+        };
+      }),
 
     setScrewSize: (size) =>
       mutate((p) => {
         const screw = p.body.lid.screw ?? defaultScrewSpec();
-        return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, size } } } };
+        return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, size, recipeId: undefined } } } };
       }),
 
     setScrewInsertType: (insertType) =>
       mutate((p) => {
         const screw = p.body.lid.screw ?? defaultScrewSpec();
-        return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, insertType } } } };
+        return { ...p, body: { ...p.body, lid: { ...p.body.lid, screw: { ...screw, insertType, recipeId: undefined } } } };
+      }),
+
+    setScrewRecipe: (recipeId) =>
+      mutate((p) => {
+        const recipe = fastenerRecipe(recipeId);
+        const screw = p.body.lid.screw ?? defaultScrewSpec();
+        return {
+          ...p,
+          body: {
+            ...p.body,
+            lid: { ...p.body.lid, screw: { ...screw, size: recipe.size, insertType: recipe.insertType, recipeId } },
+          },
+        };
       }),
 
     setScrewCount: (count) =>
@@ -441,11 +497,25 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         future: state.future.slice(1),
       });
     },
+
+    jumpToHistory: (target) => {
+      const state = get();
+      // Reference equality is enough: `target` is always one of the exact snapshot objects handed
+      // back out of `past`/`future`, never a reconstructed copy.
+      const timeline = [...state.past, state.project, ...state.future];
+      const idx = timeline.indexOf(target);
+      if (idx === -1) return;
+      set({
+        project: touch(timeline[idx]),
+        past: timeline.slice(0, idx),
+        future: timeline.slice(idx + 1),
+      });
+    },
   };
 });
 
 function defaultScrewSpec(): ScrewSpec {
-  return { size: 'M3', insertType: 'heat-set', count: 4 };
+  return { size: 'M3', insertType: 'heat-set', recipeId: 'starter-m3-heat-set', count: 4 };
 }
 
 function defaultGasketSpec(): { width: number; depth: number } {

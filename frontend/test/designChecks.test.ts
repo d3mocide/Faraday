@@ -48,6 +48,18 @@ const board: Feature = {
   board: BOARD_SPEC,
 };
 
+function sideCutout(v: number, height = 4): Feature {
+  return {
+    id: `cutout-${v}-${height}`,
+    type: 'custom-hole',
+    face: 'front',
+    u: 0.5,
+    v,
+    rotationDeg: 0,
+    custom: { shape: 'rect', width: 10, height },
+  };
+}
+
 /** A pad at (x, y) mm from the centre of the 100 x 80 floor. */
 function padAt(x: number, y: number, over: Partial<NonNullable<Feature['pad']>> = {}): Feature {
   return {
@@ -110,6 +122,19 @@ describe('design checks stay quiet when they cannot know', () => {
 });
 
 describe('design checks catch the real mistakes', () => {
+  it('flags an opening whose full envelope crosses the lid seam', () => {
+    // The 30mm-tall fixture splits at 24mm; a 4mm opening centred at 23mm runs across it.
+    const findings = runDesignChecks(project([sideCutout(23 / 30)]));
+    expect(findings.map((finding) => finding.title)).toContain('cutout crosses the lid seam');
+  });
+
+  it('uses the active profile clearance above a base opening', () => {
+    const p = project([sideCutout(20.8 / 30, 4)]);
+    p.manufacturingProfile = 'fdm-daily-petg-0.4';
+    const findings = runDesignChecks(p);
+    expect(findings.map((finding) => finding.title)).toContain('Only 1.20mm between cutout and the lid seam');
+  });
+
   it('flags a pad that is nowhere near a board', () => {
     const findings = runDesignChecks(project([board, padAt(45, 35)]));
     expect(findings).toHaveLength(1);

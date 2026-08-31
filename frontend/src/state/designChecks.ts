@@ -1,7 +1,10 @@
 import { getFeature2DBounds } from '../csg/blueprint2d';
 import { bodyGeometry, faceFrame, faceSize, supportPadPositions } from '../csg/faceFrame';
 import { featurePart, panelMetrics, partLabel, type PartId } from '../csg/parts';
-import { MIN_SKIN, MIN_WALL, MIN_WEB } from '../csg/printRules';
+import { effectiveSplitHeight } from '../csg/lidSplit';
+import { printRulesForProfile, type PrintRules } from '../csg/printRules';
+import { manufacturingProfileForProject } from './manufacturingProfiles';
+import { resolveLidSeamReveal, resolveRefinedLidField } from '../csg/lidTreatment';
 import type {
   BoardMountSpec,
   EnclosureProject,
@@ -102,7 +105,7 @@ interface CutoutBox {
   maxV: number;
 }
 
-function cutoutBoxes(project: EnclosureProject): CutoutBox[] {
+function cutoutBoxes(project: EnclosureProject, rules: PrintRules): CutoutBox[] {
   const geom = bodyGeometry(project.body);
   const boxes: CutoutBox[] = [];
   for (const feature of project.features) {
@@ -118,7 +121,7 @@ function cutoutBoxes(project: EnclosureProject): CutoutBox[] {
     const halfV = (bounds.widthMm * sin + bounds.heightMm * cos) / 2;
     boxes.push({
       feature,
-      part: featurePart(feature, project.body),
+      part: featurePart(feature, project.body, rules),
       face: feature.face,
       minU: bounds.centerMmU - halfU,
       maxU: bounds.centerMmU + halfU,
@@ -135,6 +138,7 @@ function usableFaceExtent(
   face: Face,
   part: PartId,
   project: EnclosureProject,
+  rules: PrintRules,
 ): { minU: number; maxU: number; minV: number; maxV: number } | null {
   const body = project.body;
   const geom = bodyGeometry(body);
@@ -146,7 +150,7 @@ function usableFaceExtent(
         : Math.max(body.cornerStyle.radius, 0)
       : 0;
 
-  const metrics = panelMetrics(body);
+  const metrics = panelMetrics(body, rules);
   if (part.startsWith('panel-') && metrics) {
     // A plate's opening stops at the wall it slides behind, and at the top and bottom of the plate.
     const halfU = sizeU / 2 - metrics.wallThickness;
@@ -193,6 +197,32 @@ function gapBetween(a: CutoutBox, b: CutoutBox): number {
   );
 }
 
+function sharesMergedOpening(a: CutoutBox, b: CutoutBox, boxes: readonly CutoutBox[]): boolean {
+  const group = a.feature.mergedOpeningGroup;
+  if (!group || group !== b.feature.mergedOpeningGroup) return false;
+
+  const visited = new Set<string>([a.feature.id]);
+  const pending = [a];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (current.feature.id === b.feature.id) return true;
+    for (const candidate of boxes) {
+      if (
+        candidate.feature.mergedOpeningGroup !== group ||
+        visited.has(candidate.feature.id) ||
+        candidate.face !== current.face ||
+        candidate.part !== current.part ||
+        gapBetween(current, candidate) > 0
+      ) {
+        continue;
+      }
+      visited.add(candidate.feature.id);
+      pending.push(candidate);
+    }
+  }
+  return false;
+}
+
 function describeFeature(feature: Feature): string {
   if (feature.type === 'connector-cutout' && feature.connectorId) return feature.connectorId;
   if (feature.type === 'vent') return 'vent';
@@ -208,19 +238,51 @@ function describeFeature(feature: Feature): string {
  * clamped silently -- but a port's position is functional, and quietly sliding an Ethernet jack to
  * buy a millimetre of web would produce a case that no longer fits the board it was measured for.
  */
-function marginFindings(project: EnclosureProject): DesignCheckFinding[] {
+function seamFindings(project: EnclosureProject, rules: PrintRules): DesignCheckFinding[] {
   const findings: DesignCheckFinding[] = [];
-  const boxes = cutoutBoxes(project);
+  const bodyHeight = project.body.shape === 'wedge' ? project.body.outer.heightBack : project.body.outer.height;
+  const splitV = effectiveSplitHeight(project.body) - bodyHeight / 2;
+
+  for (const box of cutoutBoxes(project, rules)) {
+    if (box.face === 'top' || box.face === 'bottom') continue;
+    // A slide-in panel is a separate printed piece that may deliberately run through the base/lid
+    // interface, so only openings routed to the base or lid itself need this seam check.
+    if (box.part !== 'base' && box.part !== 'lid') continue;
+
+    const seamGap = box.part === 'base' ? splitV - box.maxV : box.minV - splitV;
+    if (seamGap >= rules.minSkin - 1e-6) continue;
+
+    findings.push({
+      id: `${box.feature.id}:lid-seam`,
+      featureId: box.feature.id,
+      title:
+        seamGap <= 0
+          ? `${describeFeature(box.feature)} crosses the lid seam`
+          : `Only ${seamGap.toFixed(2)}mm between ${describeFeature(box.feature)} and the lid seam`,
+      detail:
+        seamGap <= 0
+          ? 'The opening would split across two printed parts. Move the opening, or change the lid split height.'
+          : `Keep at least ${rules.minSkin.toFixed(2)}mm of material at the seam for this print profile. Move the opening, or change the lid split height.`,
+    });
+  }
+
+  return findings;
+}
+
+function marginFindings(project: EnclosureProject, rules: PrintRules): DesignCheckFinding[] {
+  const findings: DesignCheckFinding[] = [];
+  const boxes = cutoutBoxes(project, rules);
 
   for (let i = 0; i < boxes.length; i++) {
     for (let j = i + 1; j < boxes.length; j++) {
       const a = boxes[i];
       const b = boxes[j];
       if (a.face !== b.face || a.part !== b.part) continue;
+      if (sharesMergedOpening(a, b, boxes)) continue;
       const gap = gapBetween(a, b);
       // Epsilon: these spans are built from board-relative offsets, so an exactly-on-target gap
       // can land a few ULPs under the threshold.
-      if (gap >= MIN_WEB - 1e-6) continue;
+      if (gap >= rules.minWeb - 1e-6) continue;
       findings.push({
         id: `${a.feature.id}:web:${b.feature.id}`,
         featureId: a.feature.id,
@@ -231,13 +293,13 @@ function marginFindings(project: EnclosureProject): DesignCheckFinding[] {
         detail:
           gap <= 0
             ? 'They merge into one opening. Move one of them, or make it a single cutout on purpose.'
-            : `A 0.4mm nozzle needs ${MIN_WEB}mm to print a web that holds. Move one opening, or narrow it.`,
+            : `${rules.lineWidth.toFixed(2)}mm line width needs ${rules.minWeb.toFixed(2)}mm to print a web that holds. Move one opening, or narrow it.`,
       });
     }
   }
 
   for (const box of boxes) {
-    const extent = usableFaceExtent(box.face, box.part, project);
+    const extent = usableFaceExtent(box.face, box.part, project, rules);
     if (!extent) continue;
     const margin = Math.min(
       box.minU - extent.minU,
@@ -245,7 +307,7 @@ function marginFindings(project: EnclosureProject): DesignCheckFinding[] {
       box.minV - extent.minV,
       extent.maxV - box.maxV,
     );
-    if (margin >= MIN_SKIN - 1e-6) continue;
+    if (margin >= rules.minSkin - 1e-6) continue;
     findings.push({
       id: `${box.feature.id}:edge-margin`,
       featureId: box.feature.id,
@@ -256,7 +318,7 @@ function marginFindings(project: EnclosureProject): DesignCheckFinding[] {
       detail:
         margin <= 0
           ? 'Part of the opening has no material around it at all. Move it inboard.'
-          : `Openings want ${MIN_SKIN}mm of material to the edge of their piece, or the edge breaks off in handling.`,
+          : `Openings want ${rules.minSkin.toFixed(2)}mm of material to the edge of their piece, or the edge breaks off in handling.`,
     });
   }
 
@@ -272,21 +334,67 @@ function marginFindings(project: EnclosureProject): DesignCheckFinding[] {
 export function runDesignChecks(project: EnclosureProject): DesignCheckFinding[] {
   const findings: DesignCheckFinding[] = [];
   const geom = bodyGeometry(project.body);
+  const profile = manufacturingProfileForProject(project);
+  const rules = printRulesForProfile(profile);
+
+  if (project.body.wallThickness < rules.minSkin - 1e-6) {
+    findings.push({
+      id: 'body:wall-thickness',
+      title: `Body walls are thinner than the ${rules.minSkin.toFixed(2)}mm profile target`,
+      detail:
+        `${project.body.wallThickness.toFixed(2)}mm is below ${profile.targetPerimeters}` +
+        ` target perimeters at ${rules.lineWidth.toFixed(2)}mm line width. Increase the wall, choose a lighter profile, or calibrate this printer/material combination.`,
+    });
+  }
+
+  if (project.body.lid.surfaceTreatment === 'refined' && !resolveRefinedLidField(project.body, rules)) {
+    findings.push({
+      id: 'lid:refined-field-unavailable',
+      title: 'The refined lid field does not fit this enclosure',
+      detail:
+        'It needs a box lid with enough top skin and clear room around the fastener heads. Increase the footprint or wall thickness, use a lighter profile, or return to the plain treatment.',
+    });
+  }
+
+  if (
+    project.body.lid.surfaceTreatment === 'field-marked' &&
+    !resolveLidSeamReveal(project.body, rules)
+  ) {
+    findings.push({
+      id: 'lid:seam-reveal-unavailable',
+      title: 'The lid seam accent needs more side-wall budget',
+      detail:
+        'The protected recessed label field can still print, but this profile leaves too little material for the shallow perimeter reveal. Increase the wall thickness, choose a lighter profile, or use the refined field style.',
+    });
+  }
+
+  for (const feature of project.features) {
+    if (feature.type !== 'board-mount' || feature.hidden || feature.board?.mountStrategy !== 'auto') continue;
+    if (geom.shape !== 'box') {
+      findings.push({
+        id: `${feature.id}:auto-ties-box-only`,
+        featureId: feature.id,
+        title: 'Automatic board-post wall ties currently need a box body',
+        detail:
+          'The post itself still prints, but no wall tie is added on this footprint. Use Posts only, or switch to a box while the curved/polygonal resolver is added.',
+      });
+    }
+  }
 
   // A lip the user asked for but can't have: the plate is too thin to rebate, so the panel ends up
   // with nothing holding it in. Choosing 0 deliberately is not flagged -- that's an opt-out, not a
   // mistake.
-  const panels = panelMetrics(project.body);
+  const panels = panelMetrics(project.body, rules);
   const requestedLip =
     project.body.shape === 'box' ? project.body.panels?.retainLip : undefined;
   const wantsLip = panels !== null && requestedLip !== 0;
-  if (wantsLip && panels.retainLip < MIN_WALL) {
-    const needed = (2 * MIN_SKIN + panels.clearance / 2).toFixed(1);
+  if (wantsLip && panels.retainLip < rules.minWall) {
+    const needed = (2 * rules.minSkin + panels.clearance / 2).toFixed(1);
     findings.push({
       id: 'panels:no-lip',
       title: 'Slide-in plates are too thin to be retained',
       detail:
-        `A plate needs ${needed}mm of thickness to give a ${MIN_SKIN}mm retaining lip and still ` +
+        `A plate needs ${needed}mm of thickness to give a ${rules.minSkin.toFixed(2)}mm retaining lip and still ` +
         'leave its own rebated end printable. At this thickness the lip is thinner than two ' +
         'perimeters and will snap off the first time the panel is pulled.' +
         (panels.screw ? ' The panel screws are still holding it.' : ''),
@@ -305,7 +413,8 @@ export function runDesignChecks(project: EnclosureProject): DesignCheckFinding[]
         'or switch the panels to screws.',
     });
   }
-  findings.push(...marginFindings(project));
+  findings.push(...seamFindings(project, rules));
+  findings.push(...marginFindings(project, rules));
 
   const boards = boardFootprints(project);
   if (boards.length === 0) return findings;

@@ -12,7 +12,7 @@ import {
   faceSize,
 } from '../csg/faceFrame';
 import type { PartKind } from '../csg/generateEnclosure';
-import { effectiveSplitHeight } from '../csg/lidSplit';
+import { effectiveSplitHeight, lidSplitRange } from '../csg/lidSplit';
 import { meshDataToBufferGeometry } from '../csg/meshToBufferGeometry';
 import { featurePart, type PartId } from '../csg/parts';
 import { snapValue } from '../csg/snapping';
@@ -744,11 +744,7 @@ export function Viewport3D({
         raycaster.setFromCamera(pointer, camera);
         if (raycaster.ray.intersectPlane(heightDragPlane(), scratchVec)) {
           const body = bodyRef.current;
-          const outerH = body.shape === 'wedge' ? body.outer.heightBack : body.outer.height;
-          // Keep split within [wallThickness+1, outerHeight-wallThickness-1] so both lid and
-          // body retain at least 1mm of interior room.
-          const minSplit = body.wallThickness + 1;
-          const maxSplit = outerH - body.wallThickness - 1;
+          const { min: minSplit, max: maxSplit } = lidSplitRange(body);
           const splitHeight = Math.min(Math.max(scratchVec.z, minSplit), maxSplit);
           callbacksRef.current.onResizeBody({ splitHeight });
         }

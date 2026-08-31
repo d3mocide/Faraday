@@ -1,4 +1,6 @@
 import type { EnclosureProject } from '../types/project';
+import { MANUFACTURING_PROFILES } from './manufacturingProfiles';
+import { FASTENER_RECIPES } from '../fasteners/library';
 
 /**
  * Minimal structural check on untrusted JSON (autosave restore, imported files) -- not a full
@@ -12,6 +14,13 @@ export function isValidEnclosureProject(data: unknown): data is EnclosureProject
   if (p.units !== 'mm' && p.units !== 'in') return false;
   if (typeof p.createdAt !== 'string' || typeof p.updatedAt !== 'string') return false;
   if (!Array.isArray(p.features)) return false;
+  if (
+    p.manufacturingProfile !== undefined &&
+    (typeof p.manufacturingProfile !== 'string' ||
+      !MANUFACTURING_PROFILES.some((profile) => profile.id === p.manufacturingProfile))
+  ) {
+    return false;
+  }
 
   if (typeof p.body !== 'object' || p.body === null) return false;
   const body = p.body as Record<string, unknown>;
@@ -60,7 +69,16 @@ export function isValidEnclosureProject(data: unknown): data is EnclosureProject
   }
 
   if (typeof body.lid !== 'object' || body.lid === null) return false;
-  if (typeof (body.lid as Record<string, unknown>).type !== 'string') return false;
+  const lid = body.lid as Record<string, unknown>;
+  if (typeof lid.type !== 'string') return false;
+  if (lid.screw !== undefined) {
+    if (typeof lid.screw !== 'object' || lid.screw === null) return false;
+    const screw = lid.screw as Record<string, unknown>;
+    if (screw.recipeId !== undefined) {
+      const recipe = FASTENER_RECIPES.find((entry) => entry.id === screw.recipeId);
+      if (!recipe || screw.size !== recipe.size || screw.insertType !== recipe.insertType) return false;
+    }
+  }
 
   return true;
 }

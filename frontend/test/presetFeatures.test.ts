@@ -6,9 +6,10 @@ import { findConnector } from '../src/connectors/library';
 import { bossPositions, bossRadiusFor } from '../src/csg/primitives';
 import { featurePart } from '../src/csg/parts';
 import { runDesignChecks } from '../src/state/designChecks';
+import { MANUFACTURING_PROFILES } from '../src/state/manufacturingProfiles';
 import { BOARD_PRESETS, type BoardPreset } from '../src/presets/boards';
 import { buildPresetFeatures } from '../src/state/featureFactory';
-import type { EnclosureProject, ScrewSpec } from '../src/types/project';
+import type { EnclosureProject, ManufacturingProfileId, ScrewSpec } from '../src/types/project';
 import { getTestWasm } from './helpers/wasm';
 import { isWatertight } from './helpers/geometry';
 
@@ -24,7 +25,7 @@ beforeAll(async () => {
 });
 
 /** Mirrors what applyBoardPreset produces in the store: preset body + prebuilt features. */
-function projectFromPreset(preset: BoardPreset): EnclosureProject {
+function projectFromPreset(preset: BoardPreset, manufacturingProfile?: ManufacturingProfileId): EnclosureProject {
   const now = '2026-01-01T00:00:00.000Z';
   return {
     id: preset.id,
@@ -32,6 +33,7 @@ function projectFromPreset(preset: BoardPreset): EnclosureProject {
     units: 'mm',
     createdAt: now,
     updatedAt: now,
+    manufacturingProfile,
     body: {
       shape: 'box',
       outer: preset.body.outer,
@@ -73,17 +75,14 @@ describe('board preset IO layouts', () => {
   it('every preset with io produces a board-mount or is a documented board-less starter', () => {
     // Board-less presets (no boardMount) measure their io ports from the interior floor instead
     // of a board's top surface -- see buildPresetFeatures in featureFactory.ts. The sealed outdoor
-    // node has no board at all; the Jetson devkit, XIAO ESP32, and Wio-WM6180 HaLow carrier have a
-    // real board but ship without a boardMount because there's genuinely no mounting-hole pattern
-    // to place (Jetson: NVIDIA's docs don't dimension one; XIAO/Wio-WM6180: no published mounting
-    // holes at all -- see each preset's notes). Anything else with io but no boardMount is probably
-    // a mistake (a board preset missing its mount pattern).
-    const knownBoardless = new Set([
-      'sealed-outdoor-node',
-      'jetson-orin-nano-devkit',
-      'seeed-xiao-esp32',
-      'wio-wm6180-halow-xiao',
-    ]);
+    // node has no board at all; the Jetson devkit and XIAO ESP32 have a real board but ship without
+    // a boardMount because there's genuinely no mounting-hole pattern to place (Jetson: NVIDIA's
+    // docs don't dimension one; XIAO: no published mounting holes at all -- see each preset's
+    // notes). The Wio-WM6180 HaLow carrier is the same "no published holes" case, but it does carry
+    // a boardMount now -- corner guides (friction fit) instead of holes+standoff, so it isn't in
+    // this allowlist. Anything else with io but no boardMount is probably a mistake (a board preset
+    // missing its mount pattern).
+    const knownBoardless = new Set(['sealed-outdoor-node', 'jetson-orin-nano-devkit', 'seeed-xiao-esp32']);
     for (const preset of BOARD_PRESETS) {
       if (preset.io && !preset.boardMount) {
         expect(knownBoardless.has(preset.id), `${preset.id} has io but no boardMount`).toBe(true);
@@ -118,14 +117,34 @@ describe('board preset IO layouts', () => {
     }
   });
 
-  it('no shipped preset trips its own design checks', () => {
+  it('no shipped preset trips design checks under any supported print profile', () => {
     // The checks (state/designChecks.ts) encode what we tell users is wrong -- a preset that fires
     // one is either a broken preset or a broken rule, and either way we want to hear about it here
     // rather than from someone applying it.
-    for (const preset of BOARD_PRESETS) {
-      const findings = runDesignChecks(projectFromPreset(preset));
-      expect(findings.map((f) => `${preset.id}: ${f.title}`)).toEqual([]);
+    const violations: string[] = [];
+    for (const profile of MANUFACTURING_PROFILES) {
+      for (const preset of BOARD_PRESETS) {
+        const project = projectFromPreset(preset, profile.id);
+        const featureNames = new Map(
+          project.features.map((feature, index) => [feature.id, `${index}:${feature.connectorId ?? feature.type}`]),
+        );
+        const findings = runDesignChecks(project);
+        violations.push(
+          ...findings.map(
+            (finding) =>
+              `${preset.id}/${profile.id}: ${finding.title}` +
+              (finding.featureId
+                ? ` [${featureNames.get(finding.featureId)}${
+                    finding.id.includes(':web:')
+                      ? ` ↔ ${featureNames.get(finding.id.split(':web:')[1])}`
+                      : ''
+                  }]`
+                : ''),
+          ),
+        );
+      }
     }
+    expect(violations).toEqual([]);
   });
 
   // Presets that put their screw columns outside the walls are exempt: the check below is about
@@ -173,14 +192,16 @@ describe('board preset IO layouts', () => {
   });
 
   for (const preset of BOARD_PRESETS.filter((p) => p.boardMount || (p.io && p.io.length > 0))) {
-    it(`${preset.id}: full preset generates watertight parts`, () => {
-      const result = generateEnclosure(wasm, projectFromPreset(preset), 'export');
+    for (const profile of MANUFACTURING_PROFILES) {
+      it(`${preset.id}/${profile.id}: full preset generates watertight parts`, () => {
+      const result = generateEnclosure(wasm, projectFromPreset(preset, profile.id), 'export');
       for (const part of result.parts) {
         const mesh = extractMeshData(part.manifold);
         part.manifold.delete();
         expect(isWatertight(mesh), `${part.id} watertight`).toBe(true);
       }
     });
+    }
   }
 });
 

@@ -2,7 +2,48 @@ import { useState, useMemo } from 'react';
 import { CONNECTOR_LIBRARY } from '../connectors/library';
 import { FAN_PRESETS } from '../csg/fanLibrary';
 import { BOARD_MOUNT_PRESETS } from '../presets/boardMounts';
+import { InfoTooltip } from './InfoTooltip';
 import type { ConnectorCategory, ConnectorLibraryEntry } from '../types/project';
+
+// Past this length, `.card-note`'s 2-line clamp is almost certainly cutting the text off, so the
+// card earns an icon revealing the full note -- same heuristic as BoardPresetPicker's, tuned down
+// for this grid's narrower single-column cards.
+const CARD_NOTE_TRUNCATE_THRESHOLD = 140;
+
+/** A palette card whose note is real (data-driven, variable-length) rather than a short fixed
+ * string -- shared by the board-preset and connector grids below, the two places long enough to
+ * actually get clipped. The info icon is a sibling of the pick-button, not nested inside it: a
+ * <button> inside a <button> is invalid HTML and breaks click handling. */
+function PaletteCard({
+  label,
+  badge,
+  notes,
+  armed,
+  onClick,
+}: {
+  label: string;
+  badge: string;
+  notes: string;
+  armed: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <div className="palette-card-row">
+      <button type="button" className={armed ? 'palette-card armed' : 'palette-card'} onClick={onClick}>
+        <div className="card-top">
+          <span className="card-name">{label}</span>
+          <span className="dim-badge">{badge}</span>
+        </div>
+        <span className="card-note">{notes}</span>
+      </button>
+      {notes.length > CARD_NOTE_TRUNCATE_THRESHOLD && (
+        <span className="card-info-anchor">
+          <InfoTooltip label={`Full notes for ${label}`}>{notes}</InfoTooltip>
+        </span>
+      )}
+    </div>
+  );
+}
 
 export type ArmedFeatureTemplate =
   | { type: 'connector-cutout'; connectorId: string; label: string }
@@ -492,21 +533,16 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
                 const isArmed =
                   armed?.type === 'board-mount' && armed.boardPresetId === preset.id;
                 return (
-                  <button
+                  <PaletteCard
                     key={preset.id}
-                    type="button"
-                    className={isArmed ? 'palette-card armed' : 'palette-card'}
-                    title={preset.notes}
+                    label={preset.label}
+                    badge={preset.badge}
+                    notes={preset.notes}
+                    armed={isArmed}
                     onClick={() =>
                       onArm({ type: 'board-mount', boardPresetId: preset.id, label: preset.label })
                     }
-                  >
-                    <div className="card-top">
-                      <span className="card-name">{preset.label}</span>
-                      <span className="dim-badge">{preset.badge}</span>
-                    </div>
-                    <span className="card-note">{preset.notes}</span>
-                  </button>
+                  />
                 );
               })}
             </div>
@@ -602,21 +638,16 @@ export function FeaturePalette({ armed, onArm, onDisarm }: FeaturePaletteProps) 
                 const badge = getDimensionBadge(entry);
                 const isArmed = armed?.type === 'connector-cutout' && armed.connectorId === entry.id;
                 return (
-                  <button
+                  <PaletteCard
                     key={entry.id}
-                    type="button"
-                    className={isArmed ? 'palette-card armed' : 'palette-card'}
-                    title={entry.notes}
+                    label={entry.label}
+                    badge={badge}
+                    notes={entry.notes ?? ''}
+                    armed={isArmed}
                     onClick={() =>
                       onArm({ type: 'connector-cutout', connectorId: entry.id, label: entry.label })
                     }
-                  >
-                    <div className="card-top">
-                      <span className="card-name">{entry.label}</span>
-                      <span className="dim-badge">{badge}</span>
-                    </div>
-                    <span className="card-note">{entry.notes}</span>
-                  </button>
+                  />
                 );
               })}
             </div>

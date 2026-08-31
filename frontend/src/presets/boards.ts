@@ -78,6 +78,9 @@ export interface BoardIoCutout {
   /** ...or something that grows outward instead of cutting in (wall-mount ear, external post).
    * Not an "IO port", but positioned board-relative exactly like one, so it rides the same list. */
   mount?: ExternalMountSpec;
+  /** Opening group for preset-only relief cuts that deliberately merge dense neighbouring ports
+   * into one compound opening rather than leaving an unprintable web between them. */
+  mergedOpeningGroup?: string;
   face: Face;
   alongMm: number;
   aboveBoardMm: number;
@@ -173,11 +176,31 @@ export const BOARD_PRESETS: BoardPreset[] = [
     id: 'wio-wm6180-halow-xiao',
     label: 'Seeed Wio-WM6180 Wi-Fi HaLow (XIAO)',
     notes:
-      "Fits the Wio-WM6180 Wi-Fi HaLow carrier board for XIAO (42x25mm per Seeed's product listing) with a XIAO plugged into the carrier's expansion header on top: an SMA bulkhead on the right wall for the antenna (the onboard FGH100M-H radio uses an IPEX/U.FL connector -- route a short U.FL-to-SMA pigtail to the bulkhead), a USB-C cutout on the left wall for the XIAO's own port (power/flashing), and a lid vent since the HaLow radio can run warm. No official mounting-hole pattern is published for this board, so -- like the other XIAO presets -- this is dimension + IO only, no board-mount. Sized independently around the documented board footprint, not measured off the community Printables case it's named after (inaccessible to inspect) -- same 'verify before printing' tier as the rest of the library.",
-    body: { outer: { length: 62, width: 38, height: 22 }, wallThickness: 2, splitHeight: 14 },
+      "Fits the Wio-WM6180 Wi-Fi HaLow carrier board for XIAO (42x25mm per Seeed's product listing) with a XIAO plugged into the carrier's expansion header on top: an SMA bulkhead on the right wall for the antenna (the onboard FGH100M-H radio uses an IPEX/U.FL connector -- route a short U.FL-to-SMA pigtail to the bulkhead), a USB-C cutout on the left wall for the XIAO's own port (power/flashing), and a lid vent since the HaLow radio can run warm. No official mounting-hole pattern is published for this board (checked Seeed's wiki, product page and GitHub discussions -- the wiki lists the module's own dimensions as literally 'TBD'), so -- unlike a documented-hole board -- this ships with friction-fit corner guides instead of screwed standoffs: four L-shaped posts hug the board's corners, no fasteners into the PCB at all. Friction-lip lid (like the other XIAO presets) so there are no interior screw bosses competing for space with the guides in this small a cavity. Sized independently around the documented board footprint, not measured off the community Printables case it's named after (inaccessible to inspect) -- same 'verify before printing' tier as the rest of the library.",
+    body: {
+      outer: { length: 62, width: 38, height: 22 },
+      wallThickness: 2,
+      // Keeps the USB-C opening 2mm below the seam under the strictest bundled 0.4mm profile.
+      splitHeight: 14.8,
+      lidType: 'friction-lip',
+      // The 42x25mm board leaves too little interior margin for the app's default M3 screw-boss
+      // corner bosses to clear it (same "board fills the interior" situation as the Waveshare CM4
+      // preset) -- ships with a friction-lip lid so this is moot today, but exterior placement is
+      // what a screw-boss switch would need, and it's what test/presetFeatures.test.ts's
+      // boss-clearance check expects for a board this size relative to its case.
+      screwPlacement: 'exterior',
+    },
+    boardMount: {
+      boardWidth: 42,
+      boardDepth: 25,
+      boardThickness: 1.6,
+      holes: [],
+      standoff: { outerDiameter: 6, screwHoleDiameter: 2.2, height: 2.0 },
+      cornerGuides: { height: 2.0, legLength: 6, armThickness: 1.6, clearance: 0.25, chamfer: 1 },
+    },
     io: [
-      { connectorId: 'sma-bulkhead-female', face: 'right', alongMm: 0, aboveBoardMm: 7 },
-      { connectorId: 'usb-c-panel', face: 'left', alongMm: 0, aboveBoardMm: 9 },
+      { connectorId: 'sma-bulkhead-female', face: 'right', alongMm: 0, aboveBoardMm: 3.4 },
+      { connectorId: 'usb-c-panel', face: 'left', alongMm: 0, aboveBoardMm: 5.4 },
       {
         vent: { pattern: 'slots', areaWidth: 30, areaHeight: 16, slotWidth: 2, slotSpacing: 5 },
         face: 'top',
@@ -195,9 +218,9 @@ export const BOARD_PRESETS: BoardPreset[] = [
     body: {
       outer: { length: 118, width: 78, height: 26 },
       wallThickness: 2.4,
-      // The rear vent band tops out at 18mm; the seam clears it by MIN_SKIN rather than landing
-      // exactly on it, which left a zero-thickness ledge above the vent.
-      splitHeight: 19.5,
+      // The rear vent band tops out at 18mm; leave the strictest bundled profile's full seam skin
+      // above it rather than landing on the opening's top edge.
+      splitHeight: 20,
       lidType: 'screw-boss',
     },
     boardMount: CYD_MOUNT,
@@ -225,9 +248,8 @@ export const BOARD_PRESETS: BoardPreset[] = [
     label: 'Raspberry Pi 3B',
     notes:
       "Fits the full-size 85x56mm Pi board with the official mounting pattern AND its own IO layout (the 3B's port arrangement differs from the 4B's -- notably Ethernet sits nearest the front edge here, the opposite order from the 4B): micro-USB power, full-size HDMI, combo audio/composite jack, 2x USB dual-stack, Ethernet, underside microSD. The audio/composite jack is really a 4-pole TRRS combo connector; the library's plain 3.5mm TRS entry is the closest available match, not exact. Port centerlines from the official mechanical drawing; heights are approximations -- verify before printing.",
-    // Split height sits above the tallest port opening (the USB stacks top out ~23.4mm) with a
-    // printable ledge left above it, same margin as the 4B.
-    body: { outer: { length: 115, width: 70, height: 30 }, wallThickness: 2, splitHeight: 25 },
+    // The USB stacks top out at ~23.4mm; keep a full Daily-profile skin above their openings.
+    body: { outer: { length: 115, width: 70, height: 30 }, wallThickness: 2, splitHeight: 25.4 },
     boardMount: PI_FULL_SIZE_MOUNT,
     // Front-edge centerlines (from the board's left edge): micro-USB power 10.6, HDMI 32.0,
     // audio/composite 53.5. Right-edge centerlines (from the board's front edge): Ethernet 10.25,
@@ -249,10 +271,8 @@ export const BOARD_PRESETS: BoardPreset[] = [
     label: 'Raspberry Pi 4B',
     notes:
       'Fits the 85x56mm 4B with the official mounting pattern AND its full IO layout cut into the walls: USB-C, 2x micro-HDMI, audio jack, 2x USB stacks, Ethernet, microSD slot. Port centerlines from the official drawing; heights are approximations — verify before printing.',
-    // Split height sits above the tallest port opening (the USB stacks top out ~23.5mm) so every
-    // cutout lands cleanly in the base with a printable ledge above it, rather than straddling the
-    // lid seam or leaving a sliver under it.
-    body: { outer: { length: 115, width: 70, height: 30 }, wallThickness: 2, splitHeight: 25 },
+    // The USB stacks top out at ~23.4mm; keep a full Daily-profile skin above their openings.
+    body: { outer: { length: 115, width: 70, height: 30 }, wallThickness: 2, splitHeight: 25.4 },
     boardMount: PI_FULL_SIZE_MOUNT,
     // Front-edge centerlines (from the board's left edge): USB-C 11.2, HDMI0 26.0, HDMI1 39.5,
     // audio 54.0. Right-edge centerlines (from the board's front edge): USB2 9.0, USB3 27.0,
@@ -275,7 +295,8 @@ export const BOARD_PRESETS: BoardPreset[] = [
       "Same 85x56mm board footprint as the 3B/4B, sized a bit taller to leave headroom for the official active cooler. Includes the official mounting pattern AND its own IO layout: USB-C power, 2x micro-HDMI, 2x USB dual-stack, Ethernet, underside microSD -- the 3.5mm audio jack was removed on the Pi 5, so unlike the 4B there is no audio cutout here. Same Ethernet-nearest-front port order as the 3B (not the 4B's order). Port centerlines from the official mechanical drawing, which also gives real connector-height side views for USB-C/micro-HDMI; heights are approximations elsewhere -- verify before printing.",
     // Split height sits above the tallest port opening (the USB stacks top out ~23.4mm), same
     // margin as the 3B/4B.
-    body: { outer: { length: 115, width: 70, height: 35 }, wallThickness: 2, splitHeight: 25 },
+    // The USB stacks need the same Daily-profile seam skin as the Pi 3B/4B presets.
+    body: { outer: { length: 115, width: 70, height: 35 }, wallThickness: 2, splitHeight: 25.4 },
     boardMount: PI_FULL_SIZE_MOUNT,
     // Front-edge centerlines (from the board's left edge): USB-C 11.2, HDMI0 25.8, HDMI1 39.2.
     // Right-edge centerlines (from the board's front edge): Ethernet 10.2, USB dual-stack #1 29.1,
@@ -296,7 +317,8 @@ export const BOARD_PRESETS: BoardPreset[] = [
     label: 'Raspberry Pi + HAT Stack',
     notes:
       "Extra-tall variant of the Pi 3/4/5 footprint to clear a stacked HAT board on the 40-pin GPIO header (header + HAT + standoffs). Includes the official mounting pattern and inherits the 4B's IO layout (USB-C, 2x micro-HDMI, audio jack, 2x USB dual-stack, Ethernet, underside microSD) -- swap the IO list by hand if you're stacking on a 3B or 5 instead, since their port arrangements differ.",
-    body: { outer: { length: 115, width: 70, height: 45 }, wallThickness: 2, splitHeight: 25 },
+    // Reuses the Pi port wall, so it keeps the same Daily-profile seam clearance.
+    body: { outer: { length: 115, width: 70, height: 45 }, wallThickness: 2, splitHeight: 25.4 },
     boardMount: PI_FULL_SIZE_MOUNT,
     io: [
       { connectorId: 'usb-c-panel', face: 'front', alongMm: -31.3, aboveBoardMm: 1.6 },
@@ -384,10 +406,40 @@ export const BOARD_PRESETS: BoardPreset[] = [
         face: 'right',
         alongMm: -13.97,
         aboveBoardMm: 4.5,
+        mergedOpeningGroup: 'beaglebone-black:right-io',
       },
-      { connectorId: 'hdmi-micro', face: 'right', alongMm: -2.159, aboveBoardMm: 1.6 },
+      {
+        connectorId: 'hdmi-micro',
+        face: 'right',
+        alongMm: -2.159,
+        aboveBoardMm: 1.6,
+        mergedOpeningGroup: 'beaglebone-black:right-io',
+      },
       // Dropped 0.2mm so the underside card slot keeps a printable web below the micro-HDMI.
-      { connectorId: 'microsd-slot', face: 'right', alongMm: 3.955, aboveBoardMm: -2.7 },
+      {
+        connectorId: 'microsd-slot',
+        face: 'right',
+        alongMm: 3.955,
+        aboveBoardMm: -2.7,
+        mergedOpeningGroup: 'beaglebone-black:right-io',
+      },
+      // These two small relief cuts overlap their neighbouring openings, turning the three tightly
+      // spaced ports into one stepped compound opening instead of asking a Daily-profile slicer
+      // to preserve 1.25mm webs between them.
+      {
+        custom: { shape: 'rect', width: 1.7, height: 2.2 },
+        face: 'right',
+        alongMm: -7.04,
+        aboveBoardMm: 2.2,
+        mergedOpeningGroup: 'beaglebone-black:right-io',
+      },
+      {
+        custom: { shape: 'rect', width: 4.5, height: 1.7 },
+        face: 'right',
+        alongMm: 0.02,
+        aboveBoardMm: -0.58,
+        mergedOpeningGroup: 'beaglebone-black:right-io',
+      },
     ],
   },
   {
@@ -452,7 +504,8 @@ export const BOARD_PRESETS: BoardPreset[] = [
       screwPlacement: 'exterior',
       panels: {
         faces: ['left', 'right'],
-        thickness: 2.4,
+        // Two 1.8mm Daily-profile skins plus fit clearance need a 3.8mm retained plate.
+        thickness: 3.8,
         fitClearance: 0.2,
         grooveDepth: 1.2,
         captureInLid: true,
@@ -526,8 +579,8 @@ export const BOARD_PRESETS: BoardPreset[] = [
       { connectorId: 'sma-bulkhead-female', override: { diameter: 6.4 }, face: 'left', alongMm: 42.725, aboveBoardMm: 26 },
       // Intake louvres at CM4/HAT-sandwich height on the left plate and the front wall, so the
       // lid fan pulls air across the module rather than short-circuiting through the port openings.
-      // Raised 0.5mm off the DSI slot below it, which it was clearing by 0.7mm.
-      { vent: cm4IntakeVent(4, 7, 55), rotationDeg: 90, face: 'left', alongMm: 26.225, aboveBoardMm: 8.5 },
+      // Shifted clear of the DSI slot and panel edge with the strictest bundled profile's skin.
+      { vent: cm4IntakeVent(4, 7, 55), rotationDeg: 90, face: 'left', alongMm: 25.6, aboveBoardMm: 9.2 },
       { vent: cm4IntakeVent(3, 8, 70), rotationDeg: 90, face: 'front', alongMm: -2.735, aboveBoardMm: 8 },
       // 40mm exhaust fan in the lid, centred over the HAT chamber: ring grille plus its four
       // screw holes on the standard 32mm pitch. Position is X/Y from the board center (a

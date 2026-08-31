@@ -1,4 +1,5 @@
-import type { CornerStyle } from '../types/project';
+import type { CornerStyle, ManufacturingProfile } from '../types/project';
+import { manufacturingProfile } from '../state/manufacturingProfiles';
 
 /**
  * The printability floor every generated feature is held to, in one place.
@@ -14,21 +15,46 @@ import type { CornerStyle } from '../types/project';
  * extrusion width, so a 1.0mm wall gets two perimeters plus a 0.2mm void the slicer cannot fill,
  * which is weaker than a deliberate 0.8mm wall. Three perimeters is the usual structural floor.
  */
-export const NOZZLE = 0.4;
+export interface PrintRules {
+  nozzle: number;
+  lineWidth: number;
+  minSkin: number;
+  minWeb: number;
+  minRib: number;
+  minWall: number;
+  supportFreeOverhangDeg: number;
+}
+
+export function printRulesForProfile(profile: ManufacturingProfile): PrintRules {
+  const minSkin = profile.lineWidth * profile.targetPerimeters;
+  return {
+    nozzle: profile.nozzleDiameter,
+    lineWidth: profile.lineWidth,
+    minSkin,
+    minWeb: minSkin,
+    minRib: profile.lineWidth * Math.max(profile.targetPerimeters + 1, profile.minPerimeters),
+    minWall: profile.lineWidth * profile.minPerimeters,
+    supportFreeOverhangDeg: profile.supportFreeOverhangDeg,
+  };
+}
+
+/** The aliases keep old code/tests stable while feature paths migrate to an explicit profile. */
+export const LEGACY_PRINT_RULES = printRulesForProfile(manufacturingProfile('fdm-legacy-0.4'));
+export const NOZZLE = LEGACY_PRINT_RULES.nozzle;
 
 /** Material left between a cut and a free surface (wall skin, retaining lip, boss wall). */
-export const MIN_SKIN = 3 * NOZZLE;
+export const MIN_SKIN = LEGACY_PRINT_RULES.minSkin;
 
 /** Material left between two cuts (the web between neighbouring port openings). */
-export const MIN_WEB = 3 * NOZZLE;
+export const MIN_WEB = LEGACY_PRINT_RULES.minWeb;
 
 /** A feature that stands free rather than being backed by the wall it grows from. */
-export const MIN_RIB = 4 * NOZZLE;
+export const MIN_RIB = LEGACY_PRINT_RULES.minRib;
 
 /** The absolute floor: two perimeters, with no infill between them. Anything the generator is
  * forced below MIN_SKIN is still held above this, and a result that lands here is worth telling
  * the user about rather than quietly shipping. */
-export const MIN_WALL = 2 * NOZZLE;
+export const MIN_WALL = LEGACY_PRINT_RULES.minWall;
 
 /**
  * How far the body's outer surface has moved inboard at `distance` mm along a wall from the

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useProjectStore } from '../src/state/projectStore';
 import { createDefaultProject } from '../src/state/defaultProject';
+import { lidSplitRange } from '../src/csg/lidSplit';
 import type { BodyShape } from '../src/types/project';
 
 // The store is a module-level singleton (zustand's create() outside React), so every test resets
@@ -53,6 +54,32 @@ describe('setBodyShape: switching produces a body with the right outer fields', 
     expect(useProjectStore.getState().project.features.length).toBe(1);
     useProjectStore.getState().setBodyShape('hexagon');
     expect(useProjectStore.getState().project.features.length).toBe(0);
+  });
+
+  it('falls back to friction lip when the selected closure is not meaningful on the new shape', () => {
+    useProjectStore.getState().setLidType('slide-rail');
+    useProjectStore.getState().setBodyShape('cylinder');
+    expect(useProjectStore.getState().project.body.lid.type).toBe('friction-lip');
+
+    useProjectStore.getState().setLidType('bayonet');
+    useProjectStore.getState().setBodyShape('box');
+    expect(useProjectStore.getState().project.body.lid.type).toBe('friction-lip');
+  });
+});
+
+describe('captive slide rail seam bounds', () => {
+  it('raises an incompatible low seam when slide rail is selected', () => {
+    useProjectStore.getState().setSplitHeight(3);
+    useProjectStore.getState().setLidType('slide-rail');
+    const body = useProjectStore.getState().project.body;
+    expect(body.lid.splitHeight).toBe(lidSplitRange(body).min);
+  });
+
+  it('keeps the seam inside the slide rail range when it is edited', () => {
+    useProjectStore.getState().setLidType('slide-rail');
+    useProjectStore.getState().setSplitHeight(0);
+    const body = useProjectStore.getState().project.body;
+    expect(body.lid.splitHeight).toBe(lidSplitRange(body).min);
   });
 });
 

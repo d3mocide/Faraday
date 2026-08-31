@@ -1,23 +1,31 @@
 import { useState, type ChangeEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { APP_VERSION } from '../version';
 import { PrintabilityCard } from './PrintabilityCard';
+import { InfoTooltip } from './InfoTooltip';
+import { HistoryPanel } from './HistoryPanel';
 import { findConnector } from '../connectors/library';
 import { useProjectStore } from '../state/projectStore';
 import { displayStep, displayToMm, mmToDisplay, roundForDisplay, unitLabel } from '../state/units';
 import { cornerHolePattern } from '../state/featureFactory';
 import { planOverhangSupport } from '../state/boardSupport';
-import type { DesignCheckFinding } from '../state/designChecks';
+import { featureLabel } from '../state/featureLabel';
 import { alignedPosition, cloneFeatureAt, mirroredPosition, type Axis, type AxisTarget } from '../state/alignMirror';
 import { bodyGeometry, faceLabel, facesForShape, faceSize } from '../csg/faceFrame';
-import { effectiveSplitHeight } from '../csg/lidSplit';
+import { effectiveSplitHeight, lidSplitRange } from '../csg/lidSplit';
+import { resolveSlideRailMetrics } from '../csg/slideRailMetrics';
 import { FAN_PRESETS, fanSpecFor } from '../csg/fanLibrary';
 import { bossRadiusFor } from '../csg/primitives';
-import { MIN_SKIN } from '../csg/printRules';
+import { printRulesForProfile } from '../csg/printRules';
+import { resolveBoardMountPlan } from '../csg/mountPlan';
+import { manufacturingProfileForProject } from '../state/manufacturingProfiles';
+import { FASTENER_RECIPES, fastenerRecipeForScrew } from '../fasteners/library';
 import type { MaterialPreset, PreviewTarget } from './Viewport3D';
 import type {
   BoardMountSpec,
   BodyShape,
   ConnectorLibraryEntry,
+  CornerGuideSpec,
   CornerStyleType,
   EnclosureBody,
   Face,
@@ -25,6 +33,7 @@ import type {
   ExternalMountSpec,
   FanMountSpec,
   GripRibsSpec,
+  LidSurfaceTreatment,
   LidType,
   PanelFace,
   ScrewCount,
@@ -37,22 +46,6 @@ import type {
   Units,
   VentSpec,
 } from '../types/project';
-
-function featureLabel(feature: Feature): string {
-  if (feature.type === 'standoff') return 'Standoff';
-  if (feature.type === 'board-mount') return 'Board mount';
-  if (feature.type === 'vent') return 'Vent';
-  if (feature.type === 'custom-hole') return 'Custom hole';
-  if (feature.type === 'external-mount') {
-    return feature.mount?.style === 'boss' ? 'External boss' : 'Mounting flange';
-  }
-  if (feature.type === 'fan-mount') return `${feature.fan?.size ?? ''}mm fan`;
-  if (feature.type === 'support-pad') return 'Support pad';
-  if (feature.type === 'connector-cutout' && feature.connectorId) {
-    return findConnector(feature.connectorId)?.label ?? feature.connectorId;
-  }
-  return feature.type;
-}
 
 function SectionCard({
   title,
@@ -99,6 +92,7 @@ function FieldsGrid2Col({ children, style }: { children: ReactNode; style?: Reac
 
 function NumberField({
   label,
+  hint,
   value,
   min,
   max,
@@ -106,6 +100,7 @@ function NumberField({
   onChange,
 }: {
   label: string;
+  hint?: ReactNode;
   value: number;
   min?: number;
   max?: number;
@@ -118,7 +113,10 @@ function NumberField({
   };
   return (
     <label className="field">
-      <span>{label}</span>
+      <span>
+        {label}
+        {hint && <InfoTooltip>{hint}</InfoTooltip>}
+      </span>
       <input type="number" value={value} min={min} max={max} step={step} onChange={handleChange} />
     </label>
   );
@@ -127,6 +125,7 @@ function NumberField({
 /** NumberField for a canonical-mm value, displayed/edited in the project's current units. */
 function UnitNumberField({
   label,
+  hint,
   valueMm,
   units,
   minMm,
@@ -135,6 +134,7 @@ function UnitNumberField({
   onChangeMm,
 }: {
   label: string;
+  hint?: ReactNode;
   valueMm: number;
   units: Units;
   minMm?: number;
@@ -145,6 +145,7 @@ function UnitNumberField({
   return (
     <NumberField
       label={`${label} (${unitLabel(units)})`}
+      hint={hint}
       value={roundForDisplay(mmToDisplay(valueMm, units), units)}
       min={minMm !== undefined ? mmToDisplay(minMm, units) : undefined}
       max={maxMm !== undefined ? mmToDisplay(maxMm, units) : undefined}
@@ -289,6 +290,8 @@ function BoardMountFields({
   board,
   units,
   body,
+  printRules,
+  projectFeatures,
   onUpdateFeature,
   onAddFeature,
   onSelectFeature,
@@ -297,11 +300,15 @@ function BoardMountFields({
   board: BoardMountSpec;
   units: Units;
   body: EnclosureBody;
+  printRules: ReturnType<typeof printRulesForProfile>;
+  projectFeatures: readonly Feature[];
   onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
   onAddFeature: (feature: Feature) => void;
   onSelectFeature: (id: string | null) => void;
 }) {
   const support = planOverhangSupport(board, feature, body);
+  const autoPlan =
+    board.mountStrategy === 'auto' ? resolveBoardMountPlan(feature, body, printRules, projectFeatures) : null;
   const setBoard = (patch: Partial<BoardMountSpec>) =>
     onUpdateFeature(feature.id, { board: { ...board, ...patch } });
   const setHole = (index: number, patch: Partial<{ x: number; y: number }>) =>
@@ -360,6 +367,32 @@ function BoardMountFields({
       </FieldsGrid2Col>
 
       <div className="subgroup-title">Mounting Holes ({board.holes.length})</div>
+      <label className="field">
+        <span>
+          Post reinforcement
+          <InfoTooltip>
+            Auto adds a thin vertical wall rib only when a post is already near a box wall, and a
+            derived support row beneath a materially cantilevered board edge. It keeps the rest of
+            the cavity open; verify underside component clearance before printing.
+          </InfoTooltip>
+        </span>
+        <select
+          value={board.mountStrategy ?? 'manual'}
+          onChange={(event) =>
+            setBoard({ mountStrategy: event.target.value as NonNullable<BoardMountSpec['mountStrategy']> })
+          }
+        >
+          <option value="manual">Posts only</option>
+          <option value="auto">Auto reinforcement</option>
+        </select>
+      </label>
+      {autoPlan && (
+        <div className="field-hint">
+          <strong>Resolved mount plan</strong>
+          <br />
+          {autoPlan.reasons.join(' ')}
+        </div>
+      )}
       <div className="hole-table">
         {board.holes.map((hole, i) => (
           <div className="hole-table-row" key={i}>
@@ -399,32 +432,121 @@ function BoardMountFields({
           4-corner pattern
         </button>
       </div>
-      {support ? (
-        <>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => {
-              onAddFeature(support.feature);
-              onSelectFeature(support.feature.id);
-            }}
-          >
-            Prop up the {support.edge} edge
-          </button>
+      {board.holes.length > 0 ? (
+        support ? (
+          <>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                onAddFeature(support.feature);
+                onSelectFeature(support.feature.id);
+              }}
+            >
+              Prop up the {support.edge} edge
+            </button>
+            <p className="field-hint">
+              That edge is {support.unsupportedMm.toFixed(0)}mm from its nearest mounting hole, so
+              it hangs over open air. Adds a row of {support.feature.pad?.count ?? 1} support pads
+              just inside it, at the board's own standoff height.
+            </p>
+          </>
+        ) : (
           <p className="field-hint">
-            That edge is {support.unsupportedMm.toFixed(0)}mm from its nearest mounting hole, so it
-            hangs over open air. Adds a row of {support.feature.pad?.count ?? 1} support pads just
-            inside it, at the board's own standoff height.
+            Every edge of this board is close to a mounting hole, so there's no overhang worth
+            propping up.
           </p>
+        )
+      ) : null}
+
+      <div className="subgroup-title">
+        Corner Guides (friction fit)
+        <InfoTooltip>
+          Screwless retention: an L-shaped post at each of the board's 4 corners hugs its edges by
+          friction. Use this instead of (or alongside) mounting holes when no hole pattern is
+          documented for the board.
+        </InfoTooltip>
+      </div>
+      {board.cornerGuides ? (
+        <>
+          <FieldsGrid2Col>
+            <UnitNumberField
+              label="Guide height"
+              valueMm={board.cornerGuides.height}
+              units={units}
+              minMm={0.5}
+              onChangeMm={(v) => setBoard({ cornerGuides: { ...board.cornerGuides!, height: v } })}
+            />
+            <UnitNumberField
+              label="Leg length"
+              valueMm={board.cornerGuides.legLength}
+              units={units}
+              minMm={2}
+              onChangeMm={(v) => setBoard({ cornerGuides: { ...board.cornerGuides!, legLength: v } })}
+            />
+          </FieldsGrid2Col>
+          <FieldsGrid2Col>
+            <UnitNumberField
+              label="Arm thickness"
+              valueMm={board.cornerGuides.armThickness}
+              units={units}
+              minMm={0.6}
+              onChangeMm={(v) => setBoard({ cornerGuides: { ...board.cornerGuides!, armThickness: v } })}
+            />
+            <UnitNumberField
+              label="Clearance"
+              valueMm={board.cornerGuides.clearance}
+              units={units}
+              minMm={0}
+              stepMm={0.05}
+              onChangeMm={(v) => setBoard({ cornerGuides: { ...board.cornerGuides!, clearance: v } })}
+            />
+          </FieldsGrid2Col>
+          <FieldsGrid2Col>
+            <UnitNumberField
+              label="Lead-in chamfer"
+              valueMm={board.cornerGuides.chamfer ?? 0}
+              units={units}
+              minMm={0}
+              maxMm={Math.max(board.cornerGuides.height - 0.5, 0)}
+              stepMm={0.2}
+              onChangeMm={(v) =>
+                setBoard({ cornerGuides: { ...board.cornerGuides!, chamfer: v > 0 ? v : undefined } })
+              }
+            />
+          </FieldsGrid2Col>
+          <button type="button" className="btn-secondary" onClick={() => setBoard({ cornerGuides: undefined })}>
+            Remove corner guides
+          </button>
         </>
       ) : (
-        <p className="field-hint">
-          Every edge of this board is close to a mounting hole, so there's no overhang worth
-          propping up.
-        </p>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() =>
+            setBoard({
+              cornerGuides: defaultCornerGuides(board.boardThickness),
+            })
+          }
+        >
+          Add corner guides
+        </button>
       )}
     </div>
   );
+}
+
+/** Starting values for a newly-enabled corner-guide set, scaled off the board's own thickness.
+ * The 0.25mm clearance mirrors the FDM slide-fit tolerance already used elsewhere in this project
+ * (LidSpec.wallGap for a friction-lip lid). */
+function defaultCornerGuides(boardThickness: number): CornerGuideSpec {
+  return {
+    height: boardThickness + 0.4,
+    legLength: 6,
+    armThickness: 1.6,
+    clearance: 0.25,
+    chamfer: 1,
+  };
 }
 
 function VentFields({
@@ -616,7 +738,15 @@ function ExternalMountFields({
         )}
         {isKickstand && (
           <label className="field">
-            <span>Wedge angle</span>
+            <span>
+              Wedge angle
+              <InfoTooltip>
+                A kickstand is a solid tapered wedge -- the taper itself is what braces it into the
+                wall, so there's no separate wall-brace control. This angle sets how tall/steep vs.
+                long the ramp is; rotate the feature to point the lean in whichever direction props
+                the case up.
+              </InfoTooltip>
+            </span>
             <select
               value={mount.kickstandAngleDeg ?? 50}
               onChange={(e) => setMount({ kickstandAngleDeg: Number(e.target.value) })}
@@ -649,6 +779,15 @@ function ExternalMountFields({
         {!isKickstand && (
           <UnitNumberField
             label="Wall brace"
+            hint={
+              <>
+                The sloped blend where the mount meets the case: triangular webs at each end of a
+                flange (clear of the middle, so the screw stays reachable) or a conical collar round
+                a boss. It goes underneath where there's room and on top where there isn't, and its
+                45&deg; slope prints without support. 0 leaves the mount butted flat against the
+                wall.
+              </>
+            }
             valueMm={mount.gusset ?? Math.min(Math.max(mount.protrusion, 1) * 0.45, 4)}
             units={units}
             minMm={0}
@@ -675,30 +814,15 @@ function ExternalMountFields({
           />
         )}
       </FieldsGrid2Col>
-      {isKickstand ? (
-        <p className="field-hint">
-          A kickstand is a solid tapered wedge -- the taper itself is what braces it into the wall,
-          so there's no separate wall-brace control. The wedge angle sets how tall/steep vs. long
-          the ramp is; rotate the feature to point the lean in whichever direction props the case up.
-        </p>
-      ) : (
-        <p className="field-hint">
-          The wall brace is the sloped blend where the mount meets the case: triangular webs at each
-          end of a flange (clear of the middle, so the screw stays reachable) or a conical collar
-          round a boss. It goes underneath where there's room and on top where there isn't, and its
-          45&deg; slope prints without support. 0 leaves the mount butted flat against the wall.
-        </p>
-      )}
       {isCorner && (
-        <>
-          <button type="button" className="btn-secondary" onClick={fillCorners}>
-            Put one on each corner
-          </button>
-          <p className="field-hint">
-            Corner mounts sit on the diagonal and weld into both walls, so U only picks which end of
-            the face they snap to — V still sets their height.
-          </p>
-        </>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={fillCorners}
+          title="Corner mounts sit on the diagonal and weld into both walls, so U only picks which end of the face they snap to -- V still sets their height."
+        >
+          Put one on each corner
+        </button>
       )}
     </div>
   );
@@ -812,18 +936,20 @@ function FanMountFields({
         )}
         <UnitNumberField
           label="Mount boss height"
+          hint={
+            <>
+              Screw holes sit on the fan's own {fan.holePitch}mm bolt circle. Bosses (if any) stand
+              on the inside face, so the fan pulls against a pad instead of the bare wall. Body
+              depth is only drawn as a ghost inside the case (nothing is printed from it) -- it's
+              there to check the fan clears whatever sits under it.
+            </>
+          }
           valueMm={fan.bossHeight}
           units={units}
           minMm={0}
           onChangeMm={(v) => setFan({ bossHeight: v })}
         />
       </FieldsGrid2Col>
-      <p className="field-hint">
-        Screw holes sit on the fan's own {fan.holePitch}mm bolt circle. Bosses (if any) stand on the
-        inside face, so the fan pulls against a pad instead of the bare wall. Body depth is only
-        drawn as a ghost inside the case (nothing is printed from it) -- it's there to check the fan
-        clears whatever sits under it.
-      </p>
     </div>
   );
 }
@@ -875,6 +1001,7 @@ function SupportPadFields({
         )}
         <UnitNumberField
           label="Height"
+          hint="Set this to the board's standoff height so the pad meets the underside without lifting it. No screw hole -- it props, it doesn't fasten."
           valueMm={pad.height}
           units={units}
           minMm={0.5}
@@ -882,6 +1009,7 @@ function SupportPadFields({
         />
         <NumberField
           label="Repeat count"
+          hint="A count above 1 makes an evenly spaced row centred on this position; for pads that have to dodge components underneath, place them individually instead."
           value={pad.count ?? 1}
           min={1}
           max={24}
@@ -909,13 +1037,23 @@ function SupportPadFields({
             </select>
           </label>
         )}
+        {(pad.count ?? 1) > 1 && pad.shape === 'rect' && (
+          <label className="field field-checkbox">
+            <input
+              type="checkbox"
+              checked={pad.continuous ?? false}
+              onChange={(event) => setPad({ continuous: event.target.checked })}
+            />
+            <span>
+              Continuous support rail
+              <InfoTooltip>
+                Joins the row into one low rail so a board edge bears along its span. Leave it off
+                when underside components or cable paths need the gaps between individual pads.
+              </InfoTooltip>
+            </span>
+          </label>
+        )}
       </FieldsGrid2Col>
-      <p className="field-hint">
-        Set the height to the board's standoff height so the pad meets the underside without lifting
-        it. No screw hole -- it props, it doesn't fasten. A count above 1 makes an evenly spaced row
-        centred on this position; for pads that have to dodge components underneath, place them
-        individually instead.
-      </p>
     </div>
   );
 }
@@ -1182,9 +1320,13 @@ function SvgTrashIcon({ size = 14 }: { size?: number }) {
   );
 }
 
+function FeatureEditorPortal({ host, children }: { host: HTMLDivElement | null; children: ReactNode }) {
+  return host ? createPortal(children, host) : children;
+}
+
 interface InspectorPanelProps {
   selectedFeatureId: string | null;
-  findings: DesignCheckFinding[];
+  featureEditorHost: HTMLDivElement | null;
   shadingMode?: 'smooth' | 'flat';
   onChangeShadingMode?: (mode: 'smooth' | 'flat') => void;
   materialPreset?: MaterialPreset;
@@ -1198,7 +1340,7 @@ interface InspectorPanelProps {
 
 export function InspectorPanel({
   selectedFeatureId,
-  findings,
+  featureEditorHost,
   shadingMode = 'smooth',
   onChangeShadingMode,
   materialPreset = 'default',
@@ -1209,7 +1351,7 @@ export function InspectorPanel({
   onAddFeature,
   onPreviewTarget,
 }: InspectorPanelProps) {
-  const [activeTab, setActiveTab] = useState<'structure' | 'layers' | 'studio'>('structure');
+  const [activeTab, setActiveTab] = useState<'structure' | 'layers' | 'studio' | 'history'>('structure');
   const [layerSearch, setLayerSearch] = useState('');
   const [expandedFaces, setExpandedFaces] = useState<Record<string, boolean>>({
     bottom: true,
@@ -1226,6 +1368,7 @@ export function InspectorPanel({
   };
 
   const project = useProjectStore((s) => s.project);
+  const printRules = printRulesForProfile(manufacturingProfileForProject(project));
   const setBodyShape = useProjectStore((s) => s.setBodyShape);
   const setBodyDimension = useProjectStore((s) => s.setBodyDimension);
   const setWallThickness = useProjectStore((s) => s.setWallThickness);
@@ -1236,10 +1379,12 @@ export function InspectorPanel({
   const setTopEdgeBevel = useProjectStore((s) => s.setTopEdgeBevel);
   const setBottomEdgeBevel = useProjectStore((s) => s.setBottomEdgeBevel);
   const setLidType = useProjectStore((s) => s.setLidType);
+  const setLidSurfaceTreatment = useProjectStore((s) => s.setLidSurfaceTreatment);
   const setSplitHeight = useProjectStore((s) => s.setSplitHeight);
   const setWallGap = useProjectStore((s) => s.setWallGap);
   const setScrewSize = useProjectStore((s) => s.setScrewSize);
   const setScrewInsertType = useProjectStore((s) => s.setScrewInsertType);
+  const setScrewRecipe = useProjectStore((s) => s.setScrewRecipe);
   const setScrewCount = useProjectStore((s) => s.setScrewCount);
   const setScrewEdgeInset = useProjectStore((s) => s.setScrewEdgeInset);
   const setScrewPlacement = useProjectStore((s) => s.setScrewPlacement);
@@ -1297,7 +1442,6 @@ export function InspectorPanel({
           onClick={() => setActiveTab('layers')}
         >
           <span>Layers</span>
-          <span className="tab-badge">{project.features.length}</span>
         </button>
         <button
           type="button"
@@ -1306,36 +1450,20 @@ export function InspectorPanel({
         >
           <span>Studio</span>
         </button>
+        <button
+          type="button"
+          className={`tab-btn ${activeTab === 'history' ? 'active' : ''}`}
+          onClick={() => setActiveTab('history')}
+        >
+          <span>History</span>
+        </button>
       </div>
 
       <div className="inspector-tab-content">
 
-      {/* Advisory Design Checks Alert Banner if findings exist */}
-      {findings.length > 0 && (
-        <SectionCard
-          title="Checks"
-          icon={<SidebarSectionIcon type="checks" />}
-          badge={findings.length}
-          defaultOpen={true}
-        >
-          <div className="check-list">
-            {findings.map((finding) => (
-              <button
-                key={finding.id}
-                type="button"
-                className="check-item"
-                onClick={() => finding.featureId && onSelectFeature(finding.featureId)}
-              >
-                <span className="check-title">{finding.title}</span>
-                <span className="check-detail">{finding.detail}</span>
-              </button>
-            ))}
-          </div>
-        </SectionCard>
-      )}
-
       {/* Focused Selected Feature Header Drawer when a feature is selected */}
       {selectedFeature && (
+        <FeatureEditorPortal host={featureEditorHost}>
         <div className="focused-feature-drawer">
           <div className="focused-drawer-header">
             <div className="focused-drawer-title">
@@ -1490,12 +1618,35 @@ export function InspectorPanel({
               />
             )}
 
+            {(selectedFeature.type === 'connector-cutout' || selectedFeature.type === 'custom-hole') && (
+              <div className="inspector-subgroup">
+                <label className="field field-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={selectedFeature.portFrame !== undefined}
+                    onChange={(event) =>
+                      onUpdateFeature(selectedFeature.id, { portFrame: event.target.checked ? {} : undefined })
+                    }
+                  />
+                  <span>
+                    Reinforced port frame
+                    <InfoTooltip>
+                      Adds a profile-derived exterior rim without changing the functional opening
+                      size.
+                    </InfoTooltip>
+                  </span>
+                </label>
+              </div>
+            )}
+
             {selectedFeature.type === 'board-mount' && selectedFeature.board && (
               <BoardMountFields
                 feature={selectedFeature}
                 board={selectedFeature.board}
                 units={units}
                 body={body}
+                printRules={printRules}
+                projectFeatures={project.features}
                 onUpdateFeature={onUpdateFeature}
                 onAddFeature={onAddFeature}
                 onSelectFeature={onSelectFeature}
@@ -1622,6 +1773,7 @@ export function InspectorPanel({
                   />
                   <UnitNumberField
                     label="Base flare"
+                    hint="A conical collar at the base, self-supporting up to the standoff's own width -- prints without support and resists snapping off. 0 leaves a plain cylinder."
                     valueMm={selectedFeature.standoff.gusset ?? 0}
                     units={units}
                     minMm={0}
@@ -1634,10 +1786,6 @@ export function InspectorPanel({
                     }
                   />
                 </FieldsGrid2Col>
-                <p className="field-hint">
-                  A conical collar at the base, self-supporting up to the standoff's own width --
-                  prints without support and resists snapping off. 0 leaves a plain cylinder.
-                </p>
               </div>
             )}
             <button
@@ -1658,6 +1806,7 @@ export function InspectorPanel({
             </button>
           </div>
         </div>
+        </FeatureEditorPortal>
       )}
 
       {/* TAB 1: STRUCTURE */}
@@ -1886,44 +2035,104 @@ export function InspectorPanel({
                 <option value="friction-lip">Friction lip</option>
                 <option value="screw-boss">Screw boss</option>
                 <option value="snap-fit">Snap fit</option>
+                {(body.shape === 'box' || body.shape === 'stadium' || body.shape === 'wedge') && (
+                  <option value="slide-rail">Captive slide rail</option>
+                )}
+                {body.shape === 'cylinder' && <option value="bayonet">Bayonet quarter-turn</option>}
+              </select>
+            </label>
+            {lid.type === 'slide-rail' && (
+              <p className="field-hint">
+                Base flanges are captured inside the lid's external U-channels. The open end is
+                removable; box and wedge bodies add a hard closed-position stop. Print and tune
+                this sliding clearance with this printer/profile before relying on the fit.
+              </p>
+            )}
+            {lid.type === 'bayonet' && (
+              <p className="field-hint">
+                Three cylinder lugs enter vertical slots, then turn beneath offset shelves. This is a
+                tool-free closure for round bodies, not a threaded or gasket-rated seal.
+              </p>
+            )}
+            <label className="field">
+              <span>
+                Lid treatment
+                <InfoTooltip>
+                  The recessed label field is derived from the active print profile and stays clear
+                  of interior screw-head pockets. Field-marked also adds a shallow perimeter seam
+                  accent when the side wall has enough structural skin.
+                </InfoTooltip>
+              </span>
+              <select
+                value={lid.surfaceTreatment ?? 'plain'}
+                onChange={(e) => setLidSurfaceTreatment(e.target.value as LidSurfaceTreatment)}
+              >
+                <option value="plain">Utility — plain surface</option>
+                <option value="refined">Refined — recessed field (box)</option>
+                <option value="field-marked">Field-marked — label field + seam accent (box)</option>
               </select>
             </label>
             {(() => {
               const outerH = body.shape === 'wedge' ? body.outer.heightBack : body.outer.height;
-              const minSplit = body.wallThickness + 1;
-              const maxSplit = outerH - body.wallThickness - 1;
-              const pct = Math.round((lid.splitHeight / outerH) * 100);
-              const lidPct = 100 - pct;
-              const fillPct = ((lid.splitHeight - minSplit) / (maxSplit - minSplit)) * 100;
+              const split = effectiveSplitHeight(body);
+              const { min: minSplit, max: maxSplit } = lidSplitRange(body);
+              const isSlideRail = lid.type === 'slide-rail';
+              const rail = isSlideRail
+                ? resolveSlideRailMetrics({
+                    splitHeight: split,
+                    wallThickness: body.wallThickness,
+                    wallGap: lid.wallGap,
+                    railDepth: lid.slideRail?.railDepth,
+                  })
+                : null;
+              const seamPct = Math.round((split / outerH) * 100);
+              const coverPct = rail ? Math.round(((outerH - rail.railBottom) / outerH) * 100) : 100 - seamPct;
+              const fillPct = ((split - minSplit) / Math.max(maxSplit - minSplit, 0.01)) * 100;
               const trackBg = `linear-gradient(to right, #3a6fa8 0%, #3a6fa8 ${fillPct}%, #2e6e5c ${fillPct}%, #2e6e5c 100%)`;
               return (
-                <div className="split-slider-row">
-                  <div className="split-slider-labels">
-                    <span className="split-label-body">Body <strong>{pct}%</strong></span>
-                    <span className="split-label-lid">Lid <strong>{lidPct}%</strong></span>
+                <>
+                  <div className="split-slider-row">
+                    <div className="split-slider-labels">
+                      {isSlideRail ? (
+                        <>
+                          <span className="split-label-body">Seam <strong>{seamPct}%</strong></span>
+                          <span className="split-label-lid">Cover envelope <strong>{coverPct}%</strong></span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="split-label-body">Body <strong>{seamPct}%</strong></span>
+                          <span className="split-label-lid">Lid <strong>{coverPct}%</strong></span>
+                        </>
+                      )}
+                    </div>
+                    <input
+                      id="split-height-slider"
+                      type="range"
+                      className="split-slider"
+                      min={minSplit}
+                      max={maxSplit}
+                      step={0.5}
+                      value={split}
+                      style={{ background: trackBg }}
+                      onChange={(e) => setSplitHeight(Number(e.target.value))}
+                    />
                   </div>
-                  <input
-                    id="split-height-slider"
-                    type="range"
-                    className="split-slider"
-                    min={minSplit}
-                    max={maxSplit}
-                    step={0.5}
-                    value={lid.splitHeight}
-                    style={{ background: trackBg }}
-                    onChange={(e) => setSplitHeight(Number(e.target.value))}
-                  />
-                </div>
+                  {rail && (
+                    <p className="split-slider-hint">
+                      The cover overlaps the base by {rail.coverOverlap.toFixed(1)}mm to capture the rails.
+                    </p>
+                  )}
+                </>
               );
             })()}
 
             <FieldsGrid2Col>
               <UnitNumberField
-                label="Split height"
-                valueMm={lid.splitHeight}
+                label={lid.type === 'slide-rail' ? 'Rail seam height' : 'Split height'}
+                valueMm={effectiveSplitHeight(body)}
                 units={units}
-                minMm={body.wallThickness + 1}
-                maxMm={(body.shape === 'wedge' ? body.outer.heightBack : body.outer.height) - body.wallThickness - 1}
+                minMm={lidSplitRange(body).min}
+                maxMm={lidSplitRange(body).max}
                 onChangeMm={setSplitHeight}
               />
               <UnitNumberField
@@ -1939,6 +2148,17 @@ export function InspectorPanel({
 
             {lid.type === 'screw-boss' && lid.screw && (
               <FieldsGrid2Col>
+                <label className="field">
+                  <span>Fastener recipe</span>
+                  <select
+                    value={fastenerRecipeForScrew(lid.screw).id}
+                    onChange={(e) => setScrewRecipe(e.target.value as typeof FASTENER_RECIPES[number]['id'])}
+                  >
+                    {FASTENER_RECIPES.map((recipe) => (
+                      <option key={recipe.id} value={recipe.id}>{recipe.label}</option>
+                    ))}
+                  </select>
+                </label>
                 <label className="field">
                   <span>Screw size</span>
                   <select
@@ -2020,6 +2240,15 @@ export function InspectorPanel({
                 )}
               </FieldsGrid2Col>
             )}
+            {lid.type === 'screw-boss' && lid.screw && (
+              <p className="field-hint">
+                {fastenerRecipeForScrew(lid.screw).label} is uncalibrated.{' '}
+                <a href={fastenerRecipeForScrew(lid.screw).referenceUrl} target="_blank" rel="noreferrer">
+                  Read the insert-boss guidance
+                </a>{' '}
+                and print a coupon with the target insert before relying on it.
+              </p>
+            )}
 
             {lid.type === 'screw-boss' && lid.screw && (
               <>
@@ -2082,27 +2311,27 @@ export function InspectorPanel({
               </label>
             )}
             {(lid.type === 'snap-fit' || lid.snap) && (
-              <>
-                <label className="field">
-                  <span>Fingers per tab</span>
-                  <select
-                    value={lid.snap?.fingerCount ?? 1}
-                    onChange={(e) => setSnapFingerCount(Number(e.target.value) as 1 | 2 | 3)}
-                  >
-                    <option value={1}>1 (single wide tab)</option>
-                    <option value={2}>2</option>
-                    <option value={3}>3</option>
-                  </select>
-                </label>
-                <p className="field-hint">
-                  {lid.type === 'snap-fit'
-                    ? 'Two corner-integrated combs hold the lid on -- no screws or friction lip.'
-                    : 'Adds two corner-integrated snap combs alongside the boss/lip above, for a snap during assembly plus a permanent screwed joint.'}{' '}
-                  Splitting a tab into narrower fingers side by side lowers the insertion force each
-                  one needs to flex and gives redundant catches, instead of one wide tab
-                  concentrating the stress at its root.
-                </p>
-              </>
+              <label className="field">
+                <span>
+                  Fingers per tab
+                  <InfoTooltip>
+                    {lid.type === 'snap-fit'
+                      ? 'Two corner-integrated combs hold the lid on -- no screws or friction lip.'
+                      : 'Adds two corner-integrated snap combs alongside the boss/lip above, for a snap during assembly plus a permanent screwed joint.'}{' '}
+                    Splitting a tab into narrower fingers side by side lowers the insertion force
+                    each one needs to flex and gives redundant catches, instead of one wide tab
+                    concentrating the stress at its root.
+                  </InfoTooltip>
+                </span>
+                <select
+                  value={lid.snap?.fingerCount ?? 1}
+                  onChange={(e) => setSnapFingerCount(Number(e.target.value) as 1 | 2 | 3)}
+                >
+                  <option value={1}>1 (single wide tab)</option>
+                  <option value={2}>2</option>
+                  <option value={3}>3</option>
+                </select>
+              </label>
             )}
 
             <label className="field field-checkbox">
@@ -2166,7 +2395,7 @@ export function InspectorPanel({
                       label="Plate thickness"
                       valueMm={body.panels.thickness}
                       units={units}
-                      minMm={0.8}
+                      minMm={printRules.minSkin}
                       onChangeMm={setPanelThickness}
                     />
                     <UnitNumberField
@@ -2174,7 +2403,7 @@ export function InspectorPanel({
                       valueMm={body.panels.grooveDepth}
                       units={units}
                       minMm={0.2}
-                      maxMm={Math.max(body.wallThickness - MIN_SKIN, 0.2)}
+                      maxMm={Math.max(body.wallThickness - printRules.minSkin, 0.2)}
                       onChangeMm={setPanelGrooveDepth}
                     />
                     <UnitNumberField
@@ -2188,10 +2417,10 @@ export function InspectorPanel({
                     />
                     <UnitNumberField
                       label="Retaining lip"
-                      valueMm={body.panels.retainLip ?? MIN_SKIN}
+                      valueMm={body.panels.retainLip ?? printRules.minSkin}
                       units={units}
                       minMm={0}
-                      maxMm={Math.max(body.panels.thickness - MIN_SKIN, 0)}
+                      maxMm={Math.max(body.panels.thickness - printRules.minSkin, 0)}
                       stepMm={0.1}
                       onChangeMm={setPanelRetainLip}
                     />
@@ -2210,15 +2439,17 @@ export function InspectorPanel({
                       checked={body.panels.screw !== undefined}
                       onChange={(e) => setPanelScrewEnabled(e.target.checked)}
                     />
-                    <span>Screw the plates down</span>
-                  </label>
-                  {body.panels.screw && (
-                    <>
-                      <p className="field-hint" style={{ marginTop: '4px' }}>
+                    <span>
+                      Screw the plates down
+                      <InfoTooltip>
                         Adds a post in each interior corner behind the plate. Screws hold the plate
                         independently of its lip, and let a connector panel come off without opening
                         the lid.
-                      </p>
+                      </InfoTooltip>
+                    </span>
+                  </label>
+                  {body.panels.screw && (
+                    <>
                       <FieldsGrid2Col>
                         <label className="field">
                           <span>Screw size</span>
@@ -2550,6 +2781,8 @@ export function InspectorPanel({
           </SectionCard>
         </>
       )}
+
+      {activeTab === 'history' && <HistoryPanel />}
       </div>
 
       <footer className="inspector-footer">

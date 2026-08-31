@@ -889,6 +889,19 @@ board mounts). Remaining ideas, roughly by value for radio projects:
 - Smaller UI gaps: drag-to-reposition snapping still doesn't snap across faces or across a
   cylinder's u=0/u=1 wrap; ghost boards could render their hole positions; a top-down 2D floor
   view would make dense board layouts easier to edit than the 3D view.
+- **Board retention beyond corner guides** (researched 2026-08-31, only the first one built — see
+  the "Corner-guide friction retention" session entry below): a **perimeter pocket** (shallow floor
+  recess matching the board's exact outline + tolerance, traps it in X/Y on every side rather than
+  just the corners); **captive snap-fingers** (cantilever fingers that flex past the board on
+  insertion and catch its top face for tool-less Z retention without relying on the lid to clamp it
+  down -- should reuse the barb/pocket geometry already built for the snap-fit lid,
+  `applySnapFitLid*` in `csg/primitives.ts`, rather than a new profile from scratch); **edge/card-
+  slide rails** (two parallel rail channels the board slides into horizontally -- needs a case with
+  an open side or a slide-in panel to insert through, so it's a poorer fit for a fully closed box
+  than the other three). Also worth a look: the muzi.works "sandwich" pattern seen in that research
+  (ribs/pockets in *both* shell halves capture the board between them at the split line, so the
+  board itself never sees a fastener at all -- a lid-integrated alternative to a floor-only
+  mechanism, closer to how the most-downloaded Meshtastic cases on Printables actually do it).
 
 ### Captured sidebar/inspector ideas (2026-07-20, agreed with repo owner — each its own PR)
 
@@ -916,7 +929,10 @@ implementation notes. Kept here as a historical record of the original plan:
 
 Boards WITHOUT reliable published mounting/port drawings (generic ESP32 DevKits, Heltec V3,
 T-Beam, XIAO/RTL-SDR which lack mounting holes) stay dimension-only on purpose — the generic
-board-mount + hand-placed cutouts serve those better than shipped-wrong holes would.
+board-mount + hand-placed cutouts serve those better than shipped-wrong holes would. The
+Wio-WM6180 HaLow carrier is the one exception as of 2026-08-31: still no published holes, but it
+now ships friction-fit corner guides instead of a hole pattern — see the "Corner-guide friction
+retention" session entry below.
 
 Also still open from earlier phases, not blocking: the ~845KB main bundle (see below), and the
 never-verified Docker build.
@@ -1014,6 +1030,83 @@ never-verified Docker build.
   in both the Layers panel and a viewport screenshot; Export still produces a watertight two-STL +
   BOM zip with zero console errors. `tsc -b`, `oxlint`, and `npm test` (295/295, including the new
   allowlist entry) all clean.
+
+## Corner-guide friction retention (2026-08-31 session, follow-up)
+
+Prompted by the repo owner wanting to actually mount the Wio-WM6180 board from the section above,
+rather than leave it floating loose in its case -- and the broader observation that *every*
+hole-less preset (every XIAO variant, RTL-SDR, Heltec V3, T-Beam, Jetson devkit,
+sealed-outdoor-node) had zero retention options, not just this one. Researched the board itself
+(still no published mechanical drawing anywhere -- Seeed's own wiki lists its dimensions as
+literally "TBD"), general card/PCB friction-retention technique (Framework Computer's open-source
+`ExpansionCard.scad` rail geometry, USPTO card-guide patents), and how the LoRa/HaLow maker
+community handles this (muzi.works' H1 case, the most-downloaded Meshtastic case on Printables,
+actually sandwiches the board between ribs in both shell halves rather than using a rail or a
+PCB-specific fastener at all). Full findings are in the conversation; the "Board retention beyond
+corner guides" bullet under Next steps above captures the three mechanisms surfaced but not built
+this round (perimeter pocket, captive snap-fingers, edge/card-slide rails), so they aren't lost.
+
+- **`BoardMountSpec` gained an optional `cornerGuides` field** (new `CornerGuideSpec` type,
+  `types/project.ts`) rather than a new `FeatureType` -- a board-mount already carries the outline,
+  floor-only placement, ghost-board render, save/load, undo and BOM aggregation a friction-fit
+  guide needs, so this is a second retention mode on the *same* feature, not a parallel one. Net
+  effect: zero changes to `FeatureType`, `App.tsx`'s placement guard, `Viewport3D.tsx`'s ghost
+  renderer, or `FeaturePalette.tsx` -- corner guides are opt-in from the existing Board Mount
+  inspector card, same as the pre-existing standoff "Base flare" gusset toggle.
+- **Geometry** (`csg/featurePrimitives.ts`, new `cornerGuidePost` + updated `buildBoardMount`): one
+  L-shaped post per board corner, built as a single hand-written polygon (same explicit-point-list
+  style `footprintCrossSection`'s chamfered-corner case already uses) rather than a boolean union of
+  two boxes. All four corners reuse **one** canonical polygon under a 90-degree rotation each --
+  an L bracket cycles through all four corner orientations by pure rotation, so there's no mirrored
+  second polygon to keep in sync. The lead-in chamfer at the post's top is a second, shorter extrude
+  with a `scaleTop` > 1 (flares the cross-section outward from the post's own outer corner point, so
+  it only ever widens the board-side clearance, never closes it) -- same "no native fillets, shape
+  the extrude instead" house style as `standoffAt`'s conical root collar. When `cornerGuides` is set
+  and `holes` is empty, the old "zero holes -> synthesize one center standoff" fallback is
+  suppressed (a guide-only board would otherwise get a spurious extra standoff at its center).
+  `export/bom.ts` needed no change -- its board-mount aggregation already guards on
+  `holes.length > 0`, so a guide-only mount correctly produces zero "PCB standoff" BOM rows (there's
+  genuinely no hardware to buy for a friction fit).
+- **`featureFactory.ts`'s `buildPresetFeatures`** needed one real fix, not just plumbing: its
+  `boardTopZ` calculation (used to place IO ports "N mm above the board") assumed hole-based
+  `standoff.height` unconditionally. A guide-only board actually rests at `cornerGuides.height`
+  instead, so IO ports would have measured from the wrong baseline without this.
+- **Inspector** (`InspectorPanel.tsx`'s `BoardMountFields`): a "Corner Guides (friction fit)"
+  subsection below Mounting Holes, with an add/remove toggle (defaults scaled off the board's own
+  thickness: height = thickness + 0.4mm, 6mm legs, 1.6mm arms, 0.25mm clearance -- mirroring the
+  friction-lip lid's own `wallGap` tolerance already used elsewhere in this codebase -- 1mm
+  chamfer) and height/leg/arm/clearance/chamfer fields when enabled. Also fixed a pre-existing
+  misleading hint: the overhang-support panel's "every edge is close to a mounting hole" fallback
+  text used to show even when a board had *zero* holes (not "close to one" -- there simply weren't
+  any); now gated on `holes.length > 0`.
+- **Wio-WM6180 preset** now ships a real `boardMount`: `holes: []` plus `cornerGuides` at the
+  defaults above, and switched from the shared default lid to an explicit `friction-lip` (matching
+  the existing `seeed-xiao-esp32` preset's precedent for "screw bosses would crowd a cavity this
+  small"). Re-tuned the SMA/USB-C `aboveBoardMm` IO offsets (7/9 -> 3.4/5.4) to keep their absolute
+  height unchanged now that the board sits ~3.6mm higher off the floor than the old no-board
+  baseline. Also had to add `screwPlacement: 'exterior'` to the preset body: the existing
+  `test/presetFeatures.test.ts` boss-clearance check (which verifies *every* `boardMount`-carrying
+  preset's case would still clear the app's default M3 screw-boss lid even if a user switched to
+  it, regardless of what lid the preset actually ships with) failed initially -- a 42x25mm board in
+  a 62x38mm case leaves only 2.6mm to a default corner boss where 5.4mm is needed. Same "board
+  fills the interior" exemption the Waveshare CM4 preset already established, not a new pattern.
+- **Tests**: removed the Wio preset from `presetFeatures.test.ts`'s boardless-preset allowlist (it
+  has a real `boardMount` now); added a "board mount, corner guides only" case to
+  `generateEnclosure.test.ts`'s per-feature watertightness table, plus a dedicated `describe`
+  block with geometric probes (same `solidAt` cube-intersection helper the fan-mount/standoff tests
+  already use) confirming material at each of the four corner elbows within guide height, no
+  material above guide height, and no material at the board center (i.e. the fallback-standoff
+  suppression actually works, not just watertight-but-wrong-shape). 298/298 vitest tests, `tsc -b`,
+  `oxlint`, `npm run build` all clean.
+- **Verified with Playwright against the dev server**: applied the preset fresh, confirmed the
+  Layers panel shows the expected 4 features and the inspector's Corner Guides section renders
+  pre-enabled with the preset's values; hid the lid and orbited to a top-down interior view --
+  visually confirmed four L-shaped posts hugging the ghost board's corners in the actual rendered
+  geometry, not just in the CSG probes; toggled corner guides off and back on without error;
+  exported and confirmed the zip contains both STLs plus a `bom.csv` with **zero** PCB-standoff or
+  lid-screw rows (friction-lip + friction-fit board mount, so there's genuinely no fastener
+  hardware for this preset) and only the two connector rows. Zero console errors across the whole
+  flow.
 
 ## Session log
 
@@ -2004,3 +2097,495 @@ split 24 → 25).
   Printables case (model #1345643) for the desired feature set (XIAO-on-carrier, antenna SMA port,
   vents) — see the new section above this log for sourcing details and what couldn't be verified.
   295/295 vitest tests, `tsc -b`, `oxlint`, `npm run build` all clean; verified with Playwright.
+
+- **2026-08-31**: Deep research / design-direction session only — no application geometry or UI
+  changed. Added [`docs/research/enclosure-design-system-report-source.md`](./docs/research/enclosure-design-system-report-source.md), an evidence-backed proposal for moving Faraday from a
+  feature collection to a printer-calibrated enclosure design system. It maps the advanced geometry
+  already present (body variants, panel retention, bosses, board mounts, snap combs, and
+  printability checks), recommends manufacturing profiles, derived structural mount plans
+  (floor posts, wall ties, corner towers, and board support rails), exact fastener recipes, and
+  curated case treatments. The next work is intentionally gated on a user-authorized calibration
+  plan and selected target printer/material; no universal FDM fit or strength values are claimed.
+
+- **2026-08-31**: Began implementing the enclosure design system without changing legacy project
+  output: `EnclosureProject.manufacturingProfile` is optional on imported JSON (absent resolves to
+  `fdm-legacy-0.4`, exactly the former 0.4 mm / three-perimeter print rules), while new projects
+  record that profile explicitly. `state/manufacturingProfiles.ts` now provides two stricter,
+  clearly *uncalibrated* daily-driver profiles (PLA/PETG); `printRulesForProfile()` derives skin,
+  web, rib, and absolute-wall floors from line width and perimeter count. The Printability card
+  exposes a persistent profile selector plus its active line/skin assumptions. Panel clamps,
+  panel BOM metrics, inspector limits, and advisory cutout/wall checks now consume the active
+  profile rather than the old global values.
+  - Added the first structural mount resolver output, intentionally opt-in: a board mount can set
+    `mountStrategy: 'auto'`, which adds a short, vertical, profile-thickness web from a PCB
+    standoff to its nearest **box** cavity wall only when already close enough. It keeps the rest
+    of the floor open rather than creating a solid corner block; non-box use gets an explicit
+    advisory rather than a misleading partial result. The board inspector calls this "Auto wall
+    ties" and explains that underside component clearance remains a physical-print check.
+  - Added `manufacturingProfiles.test.ts` for legacy compatibility, profile derivation/store
+    persistence, invalid imported profile rejection, the auto-tie/material cross-section, and
+    watertight export. `npm run lint`, `npm run build`, and `npm test` passed (304 tests). A real
+    browser pass could not run in this environment because no local browser surface was available;
+    pending operator check: switch each Printability-card profile, confirm the displayed rules and
+    weak-wall warning change, and inspect an auto-tied board mount in the live/exploded view.
+
+- **2026-08-31**: Extended the opt-in board-mount `auto` strategy from a one-off wall-tie boolean
+  into a pure, derived `ResolvedBoardMountPlan` (`csg/mountPlan.ts`). The plan owns transformed
+  post positions, nearby-wall eligibility, profile-derived rib width, and the existing unsupported
+  board-edge heuristic. CSG consumes that plan rather than re-deciding geometry mid-build: eligible
+  box posts receive the same short vertical wall rib as before, while a materially cantilevered
+  board edge receives a non-persisted row of blind support pads at the standoff height. Manual
+  mode and explicitly added support-pad features stay exactly as they were; the derived row does
+  not invent a project feature or change JSON.
+  - The Board inspector now calls the setting **Auto reinforcement** and shows the resolved result
+    (wall-rib count and any board-edge support row) before export. It still offers the explicit
+    “Prop up…” action for a user who wants an editable support feature instead of a derived one.
+  - Refactored `boardSupport.ts` so the existing UI action and the new CSG resolver share one pure
+    world-space support derivation, avoiding two separate heuristics. Geometry probes prove that
+    Auto adds the expected wall rib and two-pad support row while Posts only adds neither; the
+    exported Auto base remains watertight. `npm run lint`, `npm run build`, and `npm test` passed
+    (305 tests). No browser was available for the required interactive pass; pending operator
+    check: select an asymmetric board mount, toggle Auto reinforcement, and inspect the rendered
+    rib/support row for underside-component and cable clearance.
+
+- **2026-08-31**: Began Phase C's fastener/fit foundation without changing legacy boss geometry.
+  Added the bounded `fasteners/library.ts` starter catalog: every supported M2/M2.5/M3/M4
+  heat-set and self-tapping combination has a named recipe, legacy-equivalent bore/head/clearance
+  dimensions, a reference to the design guidance that informed its *topology*, and an explicit
+  `calibrated: false` status. `ScrewSpec.recipeId` is optional for imported JSON; absent projects
+  resolve by their old `size` + `insertType` pairing, preserving the prior CSG dimensions.
+  - Lid boss CSG, boss-radius calculation, and BOM insert-depth handling now resolve the recipe
+    rather than consuming an anonymous global table. The lid inspector adds a recipe selector and
+    a visible coupon/calibration warning; editing size or insert style deliberately clears recipe
+    intent until the matching starter is selected again. The BOM records its uncalibrated hardware
+    assumption instead of implying that a generic M3 insert is universally printable.
+  - Browser diagnosis found `/usr/bin/chromium`, but no configured Chrome profile, no enabled Codex
+    browser extension, and no native-host manifest. This integration cannot be safely repaired from
+    the repo: reinstall the Browser plugin in the ChatGPT plugin UI, launch Chromium once with that
+    profile, and enable its extension. Then rerun a live UI pass for both Auto reinforcement and
+    the recipe selector. `npm run lint`, `npm run build`, and `npm test` passed (309 tests).
+
+- **2026-08-31**: Began Phase D's visible-fidelity work with a deliberately small, opt-in lid
+  treatment. `LidSpec.surfaceTreatment` adds `plain` (legacy default) and `refined`; refined box
+  lids receive a centered rounded recessed field rather than an arbitrary decorative cut. The pure
+  `resolveRefinedLidField()` recipe derives its inset from the active profile's skin/rib floors and
+  from the actual interior screw-head keep-outs, then caps depth so it leaves the selected profile's
+  top skin intact. If the field cannot fit (small box, too-thin wall, or a fastener layout that
+  consumes the available lid), CSG leaves it plain and Design Checks explains why instead of
+  producing a fragile feature.
+  - Added a Lid treatment selector in the inspector; it is currently intentionally box-only. Tests
+    prove plain output stays plain, refined output removes the top-center material only to its
+    resolved depth, the remaining lower skin exists, and the exported lid remains watertight.
+    `npm run lint`, `npm run build`, and `npm test` passed (311 tests). Browser/UI review remains
+    pending until a Browser surface is provisioned.
+
+- **2026-08-31**: Ran the operator browser-verification pass the four entries above had flagged as
+  pending (manufacturing profiles, Auto reinforcement, fastener recipes, refined lid), plus legacy
+  compatibility and export watertightness, against the dev server with a scripted Playwright driver
+  (no project skill existed for this repo yet — a fallback driver was hand-rolled from the `run`
+  skill's browser-driven pattern; worth capturing via `/run-skill-generator` in a future session).
+  All seven checklist items pass:
+  - **Profiles**: switching Legacy/PLA/PETG visibly changes the Printability card's target
+    perimeters/line width/min skin (1.20mm → 1.80mm) and the weak-wall Design Check's stated
+    threshold and appears/disappears correctly as wall thickness crosses it.
+  - **Auto reinforcement**: applied to the Raspberry Pi 3B preset's off-center 58×49 hole grid
+    (asymmetric on the 85×56 board), Auto vs Posts-only shows a real geometry diff (thin ribs from
+    all 4 posts to their nearest wall, plus a 2-pad underside support row under the cantilevered
+    right edge) matching the resolved-plan text exactly ("4 of 4 posts use a wall rib. right edge
+    gets a 2-pad underside support row (23.5mm unsupported)."). Screenshots confirm the pads/ribs
+    sit clear of the wall-mounted port cutouts.
+  - **Non-box Auto**: on a cylinder body, Auto correctly reports "0 of 4 posts use a wall rib" and
+    the box-only Design Check warning, with no geometry implying a tie exists.
+  - **Fastener recipes**: recipe selection updates size+insert together; manually changing size
+    clears `recipeId` (confirmed in `projectStore.ts`) and the UI re-resolves the display to the
+    matching starter, which is correct since the starter library covers every size×insert
+    combination 1:1. Exported `bom.csv` correctly labels the hardware row with the recipe name and
+    `(uncalibrated)`.
+  - **Legacy compatibility**: a hand-built legacy JSON fixture (no `manufacturingProfile`, no
+    `recipeId`) loads with geometry byte-identical to the source, the profile selector resolves to
+    "Legacy FDM · 0.4 mm nozzle", and Save → Load round-trips without the field being silently
+    added — confirming legacy projects stay legacy until a user actively touches the profile.
+  - **Export**: refined-lid box and M2.5-recipe exports both produced two watertight STLs (every
+    edge shared by exactly 2 triangles, checked directly against the binary STL bytes) plus a
+    `bom.csv`, with zero console errors.
+
+  One real defect surfaced during this pass and was fixed the same session:
+  - **`resolveRefinedLidField()` in [`csg/lidTreatment.ts`](./frontend/src/csg/lidTreatment.ts) had
+    a floating-point boundary bug**: `depth = min(0.8, wallThickness - rules.minSkin)` rejected the
+    field (`depth < 0.2` fired) whenever that subtraction landed exactly on a value IEEE754 rounds
+    to just under a clean threshold — reproduced with the very plausible combo of a 2mm wall on the
+    Daily PLA/PETG profile (`2 - 1.8 === 0.19999999999999996` in JS), which silently fell back to
+    plain with the "does not fit" warning even though 0.2mm of exposed depth is nominally at the
+    profile's own floor, not below it. Fixed with a `1e-6` epsilon on that comparison; a 3mm wall
+    already worked correctly and is unaffected. `npm test`/`tsc -b`/`oxlint` clean after the fix.
+
+  A second suspected defect did **not** hold up and is recorded here so it isn't rediscovered: an
+  ad-hoc STL-edge-count script flagged the Raspberry Pi 3B preset's exported `case_lid.stl` as
+  non-watertight (2 unmatched edges), reproducible back to pre-session HEAD (`1e920a5`) via a
+  disposable `git worktree`. Cross-checking with the project's own
+  [`test/helpers/geometry.ts`](./frontend/test/helpers/geometry.ts) `isWatertight()` — which
+  quantizes vertices to 1 micron and discards triangles that degenerate under that quantization
+  before counting edges, specifically because (per its existing comment) "`getMesh()` can emit
+  geometrically-coincident vertices under distinct indices" at exactly this kind of tangent point
+  ("a boss grazes a rounded interior corner") — showed the lid *is* watertight: the "2 unmatched
+  edges" were one degenerate sub-micron sliver triangle (Manifold-legitimate, cosmetically inert,
+  not a hole), which the ad-hoc script's cruder 4-decimal rounding didn't discard before counting.
+  A `Manifold.setTolerance()` pass was tried and reverted — it didn't remove the sliver either
+  (confirming it isn't a true near-duplicate-vertex weld case) and wasn't needed once the real
+  `isWatertight` semantics were applied. No code change was warranted here.
+
+- **2026-08-31**: Reviewed the browser-verification report and added a direct regression case for
+  its real refined-lid defect: a 2mm wall under the Daily PLA profile must retain the nominal
+  0.2mm field rather than falling through the floating-point boundary (`2 - 1.8`). The test locks
+  in `resolveRefinedLidField()`'s epsilon behavior; the reported STL edge-count issue remains
+  correctly classified as a discarded sub-micron degenerate triangle rather than an enclosure
+  hole. `npm run lint`, `npm run build`, and `npm test` passed (312 tests).
+
+- **2026-08-31**: Began the next six-track fidelity implementation tranche. Phase 1 now has a
+  worker-generated calibration pack available after a successful enclosure export: five printable,
+  watertight artefacts (fit tabs, fit slots, selected-fastener insert boss, port gauge, and snap
+  beam) plus a README recording the exact manufacturing profile and measurement protocol. This is
+  deliberately a measurement workflow, not an automatic calibration claim. The standard export
+  remains a clean STL/BOM ZIP; the new **Download calibration pack** action produces its own ZIP.
+  - Added a native core-3MF download alongside the STL ZIP. It packages the same high-resolution,
+    print-oriented worker meshes, preserving every base/lid/panel as a separate 3MF build item for
+    slicers that understand the format.
+  - Began Phase 2 with **Reinforced port frame** on connector and custom openings: an opt-in,
+    profile-derived exterior rim adds local material without changing the functional cutout size.
+    CSG tests prove the ring leaves the opening clear and the lid watertight. `npm run lint`,
+    `npm run build`, and `npm test` passed (315 tests). Browser checks for the two new downloads
+    and port-frame UI are pending the final Claude validation pass.
+
+- **2026-08-31**: Inspector-sidebar decluttering, prompted by the repo owner noticing the
+  right-side panel had accumulated too many always-visible `<p className="field-hint">`
+  explanations (16 in `InspectorPanel.tsx` alone) crowding out the actual controls. Added
+  [`components/InfoTooltip.tsx`](./frontend/src/components/InfoTooltip.tsx): a small (ⓘ) icon,
+  shown on hover/keyboard-focus (Escape or blur dismisses it), that reveals the same text instead
+  of it sitting on the page permanently. Portaled to `document.body` rather than positioned
+  relative to its trigger -- the inspector panel is only 290px wide and its `overflow-y: auto`
+  makes the browser resolve `overflow-x` to `auto` too, so a relatively-positioned bubble would get
+  clipped before a reader could see it; the portal escapes that entirely and is placed via a
+  `getBoundingClientRect()` read on hover, anchored above-right of the icon.
+  - `NumberField`/`UnitNumberField` gained an optional `hint?: ReactNode` prop (used by both "Wall
+    brace" and "Base flare", so a real second use case justified it) rather than every call site
+    hand-rolling its own label+icon.
+  - Converted the 10 *static, explanatory* hints (Auto reinforcement, Corner Guides, kickstand
+    wedge angle, wall brace, corner-mount fill, fan bolt circle, support-pad height/repeat count,
+    reinforced port frame, base flare, lid treatment, snap comb) to tooltips, attached to whichever
+    label/checkbox/button they actually explain -- in a couple of cases (lid treatment, corner
+    guides, screw-the-plates-down) this also makes previously state-gated help text available
+    all the time instead of only after the feature was already turned on.
+  - Deliberately left 4 hints as always-visible text, since they're live computed output or a
+    safety warning, not passive description: the resolved Auto-reinforcement mount-plan summary,
+    the two dynamic board-edge overhang-support statuses, and the uncalibrated-fastener warning
+    (which also carries an actionable link) in the Lid & Fasteners card. `PrintabilityCard.tsx`'s
+    profile-assumptions line was left alone for the same reason -- it's current data, not help.
+  - Verified with Playwright against the dev server: icon hover/focus/Escape/blur all show and
+    hide the bubble correctly with zero console errors; the board-mount inspector (previously the
+    most cluttered panel, two multi-line paragraphs) now shows just two small icons; tooltip text
+    matches the original wording exactly and is portaled above the viewport rather than clipped by
+    the sidebar. `tsc -b`, `oxlint`, and `npm test` (316 tests) all clean.
+
+- **2026-08-31**: Follow-up round: extended the same declutter treatment to the board preset
+  picker, plus a new Clear Workspace action, prompted by the repo owner noticing some preset
+  descriptions ran to 1000+ characters (Wio-WM6180 alone is 1183) and dominated the picker grid.
+  - `BoardPresetPicker.tsx`: `.preset-notes` now clamps to 3 lines via CSS (`-webkit-line-clamp`)
+    regardless of length -- harmless for the many short one-line notes, bounds the long ones to a
+    uniform card height so the grid is actually scannable. Any note over 160 characters (a rough
+    "this is almost certainly getting clipped" threshold) gets an `InfoTooltip` icon in the card's
+    corner revealing the untruncated text. The icon is a **sibling** of the pick-button, not nested
+    inside it -- a `<button>` inside a `<button>` is invalid HTML and breaks click handling, so the
+    card markup was restructured (`.preset-pick` class takes over the old bare `.preset-list
+    button` selector, `.preset-info-anchor` absolutely positions the icon in the corner).
+  - **Found and fixed a real positioning bug in `InfoTooltip` itself** while testing the Wio-WM6180
+    card (near the top of the list): a long tooltip anchored purely "above the trigger" can be
+    taller than the actual space above it and run off the top of the browser window. Fixed with a
+    measure-then-correct approach (`useLayoutEffect` reads the portaled bubble's real rendered
+    height right after it mounts, before paint, and flips the anchor to open below the trigger if
+    it wouldn't fit above) rather than guessing a fixed threshold from the trigger's screen
+    position, which doesn't account for how long the actual content is.
+  - Surveyed the rest of the app for the same clutter pattern: `FeaturePalette.tsx`'s connector and
+    board-mount-preset cards also render a `notes` string per card, but those top out around 180
+    characters (1-2 lines) -- borderline, not urgent, and the same `InfoTooltip` component is ready
+    to reuse there if it becomes a problem. Nothing else in the app (Design Checks findings,
+    Command Palette, Export modal) carries long always-visible description text.
+  - Added a **Clear** button in the top toolbar (next to Load): opens a confirm modal (reusing the
+    existing `.modal-overlay`/`.modal` classes, no new modal component) and, on confirm, calls the
+    already-existing `loadProject(createDefaultProject())` store action -- no new store action
+    needed, since `loadProject` already replaces the whole project through `mutate()` and therefore
+    already gets a normal undo-stack entry for free. Verified Cancel leaves the project untouched,
+    confirming resets to a blank default project, and Ctrl+Z immediately after Clear brings the
+    pre-clear project straight back.
+  - Worth noting for the repo owner: full undo/redo (toolbar buttons + Ctrl+Z/Ctrl+Shift+Z) already
+    shipped in Phase 4 (see that section above) -- only a visible *history list/panel* is still
+    outstanding, not undo/redo itself.
+  - Verified with Playwright: preset grid renders at a uniform card height, hovering an icon shows
+    the full untruncated note fully on-screen (including the Wio-WM6180 card near the top of the
+    list, the case that exposed the flip bug), clicking a card's button body (not the icon) still
+    applies that preset correctly. `tsc -b`, `oxlint` (zero warnings, including
+    `react-hooks/exhaustive-deps` on the new layout effect), and `npm test` (316 tests) all clean.
+
+- **2026-08-31**: Same-session follow-up: cleaned up the Feature Palette's connector/board-preset
+  cards and added a History tab to the inspector sidebar.
+  - `FeaturePalette.tsx`: the two data-driven card grids (board-mount presets, connector library)
+    already 2-line-clamped their notes via existing CSS and fell back to a native browser `title`
+    tooltip for the rest -- functional, but visually inconsistent with every other help affordance
+    in the app now. Extracted a small local `PaletteCard` (used only by those two sections; the
+    other palette-card grids have short fixed strings that were never a problem) that swaps the
+    native title for the same `InfoTooltip` icon, past a 140-character threshold. Same sibling-not-
+    nested-button structure as the preset-picker fix.
+  - Added a **History** tab (Structure / Layers / Studio / History) to the inspector, reading the
+    store's existing `past`/`project`/`future` directly -- no schema change. New `jumpToHistory`
+    store action repositions past/project/future to an arbitrary snapshot in one atomic `set()`
+    (list-friendly) rather than replaying `undo()`/`redo()` one call at a time.
+  - There's no per-action label recorded anywhere in the undo stack (all ~60 store actions funnel
+    through one `mutate()` with no description parameter -- threading one through every call site
+    would be a much bigger change than this warranted). New `state/historySummary.ts` instead does
+    a shallow structural diff between adjacent snapshots (features added/removed/edited, body shape
+    vs. lid vs. panels vs. wall thickness, name/units/profile) to produce a short label per step
+    without one. `updatedAt` was deliberately not used for display timestamps -- `undo()`/`redo()`
+    already re-stamp it on every visit, so it doesn't mean "when this state was created."
+  - `featureLabel()` (feature-type display name, e.g. "Board mount") moved out of
+    `InspectorPanel.tsx` into `state/featureLabel.ts` so the new history summaries and the existing
+    Layers list share one source of truth instead of `HistoryPanel.tsx` importing it back out of
+    `InspectorPanel.tsx`, which renders `HistoryPanel` and would have made the import circular.
+  - Caught two things during Playwright verification, both fixed same round: a real branching test
+    (jump to an older entry, then make a new edit) confirmed the abandoned future is discarded
+    exactly like a normal undo-then-edit; separately, the 4-tab bar overflowed the 290px sidebar
+    (tab text and the intro paragraph both got clipped on the left from the resulting horizontal
+    scroll) until the tab bar's padding/font-size were tightened and, per repo owner feedback in
+    the same round, the Layers and History tabs' count badges were dropped entirely rather than
+    fought for space -- the four labels alone fit cleanly.
+  - `tsc -b`, `oxlint`, `npm test` (316 tests) all clean.
+
+- **2026-08-31**: Fixed the Printability card, prompted by a screenshot showing "0.45mm line
+  width;1.80mm minimum skin/web." running together with no space, plus the three stat boxes
+  (Filament Weight / Shell Volume / Est. Print Time) each wrapping their label to 2-3 lines.
+  - The missing space was a real bug in `PrintabilityCard.tsx`: the JSX text ended a line right at
+    `line width;` with no trailing `{' '}`, so the next line's `{stats.profile.minSkin...}`
+    expression butted straight up against it with zero whitespace between the two children. Added
+    the missing `{' '}`, matching the pattern already used earlier in the same paragraph.
+  - The three-column `.printability-grid` was the actual crowding: at the 290px sidebar's ~85px
+    per column, "Filament Weight" and "Est. Print Time" don't fit on one line at any reasonable
+    font size. Restyled to a single-column list of label/value rows (`.stat-row`, plain flex
+    `justify-content: space-between`) inside one bordered container, the same shape as the
+    `Hardware Fastener List` rows directly below it in the same card -- both un-crowded and more
+    visually consistent within the card than before.
+  - Surveyed for a second occurrence before assuming one existed: the Studio tab's 4-column
+    tessellation quality selector ("Draft/Standard/High/Ultra") was the obvious next suspect (an
+    even narrower per-column budget), but its labels are short enough at 11px that it renders
+    on one line with no wrapping -- confirmed by screenshot, left alone. Nothing else in the
+    sidebar uses a 3+ column grid; the two 2-column grids elsewhere (dimension field pairs, corner
+    style) have enough room per column for their (short) field labels and weren't a problem.
+  - On sidebar width itself: 290px is tight specifically for horizontally-packed multi-column
+    stat/label grids, which is now fixed at its one real occurrence, but is otherwise fine for the
+    vast majority of the sidebar's single-column field rows. Widening the whole panel would trade
+    away 3D viewport space for the entire app, not just this one card, so that wasn't done
+    speculatively -- worth reconsidering only if further crowding turns up somewhere a stacked
+    layout can't fix.
+  - Verified in-browser that the hint text now contains a real space (`"width; 1.20mm minimum..."`)
+    and the stat rows render on one line each with no wrapping, across both a short (Legacy) and
+    long (Daily PETG) profile label. `tsc -b`, `oxlint`, `npm test` (316 tests) all clean.
+
+- **2026-08-31**: Completed the remaining enclosure-fidelity engineering pass while preserving
+  every legacy project default.
+  - Added the opt-in **Field-marked** box-lid style: the profile-safe recessed field remains the
+    protected label area, and a shallow perimeter reveal sits above the mechanical split only when
+    the active profile leaves sufficient side-wall skin. It falls back safely (with a Design Check)
+    rather than thinning a wall just to draw a decorative line. Geometry tests cover the reveal,
+    retained skin, and watertight export.
+  - Auto board reinforcement now receives the complete project feature set and treats connector,
+    custom-hole, vent, and fan openings on a candidate wall as structural keep-outs. It prefers a
+    different eligible wall for the rib; if none is clear it retains a floor post and explains why
+    in the resolved mount plan. A regression case proves a rear port redirects the old rear-wall
+    tie to the next safe wall and leaves the port open.
+  - Derived support rows can now be a **continuous support rail** (rectangular rows only), giving a
+    long cantilevered board edge a distributed bearing surface instead of two isolated pressure
+    points. Auto-generated rows select that rail by default; manual support-pad rows expose a
+    checkbox so an operator can preserve individual gaps for underside components or wiring.
+    Claude's existing chamfered corner-guide controls remain the screwless-retention option, so no
+    parallel or conflicting board-retention UI was introduced.
+  - Reconciled the concurrent UI work first: the current tree includes the verified tooltip,
+    sidebar declutter, Clear Workspace, and History-tab changes described in the preceding entries;
+    no UI work was overwritten. Final static verification and interactive browser coverage are
+    recorded separately so the latter is not implied by the geometry tests.
+
+- **2026-08-31 (verification)**: `cd frontend && npm run lint && npm run build && npm test` all
+  passed after the Field-marked, wall-opening keep-out, and continuous-rail work: 17 test files /
+  318 tests. `git diff --check` is clean. Vite continues to report only its non-blocking existing
+  >500kB bundle-size advisory. Browser validation remains intentionally pending the delegated
+  Claude task list; no live UI claim is made for these newest controls here.
+
+- **2026-08-31 (browser validation)**: Claude completed the final seven-scenario browser pass with
+  zero console/page errors. Field-marked visibly adds/removes both the recessed top field and seam;
+  a 1.5mm Daily-PLA wall safely falls back to plain geometry with the expected seam-budget and
+  thin-wall checks. A four-hole Auto mount with openings placed on every prospective wall-rib path
+  correctly reports zero wall ribs and leaves all openings unobstructed. The asymmetric Waveshare
+  CM4 Dual ETH WiFi6 mount renders the derived continuous rail under its ~30mm unsupported edge,
+  while a manual five-pad row visibly switches between separated pads and one rail. Four
+  corner-guide posts render with clearance around a no-hole board.
+  - Standard exports contain watertight base/lid binary STLs and a sensible BOM; the calibration
+    ZIP has all five coupons plus profile/fastener README; the 3MF is a valid OPC package with
+    Base/Lid objects whose triangle counts match the STL meshes. No slicer was installed, so a
+    slicer import is the only remaining unexecuted export check; direct 3MF XML/package inspection
+    passed.
+  - Observation, not a defect: a single-click generic board-mount placement can be off-centre,
+    which legitimately changes the walls selected by Auto reinforcement. The existing U/V Center
+    alignment controls restore a symmetric placement when that is the user's intent.
+
+- **2026-08-31**: Moved the selected-feature editor out of the persistent right sidebar and into
+  the 3D workspace, directly beneath the 2D Blueprint / Caliper controls.
+  - `App.tsx` now provides a viewport-owned portal host; `InspectorPanel.tsx` portals the existing
+    selected-feature editor into it. The editor's fields, lock, alignment preview, duplicate,
+    delete, and deselect behaviors are unchanged, while Structure / Layers / Studio / History stay
+    in their stable sidebar location.
+  - The overlay is constrained to the available viewport height, has its own scrollable content,
+    and does not intercept pointer input outside its visible card. It therefore preserves the
+    larger working canvas while a feature is selected and avoids the bottom-right orientation
+    readout.
+  - `cd frontend && npm run lint && npm run build && npm test` passed (17 files / 318 tests), and
+    `git diff --check` is clean. Live browser validation is still pending: the local Vite server
+    started successfully, but no browser connection was available in this environment.
+
+- **2026-08-31**: Follow-up UX adjustment: moved that workspace editor from the top-right to the
+  top-left edge of the viewport, balancing the persistent right inspector and keeping contextual
+  part editing away from the orientation/readout cluster.
+
+- **2026-08-31**: Aligned the selected-feature editor's top edge with the 2D Blueprint / Caliper
+  workspace controls, so the two contextual tool areas share one horizontal starting line.
+
+- **2026-08-31**: Moved advisory Design Checks from the top of the Structure sidebar to a compact,
+  persistent bottom-centre viewport alert rail.
+  - The rail shows the count and first actionable warning without taking sidebar space. It expands
+    upward to reveal the complete bounded, scrollable list; selecting a feature-specific warning
+    focuses that feature and closes the list. Body-only findings remain visible but are correctly
+    non-clickable.
+  - This preserves the checks' advisory/no-export-blocking contract while making an unresolved
+    issue visible throughout 3D work. `npm run lint`, `npm run build`, `npm test` (17 files / 318
+    tests), and `git diff --check` all pass. Browser validation remains pending because this
+    environment has no connected browser surface.
+
+- **2026-08-31**: Corrected modal layering: `.modal-overlay` now sits above all viewport controls,
+  so the Presets dialog and every other modal properly blocks both the appearance and interaction
+  of the 2D Blueprint / Caliper tool row. `npm run lint`, `npm run build`, `npm test` (318 tests),
+  and `git diff --check` pass.
+
+- **2026-08-31**: Redesigned the Board Presets picker as a quick decision surface.
+  - Cards now lead with a concise, derived summary (`case dimensions + mount pattern / I/O feature
+    count`) rather than reprinting dense hardware prose. Every card retains an always-available
+    details tooltip containing the complete original note and its caveats.
+  - Added a focused text search across board names and full notes, category counts, no-result
+    feedback, a close control, Escape dismissal, and backdrop dismissal. Applying a preset retains
+    the prior store behavior: it applies the body plus generated features, then closes the modal.
+  - `npm run lint`, `npm run build`, `npm test` (17 files / 318 tests), and `git diff --check` all
+    pass. Browser validation remains pending because no browser surface is connected here.
+
+- **2026-08-31**: Follow-up preset-picker correction: information tooltips no longer render the
+  complete provenance/research note (the Wio-WM6180 one could occupy most of the viewport). Each
+  tooltip now derives a bounded setup summary from real preset data: case dimensions, documented
+  mount versus friction-fit guides, modeled-feature count, friction-lip choice where applicable,
+  and the fit-verification reminder. `npm run lint`, `npm run build`, `npm test` (318 tests), and
+  `git diff --check` pass.
+
+- **2026-08-31**: Completed the first uniform printability audit of the board-preset library.
+  - Design Checks now measure side-wall openings against the resolved lid seam, alongside their
+    existing wall-edge and opening-to-opening checks. Each preset is tested against every bundled
+    manufacturing profile, and each resulting base/lid pair is generated and checked for
+    watertightness.
+  - The Wio, CYD, and Raspberry Pi family split heights now retain the selected profile's minimum
+    skin. Dense BeagleBone right-side I/O is modeled as a deliberate connected, stepped compound
+    opening instead of leaving unprintably thin webs between nominally separate cutouts. The
+    Waveshare CM4's panel thickness and intake-vent placement now meet the strict profile budget.
+  - `npm run lint`, `npm run build`, `npm test` (17 files / 354 tests), and `git diff --check`
+    pass. This is a code/mesh and rule-based audit, not a substitute for physical prints and
+    slicer checks; those per-preset acceptance passes remain the next validation step.
+
+- **2026-08-31**: Expanded the lid system after an FDM fastener/snap-fit review.
+  - **Captive slide rail** is the fourth selectable lid mode for box, stadium, and wedge bodies.
+    Base-side flanges run inside joined lid U-channels and are retained under their lower hooks, so
+    the cover can translate along its open X end but cannot lift away. Box and wedge bodies add a
+    hard closed-position stop; stadium stays removable at both ends because its rounded end wall
+    has no reliable transverse stop plane. This is a calibrated sliding fit, not a detented,
+    sealed, or high-retention latch. Switching to an incompatible round/polygon body deliberately
+    returns this mode to `friction-lip` rather than silently generating non-functional geometry.
+  - **Bayonet quarter-turn** is now a cylinder-only closure. Three lid lugs lower through the gaps
+    between offset base shelves, then turn beneath them; their tethers hang inside the cavity from
+    the lid roof, avoiding a rotating wall tab that would scrape or weaken the cylinder wall.
+  - The existing snap comb now uses a longer, thinner arm and a lower 0.5mm catch/0.25mm pocket
+    clearance. This is a safer starting recipe, not a service-life claim: its rectangular arm and
+    print orientation still need a representative FDM coupon and physical cycle test before it is
+    presented as frequently serviceable.
+  - Added watertightness, parked-interference, envelope, shape-switch, lift-capture, and
+    closed-stop regression probes for the new modes. `cd frontend && npm run lint && npm run build
+    && npm test` passes: 17 files / 360 tests. `git diff --check` passes. Browser validation remains
+    pending because the local app had no connected browser surface; no physical FDM prints or slicer
+    import were run.
+
+- **2026-08-31**: Fixed the captive slide rail's split-height slider, which was still presenting
+  the seam as a conventional "Body % / Lid %" split left over from the other three lid types.
+  - **A slide-rail lid's cover deliberately extends below the nominal seam** to capture the base
+    flanges (`resolveSlideRailMetrics` in the new `csg/slideRailMetrics.ts`), so "base + lid =
+    100%" was actively misleading for this mode — the two halves overlap by design, they don't
+    partition the body height. The inspector's split slider (`InspectorPanel.tsx`) now labels its
+    two sides "Seam %" / "Cover envelope %" specifically for `slide-rail` (falling back to the
+    original "Body %" / "Lid %" for every other lid type), with a hint line reporting the actual
+    overlap in mm.
+  - **`csg/lidSplit.ts`'s `effectiveSplitHeight` became `lidSplitRange` + `effectiveSplitHeight`**:
+    the valid range is no longer just `[wallThickness + 1, outer − wallThickness − 1]` — for
+    `slide-rail` the minimum is raised to whatever `minimumSlideRailSplitHeight` needs to keep the
+    rail's capture hooks off the floor, so the channel can no longer collapse into the base at a
+    low split height. Every consumer (the split slider, the drag handle in `Viewport3D`, the CSG
+    pipeline in `generateEnclosure.ts`/`parts.ts`, `BlueprintModal`, `bom.ts`, `designChecks.ts`,
+    `projectStore.ts`'s lid-type/body-resize clamping) now reads through `lidSplitRange` instead of
+    a single fixed floor, so the UI, drag interaction, and generated geometry can't drift from each
+    other on this.
+  - `printRules.ts` was also generalized the same session (`printRulesForProfile`, keyed off the
+    active `ManufacturingProfile` instead of the old hardcoded `NOZZLE`-derived constants, which
+    are kept as `LEGACY_PRINT_RULES`-backed aliases for existing call sites) — this is what lets
+    `panelMetrics`/`printability.ts` report the currently-selected profile's real minimum skin
+    rather than the original Legacy-FDM-only figures.
+  - Verified end-to-end with Playwright against the dev server (no project skill covers launching
+    this app yet, so drove it directly): set lid type to Captive slide rail, confirmed the slider
+    labels read "Seam 80% / Cover envelope 29%" reflecting the default, confirmed the overlap hint
+    ("The cover overlaps the base by 2.6mm to capture the rails."), and confirmed pressing Home on
+    the slider stops at 5.6mm (not 0) — visibly short of the track's left edge — rather than
+    letting the seam collapse toward the floor. Switched back to Friction lip and confirmed the
+    labels revert to "Body 80% / Lid 20%" and the slider's minimum returns to 3mm. Zero console
+    errors in either state. `tsc -b`, `oxlint`, and `npm test` (18 files / 364 tests) all clean.
+
+- **2026-08-31 (bug found + fixed)**: The slider/range verification above only checked labels and
+  numeric clamping, not the generated geometry — the repo owner then screenshotted the default
+  Captive slide rail body fresh from the dev server and it was clearly wrong: a thin plate floating
+  well above the base with daylight visible all around it, nothing like a pressure fit.
+  - **Root cause**: `applySlideRailLid` (`csg/primitives.ts`) builds the cover as a flat plate plus
+    two thin external rail strips, and never touches the raw split `lid` piece (the box wall/roof
+    that `hollowShell.splitByPlane` produces above `splitHeight`) — `generateEnclosure.ts` passed
+    only `base` into it, so that piece was silently discarded. Meanwhile `base` itself only carries
+    wall material up to `splitHeight`. Every other lid type is fine with this because their lid
+    piece *is* that discarded wall/roof, just modified (skirt/boss added). Slide-rail's flat-plate
+    design needs the *base* to carry real wall material all the way up to the plate's underside —
+    without that, the whole band between `splitHeight` and the plate is open air on the main
+    footprint, everywhere except the two thin external rails. Confirmed geometrically before
+    fixing: a probe cube at the wall face between those two heights intersected neither part
+    (`0.0000` volume against both), at every sampled height and every Y position across the
+    footprint except right at the rails.
+  - **Fix**: before calling `applySlideRailLid`, `generateEnclosure.ts` now re-splits the
+    already-computed `lid` piece a second time at the plate's underside (`height -
+    slideRailPlateThickness(wallThickness)`, the same value `applySlideRailLid` computes
+    internally, now shared via a new `slideRailMetrics.ts` export so the two call sites can't
+    drift) and unions the reclaimed band into `base`. The plate/rails/hooks are unchanged; they now
+    simply attach to continuous wall instead of open air.
+  - **New regression test** (`generateEnclosure.test.ts`, "keeps the base wall continuous from the
+    floor up to the cover, with no open gap at the seam") probes the wall face at three heights
+    spanning the old gap and asserts real material is present. Confirmed it fails without the fix
+    (reverted it locally, watched the exact assertion fail, restored it) before trusting it as a
+    real regression guard, not a tautology.
+  - Verified visually via Playwright screenshot at the default 80%/29% split, from both the default
+    camera angle and rotated to look along the seam: the cover now sits flush on the base with no
+    visible gap from any angle, in both Assembled and a wireframe/Outlines view. Zero console
+    errors. `tsc -b`, `oxlint`, and `npm test` (18 files / 365 tests, +1 for the new regression
+    probe) all clean.
+  - **Lesson for next time**: verifying a UI/geometry change by reading slider values and DOM text
+    is not sufficient for anything that touches CSG — the label math and the mesh it describes can
+    silently disagree. Any lid-type change needs at least one screenshot of the actual generated
+    body, not just the control panel.

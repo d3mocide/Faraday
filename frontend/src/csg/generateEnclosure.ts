@@ -2,6 +2,8 @@ import type { Manifold, ManifoldToplevel } from 'manifold-3d';
 import { findConnector } from '../connectors/library';
 import type { EnclosureProject, PanelFace } from '../types/project';
 import { bodyGeometry } from './faceFrame';
+import { printRulesForProfile } from './printRules';
+import { manufacturingProfileForProject } from '../state/manufacturingProfiles';
 import {
   buildBoardMount,
   buildConnectorCutout,
@@ -9,11 +11,13 @@ import {
   buildExternalMount,
   buildFanMount,
   buildGripRibs,
+  buildPortFrame,
   buildStandoff,
   buildSupportPad,
   buildVentCutout,
 } from './featurePrimitives';
 import { effectiveSplitHeight } from './lidSplit';
+import { slideRailPlateThickness } from './slideRailMetrics';
 import {
   orientPanelForPrint,
   panelChannelCut,
@@ -24,10 +28,14 @@ import {
   type PanelShells,
 } from './panels';
 import { featurePart, panelMetrics, panelPartId, partLabel, type PartId } from './parts';
+import { resolveBoardMountPlan } from './mountPlan';
+import { resolveLidSeamReveal, resolveRefinedLidField } from './lidTreatment';
 import {
   applyEdgeBevelsBox,
   applyEdgeBevelsCylinder,
   applyEdgeBevelsPolygon,
+  applyBayonetLidCylinder,
+  applyRecessedLidField,
   applyFrictionLipLid,
   applyFrictionLipLidCylinder,
   applyFrictionLipLidPolygon,
@@ -36,6 +44,7 @@ import {
   applyGasketChannelCylinder,
   applyGasketChannelPolygon,
   applyGasketChannelStadium,
+  applyLidSeamReveal,
   applyScrewBossLid,
   applyScrewBossLidCylinder,
   applyScrewBossLidPolygon,
@@ -43,6 +52,7 @@ import {
   applySnapFitLid,
   applySnapFitLidCylinder,
   applySnapFitLidPolygon,
+  applySlideRailLid,
   boxShell,
   cylinderShell,
   hexagonShell,
@@ -89,6 +99,7 @@ export function generateEnclosure(
   wasm.setCircularSegments(quality === 'export' ? exportSegs : liveSegs);
 
   const { body } = project;
+  const rules = printRulesForProfile(manufacturingProfileForProject(project));
   const height =
     body.shape === 'wedge'
       ? body.outer.heightBack
@@ -276,6 +287,44 @@ export function generateEnclosure(
         wallGap: Math.max(body.lid.wallGap, 0),
       });
     }
+  } else if (body.lid.type === 'slide-rail') {
+    // A slide cover needs parallel exterior walls. Cylinder/polygon bodies do not have a stable
+    // rail plane, so the inspector does not offer it there and imported projects fall back to the
+    // plain split rather than emitting fictionally-working rail geometry.
+    if (body.shape === 'box' || body.shape === 'stadium' || body.shape === 'wedge') {
+      // applySlideRailLid replaces `lid` with a flat cover, not a walled cap -- so unlike every
+      // other lid type, the *base* has to keep real wall material all the way up to the cover's
+      // underside, or the region between the user's chosen seam and the cover is simply open air.
+      // The generic split above only carried the base wall up to `splitHeight`; reclaim the band
+      // above it (still part of `lid` here) up to the plate's underside and fold it into `base`
+      // before building the rails, so the flanges/hooks attach to continuous wall rather than a
+      // gap.
+      const railTop = height - slideRailPlateThickness(wallThickness);
+      if (railTop > splitHeight) {
+        const [, wallBand] = lid.splitByPlane([0, 0, 1], railTop);
+        base = base.add(wallBand);
+      }
+      ({ base, lid } = applySlideRailLid(wasm, base, {
+        length: body.outer.length,
+        width: body.outer.width,
+        height,
+        splitHeight,
+        wallThickness,
+        wallGap: Math.max(body.lid.wallGap, 0),
+        railDepth: body.lid.slideRail?.railDepth,
+        closedEndStop: body.shape === 'box' || body.shape === 'wedge',
+      }));
+    }
+  } else if (body.lid.type === 'bayonet' && body.shape === 'cylinder') {
+    ({ base, lid } = applyBayonetLidCylinder(wasm, base, lid, {
+      innerDiameter,
+      splitHeight,
+      outerHeight: height,
+      wallThickness,
+      wallGap: Math.max(body.lid.wallGap, 0),
+      lugCount: body.lid.bayonet?.lugCount,
+      turnDeg: body.lid.bayonet?.turnDeg,
+    }));
   }
 
   // Corner snap comb: independent of lid.type (like the gasket channel below), so it can layer on
@@ -355,10 +404,24 @@ export function generateEnclosure(
     }
   }
 
+  const refinedLidField = resolveRefinedLidField(body, rules);
+  if (refinedLidField) lid = applyRecessedLidField(wasm, lid, height, refinedLidField);
+  const seamReveal = resolveLidSeamReveal(body, rules);
+  if (seamReveal && body.shape === 'box') {
+    lid = applyLidSeamReveal(
+      wasm,
+      lid,
+      body.outer.length,
+      body.outer.width,
+      body.cornerStyle,
+      seamReveal,
+    );
+  }
+
   // Slide-in panels: cut each plate's channel *after* the lid mating geometry, so a screw boss or
   // friction lip can never end up blocking the slot the plate has to slide down. The plate itself
   // is trimmed against the (pre-hollowing) outer shell so its ends follow the body's corner style.
-  const metrics = panelMetrics(body);
+  const metrics = panelMetrics(body, rules);
   const panels = new Map<PanelFace, Manifold>();
   if (metrics && body.shape === 'box') {
     const dims = { length: body.outer.length, width: body.outer.width };
@@ -449,7 +512,9 @@ export function generateEnclosure(
       continue;
     }
     if (feature.type === 'board-mount' && feature.board) {
-      base = base.add(buildBoardMount(wasm, feature, geom, wallThickness));
+      base = base.add(
+        buildBoardMount(wasm, feature, geom, wallThickness, resolveBoardMountPlan(feature, body, rules, project.features)),
+      );
       continue;
     }
     if (feature.type === 'support-pad' && feature.pad) {
@@ -459,7 +524,7 @@ export function generateEnclosure(
     if (feature.type === 'external-mount' && feature.mount) {
       const cornerRadius =
         body.shape === 'box' && body.cornerStyle.type !== 'sharp' ? body.cornerStyle.radius : 0;
-      const part = featurePart(feature, body);
+      const part = featurePart(feature, body, rules);
       const zSpan =
         part === 'base'
           ? { min: 0, max: splitHeight }
@@ -475,7 +540,7 @@ export function generateEnclosure(
 
     // A fan opening is both: bosses union in, then the same cut bores its screw holes through them.
     if (feature.type === 'fan-mount' && feature.fan) {
-      const part = featurePart(feature, body);
+      const part = featurePart(feature, body, rules);
       const { add, cut } = buildFanMount(wasm, feature, geom, wallThickness);
       if (add) addTo(part, add);
       subtractFrom(part, cut);
@@ -493,7 +558,12 @@ export function generateEnclosure(
     } else if (feature.type === 'grip-ribs') {
       cutout = buildGripRibs(wasm, feature, geom, wallThickness);
     }
-    if (cutout) subtractFrom(featurePart(feature, body), cutout);
+    const part = featurePart(feature, body, rules);
+    if (cutout) subtractFrom(part, cutout);
+    if (feature.portFrame) {
+      const frame = buildPortFrame(wasm, feature, geom, rules);
+      if (frame) addTo(part, frame);
+    }
   }
 
   const parts: EnclosurePart[] = [
