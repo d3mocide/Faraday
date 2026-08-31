@@ -73,12 +73,17 @@ describe('board preset IO layouts', () => {
   it('every preset with io produces a board-mount or is a documented board-less starter', () => {
     // Board-less presets (no boardMount) measure their io ports from the interior floor instead
     // of a board's top surface -- see buildPresetFeatures in featureFactory.ts. The sealed outdoor
-    // node has no board at all; the Jetson devkit and XIAO ESP32 have a real board but ship without
-    // a boardMount because there's genuinely no mounting-hole pattern to place (Jetson: NVIDIA's
-    // docs don't dimension one; XIAO: the board has no mounting holes at all, by design -- see each
-    // preset's notes). Anything else with io but no boardMount is probably a mistake (a board
-    // preset missing its mount pattern).
-    const knownBoardless = new Set(['sealed-outdoor-node', 'jetson-orin-nano-devkit', 'seeed-xiao-esp32']);
+    // node has no board at all; the Jetson devkit, XIAO ESP32, and Wio-WM6180 HaLow carrier have a
+    // real board but ship without a boardMount because there's genuinely no mounting-hole pattern
+    // to place (Jetson: NVIDIA's docs don't dimension one; XIAO/Wio-WM6180: no published mounting
+    // holes at all -- see each preset's notes). Anything else with io but no boardMount is probably
+    // a mistake (a board preset missing its mount pattern).
+    const knownBoardless = new Set([
+      'sealed-outdoor-node',
+      'jetson-orin-nano-devkit',
+      'seeed-xiao-esp32',
+      'wio-wm6180-halow-xiao',
+    ]);
     for (const preset of BOARD_PRESETS) {
       if (preset.io && !preset.boardMount) {
         expect(knownBoardless.has(preset.id), `${preset.id} has io but no boardMount`).toBe(true);

@@ -170,6 +170,24 @@ export const BOARD_PRESETS: BoardPreset[] = [
     io: [{ connectorId: 'usb-c-panel', face: 'left', alongMm: 0, aboveBoardMm: 2.5 }],
   },
   {
+    id: 'wio-wm6180-halow-xiao',
+    label: 'Seeed Wio-WM6180 Wi-Fi HaLow (XIAO)',
+    notes:
+      "Fits the Wio-WM6180 Wi-Fi HaLow carrier board for XIAO (42x25mm per Seeed's product listing) with a XIAO plugged into the carrier's expansion header on top: an SMA bulkhead on the right wall for the antenna (the onboard FGH100M-H radio uses an IPEX/U.FL connector -- route a short U.FL-to-SMA pigtail to the bulkhead), a USB-C cutout on the left wall for the XIAO's own port (power/flashing), and a lid vent since the HaLow radio can run warm. No official mounting-hole pattern is published for this board, so -- like the other XIAO presets -- this is dimension + IO only, no board-mount. Sized independently around the documented board footprint, not measured off the community Printables case it's named after (inaccessible to inspect) -- same 'verify before printing' tier as the rest of the library.",
+    body: { outer: { length: 62, width: 38, height: 22 }, wallThickness: 2, splitHeight: 14 },
+    io: [
+      { connectorId: 'sma-bulkhead-female', face: 'right', alongMm: 0, aboveBoardMm: 7 },
+      { connectorId: 'usb-c-panel', face: 'left', alongMm: 0, aboveBoardMm: 9 },
+      {
+        vent: { pattern: 'slots', areaWidth: 30, areaHeight: 16, slotWidth: 2, slotSpacing: 5 },
+        face: 'top',
+        alongMm: 0,
+        acrossMm: 0,
+        aboveBoardMm: 0,
+      },
+    ],
+  },
+  {
     id: 'cyd-esp32-2432s028',
     label: 'ESP32 Cheap Yellow Display (CYD 2.8")',
     notes:
