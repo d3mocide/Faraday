@@ -990,6 +990,31 @@ never-verified Docker build.
   edge). Zero console errors across all 11 preset applications. `tsc -b`, `oxlint`, `npm run test`
   (43 passing), and `npm run build` all clean.
 
+## Seeed Wio-WM6180 Wi-Fi HaLow board preset (2026-08-31 session)
+
+- Added `wio-wm6180-halow-xiao` to `presets/boards.ts`: fits Seeed's Wio-WM6180 Wi-Fi HaLow carrier
+  for XIAO (42×25mm board, per Seeed's product listing — the product page itself doesn't dimension
+  it, but coverage of the launch cites the figure) with a XIAO plugged into the carrier's own
+  expansion header. Case is 62×38×22mm, 2mm walls, split at 14mm.
+- **No `boardMount`**: no official mounting-hole pattern is published for this board (checked the
+  Seeed product page and wiki getting-started guide), so — same precedent as the other two XIAO
+  presets and the Jetson devkit — this ships dimension + IO only. Added to the
+  `presetFeatures.test.ts` boardless-preset allowlist alongside them.
+- **`io`**: an SMA bulkhead on the right wall for the antenna (the onboard FGH100M-H radio's own
+  connector is IPEX/U.FL, per Seeed's wiki — a bulkhead needs a short U.FL-to-SMA pigtail between
+  the module and the panel, not a direct mount), a USB-C cutout on the left wall for the XIAO's own
+  port (power/flashing), and a slotted vent in the lid since the HaLow radio can run warm.
+- The user linked a community Printables case (model #1345643) built for this same board as a
+  reference for what the case should support (XIAO-on-carrier, antenna SMA port, vents) — its page
+  returned HTTP 403 to fetch, so this preset's dimensions are sized independently around the
+  documented board footprint rather than measured off that model's actual geometry. Flagged in the
+  preset's own notes, same "verify before printing" tier as the rest of the library.
+- Verified with Playwright against the dev server: applying the preset resizes the body to
+  62×38×22mm (split 14mm) and places exactly the three features above (right/left/top), confirmed
+  in both the Layers panel and a viewport screenshot; Export still produces a watertight two-STL +
+  BOM zip with zero console errors. `tsc -b`, `oxlint`, and `npm test` (295/295, including the new
+  allowlist entry) all clean.
+
 ## Session log
 
 - **2026-07-01**: Phase 0 + Phase 1 implemented and verified (scaffold, CSG worker pipeline,
@@ -1974,3 +1999,8 @@ split 24 → 25).
     the cantilever snap tabs solidly to the lid body.
   - **Verification**: 294/294 vitest tests passing including new assertions for lid boss columns and tab roots,
     `tsc -b`, `oxlint`, and `npm run build` all clean.
+- **2026-08-31**: Added the Seeed Wio-WM6180 Wi-Fi HaLow board preset (dimension + IO, no
+  boardMount — no published mounting-hole pattern) per user request, referencing a community
+  Printables case (model #1345643) for the desired feature set (XIAO-on-carrier, antenna SMA port,
+  vents) — see the new section above this log for sourcing details and what couldn't be verified.
+  295/295 vitest tests, `tsc -b`, `oxlint`, `npm run build` all clean; verified with Playwright.
