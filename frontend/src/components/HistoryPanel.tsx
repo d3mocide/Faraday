@@ -31,8 +31,9 @@ export function HistoryPanel() {
               className={entry.isCurrent ? 'history-item current' : 'history-item'}
               onClick={() => jumpToHistory(entry.project)}
               disabled={entry.isCurrent}
+              title={entry.summary}
             >
-              <span className="history-dot" aria-hidden="true" />
+              <span className={`history-dot cat-${entry.category}`} aria-hidden="true" />
               <span className="history-summary">{entry.summary}</span>
               {entry.isCurrent ? (
                 <span className="history-badge">Current</span>

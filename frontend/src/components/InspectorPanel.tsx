@@ -20,7 +20,7 @@ import { printRulesForProfile } from '../csg/printRules';
 import { resolveBoardMountPlan } from '../csg/mountPlan';
 import { manufacturingProfileForProject } from '../state/manufacturingProfiles';
 import { FASTENER_RECIPES, fastenerRecipeForScrew } from '../fasteners/library';
-import type { MaterialPreset, PreviewTarget } from './Viewport3D';
+import type { CameraView, MaterialPreset, PreviewTarget } from './Viewport3D';
 import type {
   BoardMountSpec,
   BodyShape,
@@ -1331,6 +1331,16 @@ interface InspectorPanelProps {
   onChangeShadingMode?: (mode: 'smooth' | 'flat') => void;
   materialPreset?: MaterialPreset;
   onChangeMaterialPreset?: (preset: MaterialPreset) => void;
+  showGrid?: boolean;
+  onToggleShowGrid?: (show: boolean) => void;
+  viewportBackground?: string;
+  onChangeViewportBackground?: (color: string) => void;
+  ambientIntensity?: number;
+  onChangeAmbientIntensity?: (intensity: number) => void;
+  autoRotate?: boolean;
+  onToggleAutoRotate?: (on: boolean) => void;
+  onSetCameraView?: (view: CameraView) => void;
+  onCaptureScreenshot?: () => void;
   onSelectFeature: (id: string | null) => void;
   onUpdateFeature: (id: string, patch: Partial<Feature>) => void;
   onRemoveFeature: (id: string) => void;
@@ -1345,6 +1355,16 @@ export function InspectorPanel({
   onChangeShadingMode,
   materialPreset = 'default',
   onChangeMaterialPreset,
+  showGrid = true,
+  onToggleShowGrid,
+  viewportBackground = '#1e2228',
+  onChangeViewportBackground,
+  ambientIntensity = 0.6,
+  onChangeAmbientIntensity,
+  autoRotate = false,
+  onToggleAutoRotate,
+  onSetCameraView,
+  onCaptureScreenshot,
   onSelectFeature,
   onUpdateFeature,
   onRemoveFeature,
@@ -2241,13 +2261,23 @@ export function InspectorPanel({
               </FieldsGrid2Col>
             )}
             {lid.type === 'screw-boss' && lid.screw && (
-              <p className="field-hint">
-                {fastenerRecipeForScrew(lid.screw).label} is uncalibrated.{' '}
-                <a href={fastenerRecipeForScrew(lid.screw).referenceUrl} target="_blank" rel="noreferrer">
-                  Read the insert-boss guidance
-                </a>{' '}
-                and print a coupon with the target insert before relying on it.
-              </p>
+              <details className="fastener-guidance">
+                <summary className="field-hint">
+                  {fastenerRecipeForScrew(lid.screw).label} is uncalibrated -- print a coupon before
+                  relying on it. <span className="fastener-guidance-more">More info</span>
+                </summary>
+                <p className="field-hint fastener-guidance-body">
+                  These bore/head/clearance dimensions are a plausible starting geometry, not a
+                  measured fit for any specific insert or screw brand -- layer lines, hole shrinkage,
+                  and part tolerance all shift the effective diameter on a real print. Use the
+                  Calibration Pack export to print a coupon with this recipe, test-fit your actual
+                  hardware, and adjust before committing to the full print.{' '}
+                  <a href={fastenerRecipeForScrew(lid.screw).referenceUrl} target="_blank" rel="noreferrer">
+                    {fastenerRecipeForScrew(lid.screw).referenceLabel}
+                  </a>{' '}
+                  has more background on insert-boss design if you want it.
+                </p>
+              </details>
             )}
 
             {lid.type === 'screw-boss' && lid.screw && (
@@ -2778,6 +2808,65 @@ export function InspectorPanel({
                 onChange={setExportSegments}
               />
             </FieldsGrid2Col>
+          </SectionCard>
+
+          <SectionCard title="Scene Environment" icon={<SidebarSectionIcon type="viewport" />} defaultOpen={true}>
+            {onToggleShowGrid && (
+              <label className="field field-checkbox">
+                <input type="checkbox" checked={showGrid} onChange={(e) => onToggleShowGrid(e.target.checked)} />
+                <span>Show floor grid</span>
+              </label>
+            )}
+            <FieldsGrid2Col>
+              {onChangeViewportBackground && (
+                <label className="field">
+                  <span>Backdrop color</span>
+                  <input
+                    type="color"
+                    value={viewportBackground}
+                    onChange={(e) => onChangeViewportBackground(e.target.value)}
+                  />
+                </label>
+              )}
+              {onChangeAmbientIntensity && (
+                <NumberField
+                  label="Ambient light"
+                  value={ambientIntensity}
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  onChange={onChangeAmbientIntensity}
+                />
+              )}
+            </FieldsGrid2Col>
+          </SectionCard>
+
+          <SectionCard title="Camera" icon={<SidebarSectionIcon type="viewport" />} defaultOpen={true}>
+            {onSetCameraView && (
+              <div className="camera-view-segmented">
+                {(['front', 'back', 'left', 'right', 'top', 'iso'] as const).map((view) => (
+                  <button
+                    key={view}
+                    type="button"
+                    className="camera-view-btn"
+                    onClick={() => onSetCameraView(view)}
+                  >
+                    {view === 'iso' ? 'Iso' : view[0].toUpperCase() + view.slice(1)}
+                  </button>
+                ))}
+              </div>
+            )}
+            {onToggleAutoRotate && (
+              <label className="field field-checkbox" style={{ marginTop: 10 }}>
+                <input type="checkbox" checked={autoRotate} onChange={(e) => onToggleAutoRotate(e.target.checked)} />
+                <span>Turntable (auto-rotate)</span>
+              </label>
+            )}
+            {onCaptureScreenshot && (
+              <button type="button" className="btn-secondary" style={{ marginTop: 10 }} onClick={onCaptureScreenshot}>
+                Save screenshot
+              </button>
+            )}
           </SectionCard>
         </>
       )}

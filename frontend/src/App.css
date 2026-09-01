@@ -1267,6 +1267,30 @@
   color: #e2f4ff;
 }
 
+.camera-view-segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.camera-view-btn {
+  padding: 6px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #9aa5b1;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.camera-view-btn:hover {
+  color: #e2f4ff;
+  background: rgba(111, 211, 255, 0.15);
+  border-color: rgba(111, 211, 255, 0.4);
+}
+
 .inspector-card .card-body {
   padding: 10px;
   display: flex;
@@ -1337,6 +1361,31 @@
   font-size: 11px;
   margin: 2px 0 4px;
   line-height: 1.4;
+}
+
+.fastener-guidance summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.fastener-guidance summary::-webkit-details-marker,
+.fastener-guidance summary::marker {
+  display: none;
+  content: '';
+}
+
+.fastener-guidance-more {
+  color: var(--accent, #6fd3ff);
+  text-decoration: underline;
+  white-space: nowrap;
+}
+
+.fastener-guidance-body {
+  margin-top: 4px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid rgba(111, 211, 255, 0.3);
+  border-radius: 0 4px 4px 0;
 }
 
 .info-tooltip-trigger {
@@ -2003,21 +2052,51 @@
 }
 
 .history-dot {
+  position: relative;
   flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--text-dim);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04);
 }
+
+/* Connects each dot to the next one down, so the list reads as one continuous timeline instead
+   of a flat stack of rows. Length is tuned to the fixed row geometry below (28px row + 4px gap)
+   so it lands exactly on the next dot regardless of category color. */
+.history-dot::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 24px;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.04));
+}
+
+.history-list li:last-child .history-dot::after {
+  display: none;
+}
+
+.history-dot.cat-start { background: #50fa7b; }
+.history-dot.cat-feature { background: #ffb454; }
+.history-dot.cat-body { background: #6fd3ff; }
+.history-dot.cat-lid { background: #b48eff; }
+.history-dot.cat-project { background: #8a94a6; }
 
 .history-item.current .history-dot {
   background: var(--accent);
-  box-shadow: 0 0 6px var(--accent);
+  box-shadow: 0 0 0 3px rgba(111, 211, 255, 0.18), 0 0 8px var(--accent);
 }
 
 .history-summary {
   flex: 1;
   font-size: 12px;
+  line-height: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .history-item.current .history-summary {
@@ -2076,13 +2155,15 @@
 .focused-feature-drawer {
   display: flex;
   flex-direction: column;
-  background: rgba(111, 211, 255, 0.06);
+  background: rgba(18, 22, 28, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   border: 1px solid rgba(111, 211, 255, 0.4);
   border-radius: 8px;
   max-height: 100%;
   margin: 0;
   overflow: hidden;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
   pointer-events: auto;
 }
 
@@ -2091,7 +2172,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: rgba(111, 211, 255, 0.12);
+  background: rgba(111, 211, 255, 0.14);
   border-bottom: 1px solid rgba(111, 211, 255, 0.25);
   gap: 8px;
 }

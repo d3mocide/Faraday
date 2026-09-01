@@ -2589,3 +2589,52 @@ split 24 → 25).
     is not sufficient for anything that touches CSG — the label math and the mesh it describes can
     silently disagree. Any lid-type change needs at least one screenshot of the actual generated
     body, not just the control panel.
+- **2026-08-31**: Inspector workspace-polish pass, prompted by the repo owner looking at UI
+  screenshots and asking about the fastener recipe "starter" naming, the external SPIROL link, and
+  whether the object editors/History/Studio tabs could be improved.
+  - **Feature editor drawer** (`.focused-feature-drawer`, `App.css`): now uses the same
+    `backdrop-filter: blur(14px)` glass treatment as the floating viewport toolbar/blueprint bar,
+    instead of a flat near-transparent tint it never got when the drawer moved out of the sidebar
+    in beta.6.
+  - **Fastener guidance hint** (`InspectorPanel.tsx`, lid inspector): the always-visible
+    "uncalibrated... read the insert-boss guidance" paragraph is now a `<details>/<summary>`
+    disclosure, collapsed by default, ending in "More info". Expanding it shows a new in-app
+    paragraph (coupon-testing explanation, points at the Calibration Pack export) so the guidance
+    isn't solely dependent on the external SPIROL white paper URL staying alive; that link is now
+    "further reading" inside the expanded body, not the only explanation. Per repo owner's explicit
+    call: summary gated behind a toggle, hidden by default.
+  - **History tab redesigned as a connected timeline** (`state/historySummary.ts`,
+    `HistoryPanel.tsx`, `App.css`): `summarizeHistoryStep`/`buildHistoryTimeline` now return a
+    `category` (`start`/`feature`/`body`/`lid`/`project`) alongside the summary string; each dot is
+    colored by category and a connector rail (`.history-dot::after`) threads every entry together.
+    Connector length (24px) is derived from the fixed row geometry (28px row + 4px gap + 8px dot),
+    not eyeballed — verified via Playwright screenshot with a 5-entry timeline spanning all 4
+    non-start categories that the rail lands exactly on each dot with no visible gaps.
+  - **Studio tab gained two new cards** (`InspectorPanel.tsx`, `Viewport3D.tsx`, `App.tsx`): Scene
+    Environment (floor grid checkbox — reuses the pre-existing `showGrid` state that was previously
+    only reachable via the `g` keyboard shortcut; backdrop color; ambient light intensity) and
+    Camera (Front/Back/Left/Right/Top/Iso one-click view jumps, a Turntable auto-rotate checkbox
+    using OrbitControls' built-in `autoRotate`, and a Save Screenshot button). `Viewport3D` is now
+    wrapped in `forwardRef`/`useImperativeHandle` exposing `setCameraView`/`captureScreenshot` —
+    the only imperative escape hatch needed since everything else in that component is prop-driven.
+    View jump preserves the current camera-to-target distance (doesn't reset zoom) and swaps
+    `camera.up` to `(0,1,0)` for the Top view specifically to avoid OrbitControls gimbal lock when
+    looking straight down the world's Z-up axis. Screenshot needed `preserveDrawingBuffer: true`
+    added to the `WebGLRenderer` (otherwise `toBlob()` can read back an empty framebuffer).
+  - **Verification**: real dev server + Playwright driving the system Chromium binary (no `sudo`
+    available in this sandbox to install Playwright's own browsers, so pointed `executablePath` at
+    `/usr/bin/chromium` instead). Confirmed via computed style (`backdrop-filter: blur(14px)`) and
+    screenshot that the glass panel renders; confirmed the collapsed/expanded fastener disclosure
+    text; confirmed Top/Front camera buttons actually reorient the camera and the backdrop color
+    picker actually recolors the scene (first attempt at that check silently no-op'd because
+    setting a React-controlled `<input>`'s `.value` directly and dispatching a bare event doesn't
+    trigger React's onChange — fixed by going through the native property setter before dispatch);
+    confirmed the 5-entry colored/connected history timeline. Zero console/page errors throughout.
+    `tsc -b`, `oxlint`, `vite build`, and `vitest run` (18 files / 365 tests) all clean.
+  - Docker aside: repo owner pasted a `docker-compose` Caddy startup log worried it indicated a
+    failure. It didn't — every line was `INF`/`WRN`, no `ERR`; the warnings (unformatted Caddyfile,
+    HTTP/2/3 skipped) are expected for this repo's TLS-less `:80` Caddyfile. Attempted to build/run
+    the image locally to double-check anyway; blocked by `permission denied` on `/var/run/docker.sock`
+    even after the repo owner added their account to the `docker` group mid-session, because group
+    membership changes don't retroactively apply to an already-running login session/shell — would
+    need a fresh Claude Code session/terminal to pick it up.

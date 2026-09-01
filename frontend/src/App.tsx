@@ -1,10 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import { AppShell } from './components/AppShell';
 import { ExportModal } from './components/ExportModal';
 import { FeaturePalette, type ArmedFeatureTemplate } from './components/FeaturePalette';
 import { InspectorPanel } from './components/InspectorPanel';
-import { Viewport3D, type BodyResizePatch, type LidView, type PreviewTarget } from './components/Viewport3D';
+import {
+  Viewport3D,
+  type BodyResizePatch,
+  type CameraView,
+  type LidView,
+  type PreviewTarget,
+  type Viewport3DHandle,
+} from './components/Viewport3D';
 import { useLiveGeometry } from './csg/useLiveGeometry';
 import { buildFeatureFromTemplate } from './state/featureFactory';
 import { runDesignChecks } from './state/designChecks';
@@ -40,6 +47,10 @@ function App() {
   const [showEdgeLines, setShowEdgeLines] = useState(true);
   const [shadingMode, setShadingMode] = useState<'smooth' | 'flat'>('smooth');
   const [materialPreset, setMaterialPreset] = useState<'default' | 'tactical-black' | 'gunmetal' | 'olive-drab' | 'radio-orange'>('default');
+  const [viewportBackground, setViewportBackground] = useState('#1e2228');
+  const [ambientIntensity, setAmbientIntensity] = useState(0.6);
+  const [autoRotate, setAutoRotate] = useState(false);
+  const viewport3DRef = useRef<Viewport3DHandle>(null);
   const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
 
   const [blueprintOpen, setBlueprintOpen] = useState(false);
@@ -175,6 +186,7 @@ function App() {
           />
         </div>
         <Viewport3D
+          ref={viewport3DRef}
           meshes={meshes}
           body={project.body}
           features={project.features}
@@ -186,6 +198,9 @@ function App() {
           showEdgeLines={showEdgeLines}
           shadingMode={shadingMode}
           materialPreset={materialPreset}
+          viewportBackground={viewportBackground}
+          ambientIntensity={ambientIntensity}
+          autoRotate={autoRotate}
           placementArmed={armed !== null}
           onPlaceFeature={handlePlaceFeature}
           selectedFeatureId={selectedFeatureId}
@@ -217,6 +232,16 @@ function App() {
         onChangeShadingMode={setShadingMode}
         materialPreset={materialPreset}
         onChangeMaterialPreset={setMaterialPreset}
+        showGrid={showGrid}
+        onToggleShowGrid={setShowGrid}
+        viewportBackground={viewportBackground}
+        onChangeViewportBackground={setViewportBackground}
+        ambientIntensity={ambientIntensity}
+        onChangeAmbientIntensity={setAmbientIntensity}
+        autoRotate={autoRotate}
+        onToggleAutoRotate={setAutoRotate}
+        onSetCameraView={(view: CameraView) => viewport3DRef.current?.setCameraView(view)}
+        onCaptureScreenshot={() => viewport3DRef.current?.captureScreenshot()}
         onSelectFeature={setSelectedFeatureId}
         onUpdateFeature={updateFeature}
         onRemoveFeature={handleRemoveFeature}

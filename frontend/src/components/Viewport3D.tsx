@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { EnclosureMeshes } from '../csg/CsgWorkerClient';
@@ -100,6 +100,12 @@ interface Viewport3DProps {
   showEdgeLines?: boolean;
   shadingMode?: 'smooth' | 'flat';
   materialPreset?: MaterialPreset;
+  /** Scene backdrop color, CSS hex string (defaults to the app's standard dark backdrop). */
+  viewportBackground?: string;
+  /** Ambient light intensity, 0-1 (defaults to the original hardcoded 0.6). */
+  ambientIntensity?: number;
+  /** Slowly spins the camera around the current orbit target when idle. */
+  autoRotate?: boolean;
   placementArmed: boolean;
   onPlaceFeature: (face: Face, u: number, v: number) => void;
   selectedFeatureId: string | null;
@@ -113,6 +119,25 @@ interface Viewport3DProps {
   onMeasure?: (measurement: CaliperMeasurement | null) => void;
   caliperMeasurement?: CaliperMeasurement | null;
 }
+
+export type CameraView = 'front' | 'back' | 'left' | 'right' | 'top' | 'iso';
+
+/** Imperative viewport actions that don't fit the declarative prop model -- one-shot camera jumps
+ * and a screenshot capture, both of which need direct access to the live camera/renderer rather
+ * than persisted view state. */
+export interface Viewport3DHandle {
+  setCameraView: (view: CameraView) => void;
+  captureScreenshot: () => void;
+}
+
+const CAMERA_VIEW_DIRECTIONS: Record<CameraView, { dir: [number, number, number]; up: [number, number, number] }> = {
+  front: { dir: [0, -1, 0], up: [0, 0, 1] },
+  back: { dir: [0, 1, 0], up: [0, 0, 1] },
+  left: { dir: [-1, 0, 0], up: [0, 0, 1] },
+  right: { dir: [1, 0, 0], up: [0, 0, 1] },
+  top: { dir: [0, 0, 1], up: [0, 1, 0] },
+  iso: { dir: [0.5636, -0.5636, 0.6042], up: [0, 0, 1] }, // matches the default startup camera angle
+};
 
 const FEATURE_MARKER_COLOR = 0xffb454;
 const FEATURE_MARKER_SELECTED_COLOR = 0xff5a5a;
@@ -132,7 +157,7 @@ type DragState =
   | { type: 'split' }
   | { type: 'feature'; id: string; face: Face };
 
-export function Viewport3D({
+export const Viewport3D = forwardRef<Viewport3DHandle, Viewport3DProps>(function Viewport3D({
   meshes,
   body,
   features,
@@ -144,6 +169,9 @@ export function Viewport3D({
   showEdgeLines = true,
   shadingMode = 'smooth',
   materialPreset = 'default',
+  viewportBackground = '#1e2228',
+  ambientIntensity = 0.6,
+  autoRotate = false,
   placementArmed,
   onPlaceFeature,
   selectedFeatureId,
@@ -155,7 +183,7 @@ export function Viewport3D({
   caliperActive = false,
   onMeasure,
   caliperMeasurement,
-}: Viewport3DProps) {
+}: Viewport3DProps, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -172,6 +200,8 @@ export function Viewport3D({
   const highlightMeshRef = useRef<THREE.Mesh | null>(null);
   const previewMarkerRef = useRef<THREE.Mesh | null>(null);
   const gridGroupRef = useRef<THREE.Group | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const ambientLightRef = useRef<THREE.AmbientLight | null>(null);
 
   // Latest-value refs so the pointer handlers (set up once, in the mount effect) always see
   // current props without needing to re-attach DOM listeners on every render.
@@ -225,18 +255,23 @@ export function Viewport3D({
     camera.up.set(0, 0, 1);
     cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    // preserveDrawingBuffer so captureScreenshot() can read back the framebuffer after a render
+    // pass -- without it the buffer is cleared before toBlob() can run.
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(container.clientWidth, container.clientHeight);
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
     const controls = new OrbitControls(camera, renderer.domElement);
+    controlsRef.current = controls;
     controls.target.set(0, 0, 15);
     controls.enableDamping = true;
     controls.update();
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+    ambientLightRef.current = ambientLight;
     const key = new THREE.DirectionalLight(0xffffff, 1.2);
     key.position.set(150, -200, 300);
     scene.add(key);
@@ -863,6 +898,8 @@ export function Viewport3D({
       container.removeChild(renderer.domElement);
       cameraRef.current = null;
       rendererRef.current = null;
+      controlsRef.current = null;
+      ambientLightRef.current = null;
       markerGroupRef.current = null;
       ghostGroupRef.current = null;
       handleGroupRef.current = null;
@@ -884,6 +921,46 @@ export function Viewport3D({
     if (markerGroupRef.current) markerGroupRef.current.visible = showMarkers;
     showMarkersRef.current = showMarkers;
   }, [showMarkers]);
+  useEffect(() => {
+    if (sceneRef.current) sceneRef.current.background = new THREE.Color(viewportBackground);
+  }, [viewportBackground]);
+  useEffect(() => {
+    if (ambientLightRef.current) ambientLightRef.current.intensity = ambientIntensity;
+  }, [ambientIntensity]);
+  useEffect(() => {
+    if (controlsRef.current) controlsRef.current.autoRotate = autoRotate;
+  }, [autoRotate]);
+
+  useImperativeHandle(ref, () => ({
+    setCameraView(view) {
+      const camera = cameraRef.current;
+      const controls = controlsRef.current;
+      if (!camera || !controls) return;
+      const { dir, up } = CAMERA_VIEW_DIRECTIONS[view];
+      const distance = camera.position.distanceTo(controls.target);
+      camera.position
+        .copy(controls.target)
+        .addScaledVector(new THREE.Vector3(...dir), distance);
+      camera.up.set(...up);
+      controls.update();
+    },
+    captureScreenshot() {
+      const renderer = rendererRef.current;
+      const camera = cameraRef.current;
+      const scene = sceneRef.current;
+      if (!renderer || !camera || !scene) return;
+      renderer.render(scene, camera);
+      renderer.domElement.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `faraday-enclosure-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
+        link.click();
+        URL.revokeObjectURL(url);
+      }, 'image/png');
+    },
+  }), []);
 
   // Sync the scene's meshes with whatever parts the last generation produced: the set is dynamic
   // now (turning a wall into a slide-in panel adds a piece, turning it back removes one), so
@@ -1344,4 +1421,4 @@ export function Viewport3D({
       </div>
     </div>
   );
-}
+});

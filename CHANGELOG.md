@@ -10,6 +10,29 @@ Each entry here corresponds to a `vX.Y.Z` git tag, which is what triggers
 
 ## [Unreleased]
 
+A workspace-polish pass on the inspector: Studio tab gains real scene/camera controls, the History
+tab reads as a connected timeline instead of a flat list, and the floating feature editor and
+fastener guidance hint both get a visual/UX cleanup.
+
+### Added
+
+- **Studio tab: Scene Environment and Camera cards.** Floor grid visibility, backdrop color, and
+  ambient light intensity are now editable (previously grid was keyboard-only via `g`, and
+  backdrop/lighting were hardcoded). Camera adds one-click Front/Back/Left/Right/Top/Iso view
+  jumps, a turntable auto-rotate toggle, and a PNG viewport screenshot export.
+
+### Changed
+
+- **History tab redesigned as a connected timeline**: each entry is now categorized (start /
+  feature / body / lid / project) and color-coded, with a rail connecting every dot top to bottom
+  instead of a flat list of identical gray rows.
+- **Feature editor drawer** (the floating panel for the selected connector/hole/feature) now uses
+  the same frosted-glass treatment (`backdrop-filter: blur`) as the rest of the app's floating
+  panels, instead of a flat near-transparent tint.
+- **Fastener "uncalibrated" hint** is now a collapsed one-line summary with a "More info" toggle;
+  expanding it shows an in-app explanation of why coupon-testing matters, so the guidance no longer
+  depends entirely on the external SPIROL reference link staying alive.
+
 ## [0.1.0-beta.6] - 2026-08-31
 
 Manufacturing-fidelity release: profile-aware print rules, derived board reinforcement, a
