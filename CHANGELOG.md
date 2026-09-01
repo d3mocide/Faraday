@@ -10,6 +10,8 @@ Each entry here corresponds to a `vX.Y.Z` git tag, which is what triggers
 
 ## [Unreleased]
 
+## [0.1.0-beta.7] - 2026-08-31
+
 A workspace-polish pass on the inspector: Studio tab gains real scene/camera controls, the History
 tab reads as a connected timeline instead of a flat list, and the floating feature editor and
 fastener guidance hint both get a visual/UX cleanup.
